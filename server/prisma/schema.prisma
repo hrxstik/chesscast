@@ -20,6 +20,12 @@ model User {
 
   verificationCode   VerificationCode?
 
+  games              Game[]
+  subscription       Subscription
+
+  organization       Organization? @relation(fields: [organizationID], references: [id])
+  organizationID     Int?
+
   createdAt          DateTime     @default(now())
   updatedAt          DateTime     @updatedAt
 }
@@ -34,6 +40,39 @@ model VerificationCode {
   @@unique([userId, code])
 }
 
+model Organization {
+  id        Int       @id @default(autoincrement())
+  name      String
+
+  games     Game[]
+  users     User[]
+
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+}
+
+model Game {
+  id        Int       @id @default(autoincrement())
+
+  name      String
+  users     User[]
+
+  organization Organization? @relation(fields: [organizationId], references: [id])
+  organizationId Int
+
+  moves     String[]
+
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+}
+
+enum Subscription {
+  FREE
+  PREMIUM
+  ORGANIZATION
+}
+
 enum Role {
-  USER
+  PLAYER
+  ADMIN
 }
