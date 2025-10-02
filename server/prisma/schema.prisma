@@ -13,19 +13,22 @@ model User {
   email              String       @unique
   password           String
   role               Role
- 
+
+  subscription       Subscription
+
+  organization       Organization? @relation(fields: [organizationID], references: [id])
+  organizationID     Int?
+
+  gameUsers GameUser[]
+
   verified           DateTime?
   provider           String?
   providerId         String?
 
   verificationCode   VerificationCode?
 
-  games              Game[]
-  subscription       Subscription
-
-  organization       Organization? @relation(fields: [organizationID], references: [id])
-  organizationID     Int?
-
+  subscriptionDate   DateTime
+  subscriptionEnd    DateTime
   createdAt          DateTime     @default(now())
   updatedAt          DateTime     @updatedAt
 }
@@ -55,15 +58,33 @@ model Game {
   id        Int       @id @default(autoincrement())
 
   name      String
-  users     User[]
+  
+  gameUsers      GameUser[]
 
   organization Organization? @relation(fields: [organizationId], references: [id])
-  organizationId Int
+  organizationId Int?
 
   moves     String[]
 
   createdAt DateTime   @default(now())
   updatedAt DateTime   @updatedAt
+}
+
+model GameUser {
+  game      Game   @relation(fields: [gameId], references: [id])
+  gameId    Int
+
+  user      User   @relation(fields: [userId], references: [id])
+  userId    Int
+
+  color      Color
+
+  @@id([gameId, userId])
+}
+
+enum Color {
+  WHITE
+  BLACK
 }
 
 enum Subscription {
