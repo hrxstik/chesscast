@@ -9,17 +9,15 @@ datasource db {
 
 model User {
   id                 Int       @id @default(autoincrement())
-  name               String
-  email              String       @unique
+  name               String    @unique
+  email              String    @unique
   password           String
-  role               Role
+  avatar             String 
 
   subscription       Subscription
 
-  organization       Organization? @relation(fields: [organizationID], references: [id])
-  organizationID     Int?
-
-  gameUsers GameUser[]
+  userGames          UserGame[]
+  userOrganizations  UserOrganization[]
 
   verified           DateTime?
   provider           String?
@@ -31,6 +29,7 @@ model User {
   subscriptionEnd    DateTime
   createdAt          DateTime     @default(now())
   updatedAt          DateTime     @updatedAt
+  deletedAt          DateTime?
 }
 
 model VerificationCode {
@@ -45,43 +44,63 @@ model VerificationCode {
 
 model Organization {
   id        Int       @id @default(autoincrement())
-  name      String
+  name      String    @unique
+  description String
+  avatar    String 
 
   games     Game[]
-  users     User[]
+  events    String[] 
+  users     UserOrganization[]
 
   inviteCode String
 
   createdAt DateTime   @default(now())
   updatedAt DateTime   @updatedAt
+  deletedAt DateTime?
 }
 
 model Game {
   id        Int       @id @default(autoincrement())
-
-  name      String
   
-  gameUsers      GameUser[]
+  mode      GameMode
+  result    GameResult
+  status    GameStatus
+  users     UserGame[]
 
+  token     String
   organization Organization? @relation(fields: [organizationId], references: [id])
   organizationId Int?
 
+  initialPosition String
   moves     String[]
 
   createdAt DateTime   @default(now())
   updatedAt DateTime   @updatedAt
+  deletedAt DateTime?
 }
 
-model GameUser {
-  game      Game   @relation(fields: [gameId], references: [id])
-  gameId    Int
-
+model UserGame {
   user      User   @relation(fields: [userId], references: [id])
   userId    Int
 
+  game      Game   @relation(fields: [gameId], references: [id])
+  gameId    Int
+
   color      Color
 
-  @@id([gameId, userId])
+  @@id([userId, gameId])
+}
+
+model UserOrganization {
+  user      User   @relation(fields: [userId], references: [id])
+  userId    Int
+
+  organization      Organization   @relation(fields: [organizationId], references: [id])
+  organizationId    Int
+
+  role Role
+
+  @@unique([userId, organizationId])
 }
 
 enum Color {
@@ -92,10 +111,41 @@ enum Color {
 enum Subscription {
   FREE
   PREMIUM
-  ORGANIZATION
+  CORPORATE
 }
 
 enum Role {
   PLAYER
   ADMIN
+}
+
+enum GameResult {
+  WHITE_WIN
+  WHITE_LOSE
+  BLACK_WIN
+  BLACK_LOSE
+  WHITE_RESIGN
+  BLACK_RESIGN
+  WHITE_TIME_OUT
+  BLACK_TIME_OUT
+  STALEMATE
+  DRAW
+  CANCELLED
+}
+
+enum Event {
+  ORGANIZATION_CREATED
+  ORGANIZATION_DELETED
+  PLAYER_JOINED
+  PLAYER_LEFT
+}
+
+enum GameMode {
+  TRAINING
+  COMPETITIVE
+}
+
+enum GameStatus {
+  IN_PROGRESS
+  FINISHED
 }
