@@ -1,9 +1,7 @@
 import React from 'react';
 
-interface Props {
-  className?: string;
-}
+type Props = {};
 
-export const WatchGamePage: React.FC<Props> = ({ className }) => {
-  return <div className={className}></div>;
-};
+export default function WatchGamePage({}: Props) {
+  return <div>WatchGamePage</div>;
+}

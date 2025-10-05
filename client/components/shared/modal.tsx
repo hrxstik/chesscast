@@ -4,6 +4,6 @@ interface Props {
   className?: string;
 }
 
-export const AuthPage: React.FC<Props> = ({ className }) => {
+export const Modal: React.FC<Props> = ({ className }) => {
   return <div className={className}></div>;
 };

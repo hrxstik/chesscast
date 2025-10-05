@@ -4,6 +4,6 @@ interface Props {
   className?: string;
 }
 
-export const DashboardLayout: React.FC<Props> = ({ className }) => {
+export default function DashboardLayout({ className }: Props) {
   return <div className={className}></div>;
-};
+}
