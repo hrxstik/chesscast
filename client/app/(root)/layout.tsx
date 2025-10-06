@@ -1,3 +1,4 @@
+import { Container } from '@/components/shared/container';
 import Header from '@/components/shared/header';
 import type { Metadata } from 'next';
 import { Suspense } from 'react';
@@ -16,7 +17,7 @@ export default function HomeLayout({
       <Suspense>
         <Header />
       </Suspense>
-      {children}
+      <Container>{children}</Container>
     </main>
   );
 }

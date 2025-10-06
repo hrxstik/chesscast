@@ -2,11 +2,14 @@ import {
   BadRequestException,
   Injectable,
   InternalServerErrorException,
+  UnauthorizedException,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { UserRepository } from '../user/user.repository';
 import { RegisterUserDto } from 'src/dtos/register-user.dto';
 import { User } from '@prisma/client';
+import { LoginUserDto } from 'src/dtos/login-user.dto';
+import * as bcrypt from 'bcrypt';
 
 @Injectable()
 export class AuthService {
@@ -19,26 +22,53 @@ export class AuthService {
     return this.jwtService.sign(payload);
   }
 
-  async signIn(user) {
-    if (!user) {
+  async login(dto: LoginUserDto) {
+    if (!dto) {
       throw new BadRequestException('Unauthenticated');
     }
 
-    const userExists = await this.userRepository.findByEmail(user.email);
+    const user = await this.userRepository.findByEmail(dto.email);
 
-    if (!userExists) {
-      return this.registerUser(user);
+    if (!user) {
+      throw new UnauthorizedException('Неверный email или пароль');
     }
 
-    return this.generateJwt({
-      sub: userExists.id,
-      email: userExists.email,
-    });
+    const passwordMatches = await bcrypt.compare(dto.password, user.password);
+    if (!passwordMatches) {
+      throw new UnauthorizedException('Неверный email или пароль');
+    }
+
+    const payload = { sub: user.id, email: user.email };
+
+    return {
+      access_token: await this.jwtService.signAsync(payload),
+      user: {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+      },
+    };
   }
 
-  async registerUser(user: RegisterUserDto) {
+  async register(dto: RegisterUserDto) {
+    const existingUser = await this.userRepository.findByEmail(dto.email);
+    if (existingUser) {
+      throw new UnauthorizedException(
+        'Пользователь с таким email уже существует',
+      );
+    }
+
     try {
-      const newUser = await this.userRepository.create(user);
+      const hashedPassword = await bcrypt.hash(dto.password, 10);
+
+      const newUser = await this.userRepository.create({
+        data: {
+          name: dto.name,
+          email: dto.email,
+          password: hashedPassword,
+          subscriptionEnd: new Date(new Date().setFullYear(2099)),
+        },
+      });
 
       return this.generateJwt({
         sub: newUser.id,
