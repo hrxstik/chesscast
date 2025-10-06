@@ -4,83 +4,74 @@ import React, { useState } from 'react';
 import { Container } from './container';
 import Link from 'next/link';
 import { Button } from '../ui/button';
+import { ThemeToggle } from './theme-toggle';
+import { Menu, X } from 'lucide-react';
 
 const Header = () => {
   const [isOpen, setIsOpen] = useState(false);
 
   return (
-    <header className="bg-white shadow sticky top-0 z-100">
+    <header className="dark:bg-background dark:text-primary dark:shadow-accent shadow sticky top-0 z-100 backdrop-blur-sm bg-white/10">
       <Container className="flex items-center justify-between py-4">
         {/* Логотип */}
-        <Link href="/" className="flex items-center space-x-2">
+        <Link href="/" className="flex items-center space-x-2 group">
           <img src="/logo.png" alt="ChessCast Logo" className="h-8 w-8 rounded-full" />
-          <span className="font-bold text-xl text-gray-800">ChessCast</span>
+          <span className="dark:text-primary text-primary hover:text-accent-foreground dark:hover:text-accent-foreground duration-100 font-bold text-xl">
+            ChessCast
+          </span>
         </Link>
 
-        {/* Кнопка бургер для мобильных */}
-        <Button
-          className="md:hidden text-gray-700 focus:outline-none"
-          onClick={() => setIsOpen(!isOpen)}
-          aria-label="Toggle menu">
-          <svg
-            className="w-6 h-6"
-            fill="none"
-            stroke="currentColor"
-            viewBox="0 0 24 24"
-            xmlns="http://www.w3.org/2000/svg">
-            {isOpen ? (
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth="2"
-                d="M6 18L18 6M6 6l12 12"
-              />
-            ) : (
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth="2"
-                d="M4 6h16M4 12h16M4 18h16"
-              />
-            )}
-          </svg>
-        </Button>
+        <div className="flex  max-md:flex-row-reverse max-md:gap-2 items-center gap-6">
+          {/* Кнопка бургер для мобильных */}
+          <Button
+            className="md:hidden text-primary-foreground focus:outline-none"
+            onClick={() => setIsOpen(!isOpen)}
+            aria-label="Toggle menu">
+            {isOpen ? <X /> : <Menu />}
+          </Button>
 
-        {/* Навигация - скрыта на мобилках */}
-        <nav className="hidden md:flex space-x-6">
-          <Link href="/login" className="text-gray-700 hover:text-blue-600">
-            Вход
-          </Link>
-          <Link href="/register" className="text-gray-700 hover:text-blue-600">
-            Регистрация
-          </Link>
-          <Link href="/pricing" className="text-gray-700 hover:text-blue-600">
-            Цены на подписки
-          </Link>
-        </nav>
+          <nav className="hidden md:flex gap-6 items-center">
+            <Link
+              href="/login"
+              className="dark:text-primary text-primary hover:text-accent-foreground dark:hover:text-accent-foreground duration-100">
+              Вход
+            </Link>
+            <Link
+              href="/register"
+              className="dark:text-primary text-primary hover:text-accent-foreground dark:hover:text-accent-foreground duration-100">
+              Регистрация
+            </Link>
+            <Link
+              href="/pricing"
+              className="dark:text-primary text-primary hover:text-accent-foreground dark:hover:text-accent-foreground !duration-100">
+              Цены
+            </Link>
+          </nav>
+          <ThemeToggle />
+        </div>
       </Container>
 
       {/* Меню для мобильных */}
       {isOpen && (
-        <nav className="md:hidden bg-white shadow-md">
+        <nav className="md:hidden shadow-md dark:bg-background dark:text-primary">
           <Container className="flex flex-col space-y-3 py-4">
             <Link
               href="/login"
-              className="text-gray-700 hover:text-blue-600"
+              className="dark:text-primary text-primary hover:text-accent-foreground dark:hover:text-accent-foreground duration-100"
               onClick={() => setIsOpen(false)}>
               Вход
             </Link>
             <Link
               href="/register"
-              className="text-gray-700 hover:text-blue-600"
+              className="dark:text-primary text-primary hover:text-accent-foreground dark:hover:text-accent-foreground duration-100"
               onClick={() => setIsOpen(false)}>
               Регистрация
             </Link>
             <Link
               href="/pricing"
-              className="text-gray-700 hover:text-blue-600"
+              className="dark:text-primary text-primary hover:text-accent-foreground dark:hover:text-accent-foreground duration-100"
               onClick={() => setIsOpen(false)}>
-              Цены на подписки
+              Цены
             </Link>
           </Container>
         </nav>

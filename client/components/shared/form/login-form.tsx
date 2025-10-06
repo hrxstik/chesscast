@@ -50,7 +50,7 @@ export const LoginForm: React.FC<Props> = ({ onClose }) => {
     <FormProvider {...form}>
       <form
         onSubmit={form.handleSubmit(onSubmit)}
-        className="p-6 space-y-4 bg-white rounded shadow">
+        className="p-6 space-y-4 rounded shadow bg-card w-1/3 max-lg:w-full">
         <FormInput name="email" label="Email" type="email" required />
         <FormInput name="password" label="Пароль" type="password" required />
 

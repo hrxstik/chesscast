@@ -4,5 +4,9 @@ import React from 'react';
 type Props = {};
 
 export default function RegisterPage({}: Props) {
-  return <RegisterForm />;
+  return (
+    <div className="min-h-[90vh] flex items-center justify-center py-16">
+      <RegisterForm />
+    </div>
+  );
 }
