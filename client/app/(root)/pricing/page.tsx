@@ -1,6 +1,7 @@
 'use client';
 
 import { PlanCard } from '@/components/shared/plan-card';
+import { Title } from '@/components/shared/title';
 import { usePricingStore } from '@/store/pricing';
 import Link from 'next/link';
 import React from 'react';
@@ -11,9 +12,11 @@ export default function PricingPage() {
     <div className="min-h-[90vh] flex items-center justify-center">
       <section className="py-16 px-4">
         <div className="max-w-7xl mx-auto text-center mb-14">
-          <h1 className="dark:text-primary text-primary text-4xl font-extrabold mb-4">
-            Цены на подписки
-          </h1>
+          <Title
+            className="dark:text-primary text-primary text-4xl font-extrabold mb-4"
+            size="xl"
+            text="Цены на подписки"
+          />
           <p className="dark:text-primary text-primary text-lg max-w-xl mx-auto">
             Выберите план, который подходит именно вам и улучшите свои навыки в шахматах с
             ChessCast.
