@@ -1,12 +1,22 @@
 import { Injectable } from '@nestjs/common';
-import { User } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 
 @Injectable()
 export class UserRepository {
   constructor(private readonly prisma: PrismaService) {}
-  async findById(id: number): Promise<User | null> {
-    return this.prisma.user.findUnique({ where: { id } });
+  async findById(id: number) {
+    return this.prisma.user.findUnique({
+      where: { id },
+      include: {
+        userOrganizations: true,
+        userGames: {
+          take: 4,
+          include: {
+            game: true,
+          },
+        },
+      },
+    });
   }
 
   async updateById(id: number, data: any) {

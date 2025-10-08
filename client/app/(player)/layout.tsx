@@ -1,4 +1,5 @@
-import React from 'react';
+import Header from '@/components/shared/header';
+import React, { Suspense } from 'react';
 
 type Props = {};
 

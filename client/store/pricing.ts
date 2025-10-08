@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 
-enum SubscriptionType {
+export enum SubscriptionType {
   FREE,
   PREMIUM,
   CORPORATE,
