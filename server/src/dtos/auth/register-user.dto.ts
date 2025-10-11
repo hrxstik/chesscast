@@ -14,5 +14,6 @@ export class RegisterUserDto {
   password: string;
 
   @IsString()
+  @MinLength(6)
   passwordRepeat: string;
 }

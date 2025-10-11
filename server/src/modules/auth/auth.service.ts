@@ -53,9 +53,11 @@ export class AuthService {
   async register(dto: RegisterUserDto) {
     const existingUser = await this.userRepository.findByEmail(dto.email);
     if (existingUser) {
-      throw new UnauthorizedException(
-        'Пользователь с таким email уже существует',
-      );
+      throw new UnauthorizedException('User with this email already exists');
+    }
+
+    if (dto.password !== dto.passwordRepeat) {
+      throw new UnauthorizedException('Passwords do not match');
     }
 
     try {
@@ -83,5 +85,39 @@ export class AuthService {
     const user = await this.userRepository.findById(userId);
     if (!user) return null;
     return user;
+  }
+
+  async validateGoogleUser(profile: any) {
+    const { id: providerId, emails, name, photos } = profile;
+    const email = emails[0].value;
+
+    let user = await this.userRepository.findByEmail(email);
+
+    if (!user) {
+      user = await this.userRepository.create({
+        data: {
+          provider: 'google',
+          providerId: providerId,
+          email,
+          name: `${name.givenName} ${name.familyName}`,
+          avatar: photos[0]?.value,
+          subscriptionEnd: new Date(new Date().setFullYear(2099)),
+          password: null,
+        },
+      });
+    }
+
+    const payload = { sub: user.id, email: user.email };
+    const access_token = this.jwtService.sign(payload);
+
+    return {
+      access_token,
+      user: {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        avatar: user.avatar,
+      },
+    };
   }
 }

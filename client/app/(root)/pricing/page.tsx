@@ -23,7 +23,7 @@ export default function PricingPage() {
           </p>
         </div>
 
-        <div className="grid gap-8 lg:grid-cols-3 max-w-7xl mx-auto">
+        <div className="grid gap-8 lg:grid-cols-2 max-w-7xl mx-auto">
           {plans.map(({ title, price, description, features }) => (
             <PlanCard
               key={title}

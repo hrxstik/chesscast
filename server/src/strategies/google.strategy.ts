@@ -28,15 +28,19 @@ export class GoogleStrategy extends PassportStrategy(Strategy, 'google') {
     done: VerifyCallback,
   ): Promise<any> {
     const { id, name, emails, photos } = profile;
-
-    const user = {
-      provider: 'google',
-      providerId: id,
-      email: emails[0].value,
-      name: `${name.givenName} ${name.familyName}`,
-      picture: photos[0].value,
-    };
-
-    done(null, user);
+    const user = await this.userRepository.findByEmail(emails[0].value);
+    if (!user) {
+      const newUser = await this.userRepository.create({
+        data: {
+          provider: 'google',
+          providerId: id,
+          email: emails[0].value,
+          name: `${name.givenName} ${name.familyName}`,
+          avatar: photos[0]?.value,
+        },
+      });
+      return done(null, newUser);
+    }
+    return done(null, user);
   }
 }

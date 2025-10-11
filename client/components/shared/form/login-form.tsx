@@ -8,6 +8,7 @@ import { FormInput } from './form-input';
 import { LoginFormValues, loginSchema } from './schemas';
 import toast from 'react-hot-toast';
 import { Button } from '@/components/ui/button';
+import { GoogleButton } from '../google-button';
 
 interface Props {
   onClose?: () => void;
@@ -61,11 +62,7 @@ export const LoginForm: React.FC<Props> = ({ onClose }) => {
           Войти
         </Button>
 
-        <Link
-          href="/api/auth/google"
-          className="w-full block text-center mt-3 py-2 border border-gray-400 rounded hover:bg-gray-100">
-          Войти через Google
-        </Link>
+        <GoogleButton />
 
         <p className="text-sm text-center mt-6">
           Нет аккаунта?{' '}

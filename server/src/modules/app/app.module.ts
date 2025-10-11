@@ -1,12 +1,12 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
-import { StockfishService } from '../../stockfish.service';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import googleConfig from '../../config/config';
 import { UploadModule } from '../upload/upload.module';
 import { ServeStaticModule } from '@nestjs/serve-static';
 import { join } from 'path';
+import { AuthModule } from '../auth/auth.module';
 
 @Module({
   imports: [
@@ -35,8 +35,9 @@ import { join } from 'path';
       },
     ),
     UploadModule,
+    AuthModule,
   ],
   controllers: [AppController],
-  providers: [StockfishService, AppService],
+  providers: [AppService],
 })
 export class AppModule {}
