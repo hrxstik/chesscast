@@ -1,0 +1,6 @@
+export enum Subscription {
+  FREE = 'FREE',
+  PREMIUM = 'PREMIUM',
+  CORPORATE = 'CORPORATE',
+  CORPORATE_PLUS = 'CORPORATE_PLUS',
+}

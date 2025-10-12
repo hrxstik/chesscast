@@ -7,6 +7,7 @@ import { UploadModule } from '../upload/upload.module';
 import { ServeStaticModule } from '@nestjs/serve-static';
 import { join } from 'path';
 import { AuthModule } from '../auth/auth.module';
+import { PricingModule } from '../pricing/pricing.module';
 
 @Module({
   imports: [
@@ -36,6 +37,7 @@ import { AuthModule } from '../auth/auth.module';
     ),
     UploadModule,
     AuthModule,
+    PricingModule,
   ],
   controllers: [AppController],
   providers: [AppService],

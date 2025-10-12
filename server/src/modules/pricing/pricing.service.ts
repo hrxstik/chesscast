@@ -1,28 +1,20 @@
-import { create } from 'zustand';
+// pricing.service.ts
+import { Injectable } from '@nestjs/common';
+import { Subscription } from '@prisma/client';
 
-export enum SubscriptionType {
-  FREE,
-  PREMIUM,
-  CORPORATE,
-}
-
-interface Plan {
+export interface Plan {
   title: string;
   price: string;
   description: string;
   features: string[];
+  type: Subscription;
 }
 
-interface PricingStore {
-  plans: Plan[];
-  setPlans: (Plans: Plan[]) => void;
-  subscriptionType: SubscriptionType;
-}
-
-export const usePricingStore = create<PricingStore>((set) => ({
-  plans: [
+@Injectable()
+export class PricingService {
+  private plans: Plan[] = [
     {
-      type: SubscriptionType.FREE,
+      type: Subscription.FREE,
       title: 'Базовый',
       price: '0 ₽',
       description: 'Для начинающих игроков',
@@ -32,7 +24,7 @@ export const usePricingStore = create<PricingStore>((set) => ({
       ],
     },
     {
-      type: SubscriptionType.PREMIUM,
+      type: Subscription.PREMIUM,
       title: 'Премиум',
       price: '299 ₽ / мес',
       description: 'Для профессионалов и тренеров',
@@ -43,7 +35,7 @@ export const usePricingStore = create<PricingStore>((set) => ({
       ],
     },
     {
-      type: SubscriptionType.CORPORATE,
+      type: Subscription.CORPORATE,
       title: 'Корпоративная',
       price: '2999 ₽ / мес',
       description: 'Для организаций и клубов',
@@ -54,13 +46,18 @@ export const usePricingStore = create<PricingStore>((set) => ({
       ],
     },
     {
-      type: SubscriptionType.CORPORATE,
+      type: Subscription.CORPORATE,
       title: 'Корпоративная+',
       price: '4999 ₽ / мес',
       description: 'Для больших организаций и клубов',
-      features: ['Все корпоративные функции', '6000 партий организации в месяц'],
+      features: [
+        'Все корпоративные функции',
+        '6000 партий организации в месяц',
+      ],
     },
-  ],
-  setPlans: (plans) => set({ plans }),
-  subscriptionType: SubscriptionType.FREE,
-}));
+  ];
+
+  getPlans(): Plan[] {
+    return this.plans;
+  }
+}

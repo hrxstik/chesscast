@@ -1,13 +1,18 @@
-'use client';
-
 import { PlanCard } from '@/components/shared/plan-card';
 import { Title } from '@/components/shared/title';
-import { usePricingStore } from '@/store/pricing';
-import Link from 'next/link';
+import { fetchPlans } from '@/lib/api/plans';
 import React from 'react';
 
-export default function PricingPage() {
-  const plans = usePricingStore((state) => state.plans);
+export interface Plan {
+  title: string;
+  price: string;
+  description: string;
+  features: string[];
+}
+
+export default async function PricingPage() {
+  const plans: Plan[] = await fetchPlans();
+
   return (
     <div className="min-h-[90vh] flex items-center justify-center">
       <section className="py-16 px-4">

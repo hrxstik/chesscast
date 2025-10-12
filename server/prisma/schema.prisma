@@ -112,6 +112,7 @@ enum Subscription {
   FREE
   PREMIUM
   CORPORATE
+  CORPORATE_PLUS
 }
 
 enum Role {

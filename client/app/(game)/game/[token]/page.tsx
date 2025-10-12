@@ -3,7 +3,7 @@
 import React, { useEffect, useState } from 'react';
 import { Chessboard } from 'react-chessboard';
 import { useRouter } from 'next/navigation';
-import { ApiRoutes } from '@/services/routes';
+import { ApiRoutes } from '@/lib/services/routes';
 
 type Move = string;
 
