@@ -1,9 +1,9 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
-import { Chessboard } from 'react-chessboard';
-import { useRouter } from 'next/navigation';
-import { ApiRoutes } from '@/lib/services/routes';
+import Engine from '@/lib/services/engine';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { Chessboard, PieceDropHandlerArgs } from 'react-chessboard';
+import { Chess } from 'chess.js';
 
 type Move = string;
 
@@ -21,113 +21,159 @@ type Props = {
 };
 
 export default function GamePage({ params }: Props) {
-  const router = useRouter();
+  //TODO: add useEngine hook
+  const engine = useMemo(() => new Engine(), []);
 
-  // const token = params.token;
+  // create a chess game using a ref to always have access to the latest game state within closures and maintain the game state across renders
+  const chessGameRef = useRef(new Chess());
+  const chessGame = chessGameRef.current;
 
-  const [game, setGame] = useState<GameData | null>({
-    id: 1,
-    token: '123',
-    initialPosition: 'startpos',
-    moves: ['e2e4', 'e7e5'],
-  });
-  const [currentMoveIndex, setCurrentMoveIndex] = useState(0);
+  // track the current position of the chess game in state to trigger a re-render of the chessboard
+  const [chessPosition, setChessPosition] = useState(chessGame.fen());
 
-  // Рассчет FEN позиции для текущего хода (можно вычислять на бэке или через библиотеку chess.js)
-  const [position, setPosition] = useState<string>('startpos');
+  // store engine variables
+  const [positionEvaluation, setPositionEvaluation] = useState(0);
+  const [engineReady, setEngineReady] = useState(false);
 
-  // useEffect(() => {
-  //   if (!token) return;
+  const [depth, setDepth] = useState(10);
+  const [bestLine, setBestLine] = useState('');
+  const [possibleMate, setPossibleMate] = useState('');
 
-  //   async function fetchGame() {
-  //     const res = await fetch(`${ApiRoutes.GET_GAME}/${token}`);
-  //     if (!res.ok) {
-  //       alert('Игра не найдена');
-  //       return;
-  //     }
-  //     const data: GameData = await res.json();
-  //     setGame(data);
-  //     setCurrentMoveIndex(data.moves.length);
-  //   }
+  useEffect(() => {
+    const checkEngineReady = setInterval(() => {
+      if (engine.isReady) {
+        setEngineReady(true);
+        clearInterval(checkEngineReady);
+        findBestMove();
+      }
+    }, 100);
 
-  //   fetchGame();
-  // }, [token]);
+    return () => {
+      clearInterval(checkEngineReady);
+    };
+  }, [engine]);
 
-  // useEffect(() => {
-  //   if (!game) return;
-
-  //   // Просто для примера: формируем position 'startpos' или применяем ходы для задачи
-  //   // В реальном проекте лучше получать FEN с бэка для каждого хода
-  //   if (currentMoveIndex === 0) {
-  //     setPosition(game.initialPosition);
-  //   } else {
-  //     // Здесь можно интегрировать chess.js и играть ходы по массиву game.moves.slice(0, currentMoveIndex)
-  //     // Сейчас просто фиктивно переключаемся, оставим как есть
-  //     setPosition('startpos');
-  //   }
-  // }, [currentMoveIndex, game]);
-
-  const onDelete = async () => {
-    if (!game) return;
-    if (!confirm('Удалить игру?')) return;
-
-    const res = await fetch(`/api/game/${game.id}`, {
-      method: 'DELETE',
-    });
-    if (res.ok) {
-      alert('Игра удалена');
-      router.push('/');
-    } else {
-      alert('Ошибка при удалении');
+  useEffect(() => {
+    if (engineReady) {
+      findBestMove();
     }
+  }, [engineReady]);
+
+  // when the chess game position changes, find the best move
+  useEffect(() => {
+    if (engineReady && !(chessGame.isGameOver() || chessGame.isDraw())) {
+      findBestMove();
+    }
+  }, [chessGame.fen()]);
+
+  // find the best move
+  function findBestMove() {
+    engine.evaluatePosition(chessGame.fen(), 18);
+    engine.onMessage(({ positionEvaluation, possibleMate, pv, depth }) => {
+      // ignore messages with a depth less than 10
+      if (depth && depth < 10) {
+        return;
+      }
+
+      // update the position evaluation
+      if (positionEvaluation) {
+        setPositionEvaluation(
+          ((chessGame.turn() === 'w' ? 1 : -1) * Number(positionEvaluation)) / 100,
+        );
+      }
+
+      // update the possible mate, depth and best line
+      if (possibleMate) {
+        setPossibleMate(possibleMate);
+      }
+      if (depth) {
+        setDepth(depth);
+      }
+      if (pv) {
+        setBestLine(pv);
+      }
+    });
+  }
+
+  // handle piece drop
+  function onPieceDrop({ sourceSquare, targetSquare }: PieceDropHandlerArgs) {
+    // type narrow targetSquare potentially being null (e.g. if dropped off board)
+    if (!targetSquare) {
+      return false;
+    }
+
+    // try to make the move
+    try {
+      chessGame.move({
+        from: sourceSquare,
+        to: targetSquare,
+        promotion: 'q', // always promote to a queen for example simplicity
+      });
+      setPossibleMate('');
+
+      // update the game state
+      setChessPosition(chessGame.fen());
+
+      // stop the engine (it will be restarted by the useEffect running findBestMove)
+      engine.stop();
+
+      // reset the best line
+      setBestLine('');
+
+      // if the game is over, return false
+      if (chessGame.isGameOver() || chessGame.isDraw()) {
+        return false;
+      }
+
+      // return true as the move was successful
+      return true;
+    } catch {
+      // return false as the move was not successful
+      return false;
+    }
+  }
+
+  // get the best move
+  const bestMove = bestLine?.split(' ')?.[0];
+
+  // set the chessboard options, using arrows to show the best move
+  const chessboardOptions = {
+    arrows: bestMove
+      ? [
+          {
+            startSquare: bestMove.substring(0, 2),
+            endSquare: bestMove.substring(2, 4),
+            color: 'rgb(0, 128, 0)',
+          },
+        ]
+      : undefined,
+    position: chessPosition,
+    onPieceDrop,
+    id: 'analysis-board',
   };
 
-  // if (!game) return <div>Загрузка...</div>;
-
   return (
-    <div className="min-h-screen bg-gray-100 flex flex-col">
-      <header className="bg-white shadow p-4 flex justify-between items-center">
-        <h1 className="text-xl font-bold text-gray-900">Игра {game.token || '123'}</h1>
-        <button
-          className="bg-red-600 text-white px-4 py-2 rounded hover:bg-red-700 transition"
-          onClick={onDelete}>
-          Удалить игру
-        </button>
-      </header>
+    <div>
+      <div>
+        Position Evaluation: {possibleMate ? `#${possibleMate}` : positionEvaluation}
+        {'; '}
+        Depth: {depth}
+      </div>
+      <div>
+        Best line: <i>{bestLine.slice(0, 40)}</i> ...
+      </div>
 
-      <main className="flex flex-grow max-w-7xl mx-auto p-6 gap-6">
-        <section className="flex-shrink-0">
-          <Chessboard position={position} />
-        </section>
+      <Chessboard options={chessboardOptions} />
 
-        <aside className="flex-grow bg-white rounded shadow p-6 flex flex-col">
-          <div className="mb-4">
-            <button
-              disabled={currentMoveIndex <= 0}
-              onClick={() => setCurrentMoveIndex(currentMoveIndex - 1)}
-              className="mr-2 px-3 py-1 bg-gray-300 rounded disabled:opacity-50">
-              Назад
-            </button>
-            <button
-              disabled={currentMoveIndex >= game.moves.length}
-              onClick={() => setCurrentMoveIndex(currentMoveIndex + 1)}
-              className="px-3 py-1 bg-gray-300 rounded disabled:opacity-50">
-              Вперёд
-            </button>
-          </div>
-
-          <div className="overflow-auto border border-gray-300 rounded p-3 bg-gray-50 flex-grow">
-            <h2 className="text-lg font-semibold mb-2">Ходы ({game.moves.length})</h2>
-            <ul>
-              {game.moves.map((move, i) => (
-                <li key={i} className={i === currentMoveIndex - 1 ? 'font-bold' : ''}>
-                  {i + 1}. {move}
-                </li>
-              ))}
-            </ul>
-          </div>
-        </aside>
-      </main>
+      <p
+        style={{
+          fontSize: '0.8rem',
+          color: '#666',
+        }}>
+        Make moves on the board to analyze positions. The green arrow shows Stockfish&apos;s
+        suggested best move. The evaluation is shown in centipawns (positive numbers favor White,
+        negative favor Black).
+      </p>
     </div>
   );
 }
