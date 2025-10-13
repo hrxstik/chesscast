@@ -1,3 +1,4 @@
+import { Container } from '@/components/shared/container';
 import React from 'react';
 
 type Props = {
@@ -5,5 +6,5 @@ type Props = {
 };
 
 export default function GameLayout({ children }: Props) {
-  return <div>{children}</div>;
+  return <Container>{children}</Container>;
 }

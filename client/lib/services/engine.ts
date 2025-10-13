@@ -1,4 +1,4 @@
-type EngineMessage = {
+export type EngineMessage = {
   uciMessage: string;
   bestMove?: string;
   ponder?: string;
@@ -9,50 +9,29 @@ type EngineMessage = {
 };
 
 export default class Engine {
-  private stockfish: Worker | null = null;
-  private messageCallbacks: ((message: EngineMessage) => void)[] = [];
-  public isReady: boolean = false;
+  stockfish: Worker;
+  onMessage: (callback: (messageData: EngineMessage) => void) => void;
+  isReady: boolean;
 
   constructor() {
-    if (typeof window !== 'undefined') {
-      this.init();
-    }
-  }
+    this.stockfish = new Worker('/engine/stockfish.wasm.js');
 
-  private async init() {
-    try {
-      this.stockfish = new Worker('/engine/stockfish.wasm.js');
-
+    this.isReady = false;
+    this.onMessage = (callback) => {
       this.stockfish.addEventListener('message', (e) => {
-        const message = this.transformSFMessageData(e);
-        this.messageCallbacks.forEach((callback) => callback(message));
+        callback(this.transformSFMessageData(e));
       });
-
-      await this.initializeEngine();
-    } catch (error) {
-      console.error('Failed to initialize engine:', error);
-    }
+    };
+    this.init();
   }
 
-  private initializeEngine(): Promise<void> {
-    return new Promise((resolve) => {
-      if (!this.stockfish) {
-        resolve();
-        return;
+  init() {
+    this.stockfish.postMessage('uci');
+    this.stockfish.postMessage('isready');
+    this.onMessage(({ uciMessage }) => {
+      if (uciMessage === 'readyok') {
+        this.isReady = true;
       }
-
-      this.stockfish.postMessage('uci');
-      this.stockfish.postMessage('isready');
-
-      const readyHandler = (message: EngineMessage) => {
-        if (message.uciMessage === 'readyok') {
-          this.isReady = true;
-          this.messageCallbacks = this.messageCallbacks.filter((cb) => cb !== readyHandler);
-          resolve();
-        }
-      };
-
-      this.messageCallbacks.push(readyHandler);
     });
   }
 
@@ -70,16 +49,7 @@ export default class Engine {
     };
   }
 
-  onMessage(callback: (message: EngineMessage) => void) {
-    this.messageCallbacks.push(callback);
-  }
-
-  async evaluatePosition(fen: string, depth = 12) {
-    if (!this.stockfish || !this.isReady) {
-      console.warn('Engine not ready yet');
-      return;
-    }
-
+  evaluatePosition(fen: string, depth = 12) {
     if (depth > 24) depth = 24;
 
     this.stockfish.postMessage(`position fen ${fen}`);
@@ -87,15 +57,11 @@ export default class Engine {
   }
 
   stop() {
-    if (this.stockfish) {
-      this.stockfish.postMessage('stop');
-    }
+    this.stockfish.postMessage('stop');
   }
 
   terminate() {
     this.isReady = false;
-    if (this.stockfish) {
-      this.stockfish.postMessage('quit');
-    }
+    this.stockfish.postMessage('quit');
   }
 }
