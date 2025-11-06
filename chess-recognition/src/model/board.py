@@ -75,7 +75,7 @@ class Board:
     minArea = self.__squaresAverage * 0.25
 
     # check if the boxes intersect with any square
-    for (name, bounding_box, accuracy, classID) in detections:
+    for (name, bounding_box, confidence, classID) in detections:
       old_area = 0
       for row in self.squares:
         for square in row:
@@ -85,7 +85,7 @@ class Board:
           )
 
           if area is not None and area > minArea and area > old_area:
-            square.createPiece(name, accuracy, classID)
+            square.createPiece(name, confidence, classID)
 
     return (self.squares, detections)
 
@@ -110,7 +110,7 @@ class Board:
       for (r_idx, row) in enumerate(self.squares):
         for (c_idx, square) in enumerate(row):
           if not square.isEmpty:
-            print('[{}, {}] {} | {} | {:.2f}%'.format(r_idx, c_idx, square.piece.color, square.piece.name, square.piece.acc))
+            print('[{}, {}] {} | {} | {:.2f}%'.format(r_idx, c_idx, square.piece.color, square.piece.name, square.piece.confidence))
           else:
             print('[{}, {}] Empty'.format(r_idx, c_idx))
 

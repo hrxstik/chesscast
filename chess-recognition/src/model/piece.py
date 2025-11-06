@@ -3,11 +3,11 @@ from enumeration import Color, PieceName
 class Piece:
   name:PieceName = None
   color:Color = None
-  acc: float
+  confidence: float
   classID: int = None
 
-  def __init__(self, name=None, acc=None, classID=None):
-    self.acc = acc
+  def __init__(self, name=None, confidence=None, classID=None):
+    self.confidence = confidence
 
     arr = name.split('-')
     self.color = Color.BLACK if arr[0] == 'black' else Color.WHITE
