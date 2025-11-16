@@ -2,9 +2,8 @@ import { Injectable, InternalServerErrorException } from '@nestjs/common';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import sharp from 'sharp';
-import { v4 as uuidv4 } from 'uuid';
+import crypto from 'crypto';
 
-@Injectable()
 @Injectable()
 export class UploadService {
   private uploadBaseDir = path.join(process.cwd(), 'uploads');
@@ -15,7 +14,7 @@ export class UploadService {
   ): Promise<string> {
     try {
       const ext = path.extname(file.originalname);
-      const filename = `${uuidv4()}${ext}`;
+      const filename = `${crypto.randomUUID()}${ext}`;
 
       const uploadDir = folder
         ? path.join(this.uploadBaseDir, folder)

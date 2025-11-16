@@ -6,8 +6,8 @@ import {
 import { GameRepository } from './game.repository';
 import { Game, GameResult, GameStatus, Prisma } from '@prisma/client';
 import { CreateGameDto } from 'src/dtos/create/create-game.dto';
-import { v4 as uuidv4 } from 'uuid';
 import { OrganizationService } from '../organization/organization.service';
+import crypto from 'crypto';
 
 @Injectable()
 export class GameService {
@@ -51,7 +51,7 @@ export class GameService {
       }
     }
 
-    const token = uuidv4();
+    const token = crypto.randomUUID();
 
     const createData: Prisma.GameCreateInput = {
       mode: data.mode,

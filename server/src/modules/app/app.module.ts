@@ -8,6 +8,7 @@ import { ServeStaticModule } from '@nestjs/serve-static';
 import { join } from 'path';
 import { AuthModule } from '../auth/auth.module';
 import { PricingModule } from '../pricing/pricing.module';
+import { JwtModule } from '@nestjs/jwt';
 
 @Module({
   imports: [
@@ -38,6 +39,11 @@ import { PricingModule } from '../pricing/pricing.module';
     UploadModule,
     AuthModule,
     PricingModule,
+    JwtModule.register({
+      global: true,
+      secret: process.env.JWT_SECRET_KEY,
+      signOptions: { expiresIn: '30d' },
+    }),
   ],
   controllers: [AppController],
   providers: [AppService],
