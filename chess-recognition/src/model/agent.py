@@ -53,9 +53,3 @@ class Agent:
                 if move in self.board.legal_moves:
                     return move
         return None
-
-  def makeMove(self, move: chess.Move):
-    """
-    Make a move on virtual chess board
-    """
-    self.board.push(move)

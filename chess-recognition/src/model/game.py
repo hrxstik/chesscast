@@ -108,16 +108,6 @@ class Game():
     else:
       return (False, None)
 
-  # def __updateFrameRate(self):
-  #   now = time.time()
-  #   dt = (now - self.__lastupdate)
-  #   if dt <= 0:
-  #       dt = 1e-12
-  #   fps2 = 1.0 / dt
-  #   self.__lastupdate = now
-  #   self.__fps = self.__fps * 0.9 + fps2 * 0.1
-  #   print('Mean Frame Rate: {:.2f} FPS'.format(self.__fps))
-
   def __runScan(self):
     if self.__hand_present:
       return None
