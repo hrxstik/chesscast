@@ -1,9 +1,7 @@
 'use client';
 
-import Engine from '@/lib/services/engine';
-import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Chessboard, PieceDropHandlerArgs } from 'react-chessboard';
-import { Chess } from 'chess.js';
+import React from 'react';
+import { Chessboard } from 'react-chessboard';
 import { useEngine } from '@/lib/hooks/useEngine';
 
 type Move = string;
