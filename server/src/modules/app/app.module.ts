@@ -8,6 +8,8 @@ import { ServeStaticModule } from '@nestjs/serve-static';
 import { join } from 'path';
 import { AuthModule } from '../auth/auth.module';
 import { PricingModule } from '../pricing/pricing.module';
+import { ChessRecognitionModule } from '../chess-recognition/chess-recognition.module';
+import { GameModule } from '../game/game.module';
 import { JwtModule } from '@nestjs/jwt';
 
 @Module({
@@ -39,6 +41,8 @@ import { JwtModule } from '@nestjs/jwt';
     UploadModule,
     AuthModule,
     PricingModule,
+    ChessRecognitionModule,
+    GameModule,
     JwtModule.register({
       global: true,
       secret: process.env.JWT_SECRET_KEY,

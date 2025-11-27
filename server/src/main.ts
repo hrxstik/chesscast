@@ -6,6 +6,7 @@ async function bootstrap() {
   const app = await NestFactory.create(AppModule);
   app.setGlobalPrefix('api');
   app.useGlobalPipes(new ValidationPipe());
+  app.enableCors(); // Включение CORS для WebSocket
   await app.listen(process.env.PORT ?? 5000);
 }
 bootstrap();
