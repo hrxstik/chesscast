@@ -1,5 +1,5 @@
 """
-YOLO 11 детектор для шахматных фигур с поддержкой трекинга
+YOLO 11 детектор для шахматных фигур с поддержкой ByteTrack трекинга
 """
 import cv2
 import numpy as np
@@ -14,7 +14,7 @@ import json
 
 
 class YOLO11Detector:
-    """Детектор шахматных фигур на основе YOLO 11"""
+    """Детектор и трекер шахматных фигур на основе YOLO 11 с ByteTrack"""
     
     def __init__(self, model_path: str, conf_threshold: float = 0.25, iou_threshold: float = 0.45):
         """
@@ -32,12 +32,12 @@ class YOLO11Detector:
         self.conf_threshold = conf_threshold
         self.iou_threshold = iou_threshold
         
-        # Загрузка конфигурации классов (если есть)
+        # Загрузка конфигурации классов
         self.class_names = self.model.names
         
     def predict(self, image: np.ndarray) -> List[Tuple[str, Tuple[int, int, int, int], float, int]]:
         """
-        Детекция фигур на изображении
+        Детекция фигур на изображении (без трекинга)
         
         Args:
             image: Входное изображение (BGR)
@@ -69,121 +69,81 @@ class YOLO11Detector:
                     detections.append((class_name, bbox, conf, cls_id))
         
         return detections
-
-
-class PieceTracker:
-    """Трекер фигур на основе начальной позиции"""
     
-    def __init__(self, initial_position: Dict[str, Tuple[int, int, int, int]]):
+    def track(self, image: np.ndarray, persist: bool = True) -> List[Dict]:
         """
-        Инициализация трекера
+        Детекция и трекинг фигур с использованием ByteTrack
         
         Args:
-            initial_position: Словарь {track_id: (x1, y1, x2, y2, class_name)} 
-                             с начальными позициями фигур
-        """
-        self.initial_positions = initial_position
-        self.current_positions = initial_position.copy()
-        self.track_id_counter = max(initial_position.keys(), default=0) + 1
-        
-    def update(self, detections: List[Tuple[str, Tuple[int, int, int, int], float, int]]) -> Dict[int, Dict]:
-        """
-        Обновление позиций фигур на основе новых детекций
-        
-        Args:
-            detections: Список детекций (class_name, bbox, confidence, class_id)
+            image: Входное изображение (BGR)
+            persist: Сохранять треки между кадрами
             
         Returns:
-            Словарь {track_id: {'bbox': (x1,y1,x2,y2), 'class': str, 'confidence': float}}
+            Список треков: [
+                {
+                    'track_id': int,
+                    'class_name': str,
+                    'bbox': (x1, y1, x2, y2),
+                    'confidence': float,
+                    'class_id': int
+                },
+                ...
+            ]
         """
-        # Простой алгоритм сопоставления по IoU и классу
-        updated_tracks = {}
-        used_detections = set()
+        results = self.model.track(
+            source=image,
+            conf=self.conf_threshold,
+            iou=self.iou_threshold,
+            persist=persist,
+            tracker='bytetrack.yaml',  # Используем ByteTrack
+            verbose=False
+        )
         
-        # Сначала пытаемся обновить существующие треки
-        for track_id, track_data in self.current_positions.items():
-            track_bbox = track_data[:4]
-            track_class = track_data[4] if len(track_data) > 4 else None
-            
-            best_iou = 0.3  # Минимальный IoU для обновления
-            best_detection_idx = None
-            
-            for idx, (class_name, bbox, conf, class_id) in enumerate(detections):
-                if idx in used_detections:
-                    continue
-                    
-                # Проверка класса (если указан)
-                if track_class and class_name != track_class:
-                    continue
+        tracks = []
+        for result in results:
+            if result.boxes is not None and result.boxes.id is not None:
+                boxes = result.boxes
+                track_ids = boxes.id.cpu().numpy().astype(int)
                 
-                iou = self._calculate_iou(track_bbox, bbox)
-                if iou > best_iou:
-                    best_iou = iou
-                    best_detection_idx = idx
-            
-            if best_detection_idx is not None:
-                # Обновляем трек
-                class_name, bbox, conf, class_id = detections[best_detection_idx]
-                self.current_positions[track_id] = bbox + (class_name,)
-                updated_tracks[track_id] = {
-                    'bbox': bbox,
-                    'class': class_name,
-                    'confidence': conf
-                }
-                used_detections.add(best_detection_idx)
-            else:
-                # Трек не обновлен, используем последнюю известную позицию
-                updated_tracks[track_id] = {
-                    'bbox': track_bbox,
-                    'class': track_class or 'unknown',
-                    'confidence': 0.0
-                }
+                for i, (box, track_id) in enumerate(zip(boxes, track_ids)):
+                    cls_id = int(box.cls)
+                    conf = float(box.conf)
+                    class_name = self.class_names[cls_id]
+                    
+                    # Получение координат bbox
+                    x1, y1, x2, y2 = box.xyxy[0].cpu().numpy()
+                    bbox = (int(x1), int(y1), int(x2), int(y2))
+                    
+                    tracks.append({
+                        'track_id': int(track_id),
+                        'class_name': class_name,
+                        'bbox': bbox,
+                        'confidence': conf,
+                        'class_id': cls_id
+                    })
         
-        # Создаем новые треки для неиспользованных детекций
-        for idx, (class_name, bbox, conf, class_id) in enumerate(detections):
-            if idx not in used_detections:
-                track_id = self.track_id_counter
-                self.track_id_counter += 1
-                self.current_positions[track_id] = bbox + (class_name,)
-                updated_tracks[track_id] = {
-                    'bbox': bbox,
-                    'class': class_name,
-                    'confidence': conf
-                }
-        
-        return updated_tracks
+        return tracks
+
+
+class BoardStateMapper:
+    """Маппер для преобразования треков в состояние доски"""
     
-    def _calculate_iou(self, bbox1: Tuple[int, int, int, int], bbox2: Tuple[int, int, int, int]) -> float:
-        """Вычисление IoU между двумя bbox"""
-        x1_1, y1_1, x2_1, y2_1 = bbox1
-        x1_2, y1_2, x2_2, y2_2 = bbox2
-        
-        # Вычисление площади пересечения
-        x1_i = max(x1_1, x1_2)
-        y1_i = max(y1_1, y1_2)
-        x2_i = min(x2_1, x2_2)
-        y2_i = min(y2_1, y2_2)
-        
-        if x2_i <= x1_i or y2_i <= y1_i:
-            return 0.0
-        
-        intersection = (x2_i - x1_i) * (y2_i - y1_i)
-        
-        # Вычисление площадей bbox
-        area1 = (x2_1 - x1_1) * (y2_1 - y1_1)
-        area2 = (x2_2 - x1_2) * (y2_2 - y1_2)
-        union = area1 + area2 - intersection
-        
-        if union == 0:
-            return 0.0
-        
-        return intersection / union
+    def __init__(self):
+        """Инициализация маппера"""
+        # Маппинг классов фигур на ID (как в virtual_board.py)
+        self.piece_class_to_id = {
+            'white-pawn': 0, 'white-rook': 1, 'white-bishop': 2,
+            'white-knight': 3, 'white-king': 4, 'white-queen': 5,
+            'black-pawn': 6, 'black-rook': 7, 'black-bishop': 8,
+            'black-knight': 11, 'black-king': 9, 'black-queen': 10
+        }
     
-    def get_board_state(self, square_mapping: np.ndarray) -> np.ndarray:
+    def tracks_to_board_state(self, tracks: List[Dict], square_mapping: np.ndarray) -> np.ndarray:
         """
-        Получение состояния доски на основе треков и маппинга клеток
+        Преобразование треков в состояние доски
         
         Args:
+            tracks: Список треков от ByteTrack
             square_mapping: Матрица 9x9x2 с координатами углов клеток
             
         Returns:
@@ -191,25 +151,14 @@ class PieceTracker:
         """
         board_state = np.ones((8, 8), dtype=np.int32) * -1
         
-        # Маппинг классов фигур на ID (как в virtual_board.py)
-        piece_class_to_id = {
-            'white-pawn': 0, 'white-rook': 1, 'white-bishop': 2,
-            'white-knight': 3, 'white-king': 4, 'white-queen': 5,
-            'black-pawn': 6, 'black-rook': 7, 'black-bishop': 8,
-            'black-knight': 11, 'black-king': 9, 'black-queen': 10
-        }
-        
-        for track_id, track_data in self.current_positions.items():
-            if len(track_data) < 4:
-                continue
-                
-            bbox = track_data[:4]
-            class_name = track_data[4] if len(track_data) > 4 else None
+        for track in tracks:
+            class_name = track['class_name']
+            bbox = track['bbox']
             
-            if class_name not in piece_class_to_id:
+            if class_name not in self.piece_class_to_id:
                 continue
             
-            piece_id = piece_class_to_id[class_name]
+            piece_id = self.piece_class_to_id[class_name]
             
             # Находим центр bbox
             center_x = (bbox[0] + bbox[2]) / 2
@@ -220,7 +169,9 @@ class PieceTracker:
             
             if square_pos:
                 row, col = square_pos
-                board_state[row, col] = piece_id
+                # Если клетка уже занята, выбираем более уверенную детекцию
+                if board_state[row, col] == -1:
+                    board_state[row, col] = piece_id
         
         return board_state
     

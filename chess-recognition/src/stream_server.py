@@ -35,15 +35,41 @@ def main():
         print(json.dumps({'status': 'error', 'message': str(e)}), flush=True)
         sys.exit(1)
     
-    # Обработка кадров из stdin (base64)
+    # Обработка кадров из stdin (бинарные данные)
     try:
-        for line in sys.stdin:
-            line = line.strip()
-            if not line:
+        while True:
+            # Читаем длину кадра (4 байта)
+            length_bytes = sys.stdin.buffer.read(4)
+            if not length_bytes or len(length_bytes) != 4:
+                break
+            
+            frame_length = int.from_bytes(length_bytes, byteorder='big')
+            
+            # Читаем сам кадр
+            frame_data = b''
+            while len(frame_data) < frame_length:
+                chunk = sys.stdin.buffer.read(frame_length - len(frame_data))
+                if not chunk:
+                    break
+                frame_data += chunk
+            
+            if len(frame_data) != frame_length:
+                print(json.dumps({'status': 'error', 'message': 'Incomplete frame data'}), flush=True)
                 continue
             
             try:
-                result = processor.process_base64_frame(line)
+                # Декодируем изображение из бинарных данных
+                import cv2
+                import numpy as np
+                
+                nparr = np.frombuffer(frame_data, np.uint8)
+                frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+                
+                if frame is None:
+                    print(json.dumps({'status': 'error', 'message': 'Failed to decode image'}), flush=True)
+                    continue
+                
+                result = processor.process_frame(frame)
                 print(json.dumps(result), flush=True)
             except Exception as e:
                 print(json.dumps({'status': 'error', 'message': str(e)}), flush=True)

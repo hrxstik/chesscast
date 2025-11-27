@@ -177,16 +177,21 @@ export class ChessRecognitionService {
   }
 
   /**
-   * Отправка кадра в процесс обработки
+   * Отправка кадра в процесс обработки (бинарные данные)
    */
-  sendFrame(gameToken: string, frameData: string): void {
+  sendFrame(gameToken: string, frameData: Buffer): void {
     const pythonProcess = this.activeProcesses.get(gameToken);
     if (!pythonProcess) {
       throw new Error(`No active stream processing for token ${gameToken}`);
     }
 
-    // Отправка данных в stdin процесса
-    pythonProcess.stdin?.write(frameData + '\n');
+    // Отправка бинарных данных: длина (4 байта) + данные
+    const lengthBuffer = Buffer.allocUnsafe(4);
+    lengthBuffer.writeUInt32BE(frameData.length, 0);
+    
+    // Отправка длины и данных
+    pythonProcess.stdin?.write(lengthBuffer);
+    pythonProcess.stdin?.write(frameData);
   }
 
   /**
