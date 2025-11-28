@@ -1,18 +1,13 @@
 import { Injectable, Logger } from '@nestjs/common';
 import * as mediasoup from 'mediasoup';
-import {
-  Router,
-  Worker,
-  WebRtcTransport,
-  Producer,
-  Consumer,
-} from 'mediasoup/node/lib/types';
+
+type Worker = Awaited<ReturnType<typeof mediasoup.createWorker>>;
 
 interface MediaRoom {
-  router: Router;
-  transports: Map<string, WebRtcTransport>;
-  producers: Map<string, Producer>;
-  consumers: Map<string, Consumer>;
+  router: mediasoup.types.Router;
+  transports: Map<string, mediasoup.types.WebRtcTransport>;
+  producers: Map<string, mediasoup.types.Producer>;
+  consumers: Map<string, mediasoup.types.Consumer>;
 }
 
 @Injectable()
@@ -41,7 +36,7 @@ export class MediasoupService {
     this.logger.log('Mediasoup worker created');
   }
 
-  async createRoom(roomId: string): Promise<Router> {
+  async createRoom(roomId: string): Promise<mediasoup.types.Router> {
     if (!this.worker) {
       await this.initializeWorker();
     }
@@ -123,10 +118,12 @@ export class MediasoupService {
     transport.on('dtlsstatechange', (dtlsState) => {
       if (dtlsState === 'closed') {
         transport.close();
+        room.transports.delete(clientId);
+        this.logger.log(`Transport ${clientId} closed`);
       }
     });
 
-    transport.on('close', () => {
+    transport.on('@close', () => {
       room.transports.delete(clientId);
       this.logger.log(`Transport ${clientId} closed`);
     });
@@ -215,7 +212,7 @@ export class MediasoupService {
 
     const consumer = await transport.consume({
       producerId: producer.id,
-      rtpCapabilities: transport.rtpCapabilities,
+      rtpCapabilities: room.router.rtpCapabilities,
     });
 
     room.consumers.set(consumer.id, consumer);
@@ -258,4 +255,3 @@ export class MediasoupService {
     return room.router.rtpCapabilities;
   }
 }
-

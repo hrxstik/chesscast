@@ -5,7 +5,12 @@ import argparse
 import sys
 import json
 import os
+import warnings
 from pathlib import Path
+
+# Фильтрация предупреждений от ultralytics и других библиотек
+warnings.filterwarnings('ignore', category=UserWarning)
+warnings.filterwarnings('ignore', message='.*pkg_resources.*')
 
 # Добавление пути к модулям
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -31,8 +36,18 @@ def main():
             mapping_dir=mappings_dir,
             on_move_detected=lambda move, board_state: None
         )
+    except FileNotFoundError as e:
+        error_msg = f"File not found: {str(e)}. Make sure the model file exists or the system will use a pretrained model."
+        print(json.dumps({'status': 'error', 'message': error_msg}), flush=True)
+        sys.exit(1)
+    except ValueError as e:
+        # Ошибка маппинга
+        error_msg = str(e)
+        print(json.dumps({'status': 'error', 'message': error_msg}), flush=True)
+        sys.exit(1)
     except Exception as e:
-        print(json.dumps({'status': 'error', 'message': str(e)}), flush=True)
+        error_msg = f"Initialization error: {str(e)}"
+        print(json.dumps({'status': 'error', 'message': error_msg}), flush=True)
         sys.exit(1)
     
     # Обработка кадров из stdin (бинарные данные)

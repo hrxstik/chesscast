@@ -33,12 +33,33 @@ class StreamProcessor:
         self.on_move_detected = on_move_detected
         
         # Загрузка детектора с трекингом
-        self.detector = YOLO11Detector(model_path)
+        # Если модель не найдена, будет использована предобученная YOLO11n
+        self.detector = None
+        try:
+            self.detector = YOLO11Detector(model_path)
+        except (FileNotFoundError, Exception) as e:
+            # Если пользовательская модель не найдена, пробуем предобученную
+            import warnings
+            warnings.warn(f"Custom model not found, trying pretrained YOLO11n: {str(e)}")
+            try:
+                self.detector = YOLO11Detector('yolo11n.pt')
+            except Exception as e2:
+                # Если и предобученная модель не загрузилась, работаем без детекции
+                import warnings
+                warnings.warn(
+                    f"Could not load any model. System will work in calibration-only mode. "
+                    f"Error: {str(e2)}. "
+                    f"To enable piece detection, please train a model using yolo11_training.ipynb"
+                )
+                self.detector = None  # Режим без детекции
         
-        # Загрузка маппинга доски
+        # Загрузка маппинга доски (необязательно)
         self.mapping_data = self._load_mapping()
         if not self.mapping_data or not self.mapping_data.get('success'):
-            raise ValueError(f"Маппинг для токена {game_token} не найден")
+            # Маппинг не найден - работаем без маппинга (режим калибровки)
+            import warnings
+            warnings.warn(f"Маппинг для токена {game_token} не найден. Система будет работать без маппинга.")
+            self.mapping_data = None
         
         # Маппер для преобразования треков в состояние доски
         self.board_mapper = BoardStateMapper()
@@ -58,8 +79,15 @@ class StreamProcessor:
         if not mapping_file.exists():
             return None
         
-        with open(mapping_file, 'r', encoding='utf-8') as f:
-            return json.load(f)
+        try:
+            with open(mapping_file, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                # Проверяем, что маппинг валидный
+                if data.get('success') and 'square_corners' in data:
+                    return data
+                return None
+        except Exception:
+            return None
     
     
     
@@ -73,6 +101,16 @@ class StreamProcessor:
         Returns:
             Словарь с результатами обработки
         """
+        # Если маппинг не загружен, работаем без него
+        if self.mapping_data is None:
+            return {
+                'status': 'processed',
+                'tracks': {},
+                'board_state': [[-1] * 8 for _ in range(8)],
+                'tracks_count': 0,
+                'message': 'Mapping not found. Please calibrate the board first by sending a frame with an empty board.'
+            }
+        
         # Применяем маппинг
         from improved_board_mapping import apply_mapping
         warped = apply_mapping(frame, self.game_token, self.mapping_dir)
@@ -85,7 +123,23 @@ class StreamProcessor:
         
         # Трекинг фигур с использованием ByteTrack
         # persist=True сохраняет треки между кадрами
-        tracks = self.detector.track(warped, persist=True)
+        if self.detector is None:
+            # Режим без детекции - возвращаем пустой результат
+            return {
+                'status': 'processed',
+                'tracks': {},
+                'board_state': [[-1] * 8 for _ in range(8)],
+                'tracks_count': 0,
+                'message': 'Model not loaded. System is in calibration-only mode. Please train a model to enable piece detection.'
+            }
+        
+        try:
+            tracks = self.detector.track(warped, persist=True)
+        except Exception as e:
+            return {
+                'status': 'error',
+                'message': f'Tracking error: {str(e)}'
+            }
         
         # Преобразование треков в состояние доски
         square_corners = np.array(self.mapping_data['square_corners'])

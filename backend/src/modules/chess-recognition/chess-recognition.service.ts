@@ -38,8 +38,17 @@ export class ChessRecognitionService {
       await writeFile(tempImagePath, imageBuffer);
 
       // Запуск Python скрипта для калибровки
+      // Путь относительно корня проекта (не backend/)
+      // process.cwd() может быть backend/ или корень проекта
+      const cwd = process.cwd();
+      const projectRoot =
+        cwd.endsWith('backend') ||
+        cwd.endsWith('backend\\') ||
+        cwd.endsWith('backend/')
+          ? join(cwd, '..')
+          : cwd;
       const pythonScript = join(
-        process.cwd(),
+        projectRoot,
         'chess-recognition',
         'src',
         'calibrate_board.py',
@@ -123,12 +132,23 @@ export class ChessRecognitionService {
     onError: (error: Error) => void,
   ): void {
     if (this.activeProcesses.has(gameToken)) {
-      this.logger.warn(`Stream processing already active for token ${gameToken}`);
+      this.logger.warn(
+        `Stream processing already active for token ${gameToken}`,
+      );
       return;
     }
 
+    // Путь относительно корня проекта (не backend/)
+    // process.cwd() может быть backend/ или корень проекта
+    const cwd = process.cwd();
+    const projectRoot =
+      cwd.endsWith('backend') ||
+      cwd.endsWith('backend\\') ||
+      cwd.endsWith('backend/')
+        ? join(cwd, '..')
+        : cwd;
     const pythonScript = join(
-      process.cwd(),
+      projectRoot,
       'chess-recognition',
       'src',
       'stream_server.py',
@@ -164,8 +184,22 @@ export class ChessRecognitionService {
     });
 
     pythonProcess.stderr.on('data', (data) => {
-      this.logger.error(`Stream processing error: ${data.toString()}`);
-      onError(new Error(data.toString()));
+      const errorText = data.toString();
+      // Фильтруем предупреждения (warnings), которые не являются критическими ошибками
+      if (
+        errorText.includes('UserWarning') ||
+        errorText.includes('pkg_resources is deprecated') ||
+        errorText.includes('Warning:') ||
+        (errorText.trim().startsWith('C:\\') &&
+          errorText.includes('UserWarning'))
+      ) {
+        // Это предупреждение, логируем как debug, но не как ошибку
+        this.logger.debug(`Python warning: ${errorText}`);
+        return;
+      }
+      // Реальные ошибки логируем и отправляем
+      this.logger.error(`Stream processing error: ${errorText}`);
+      onError(new Error(errorText));
     });
 
     pythonProcess.on('close', (code) => {
@@ -188,7 +222,7 @@ export class ChessRecognitionService {
     // Отправка бинарных данных: длина (4 байта) + данные
     const lengthBuffer = Buffer.allocUnsafe(4);
     lengthBuffer.writeUInt32BE(frameData.length, 0);
-    
+
     // Отправка длины и данных
     pythonProcess.stdin?.write(lengthBuffer);
     pythonProcess.stdin?.write(frameData);
@@ -210,11 +244,7 @@ export class ChessRecognitionService {
    * Проверка наличия маппинга для токена
    */
   hasMapping(gameToken: string): boolean {
-    const mappingPath = join(
-      this.mappingsDir,
-      `${gameToken}_mapping.json`,
-    );
+    const mappingPath = join(this.mappingsDir, `${gameToken}_mapping.json`);
     return existsSync(mappingPath);
   }
 }
-

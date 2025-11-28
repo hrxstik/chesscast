@@ -27,7 +27,7 @@ export class OrganizationService {
   }
 
   async create(data: CreateOrganizationDto): Promise<Organization> {
-    const createData = { ...data, inviteCode: generateCode(6) };
+    const createData = { ...data, inviteCode: await generateCode(6) };
     return this.organizationRepository.create(createData);
   }
 
@@ -37,7 +37,7 @@ export class OrganizationService {
       throw new NotFoundException(`Organization with id ${id} not found`);
     }
     return this.organizationRepository.updateById(id, {
-      inviteCode: generateCode(6),
+      inviteCode: await generateCode(6),
     });
   }
 }

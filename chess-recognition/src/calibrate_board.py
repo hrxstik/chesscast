@@ -4,9 +4,14 @@
 import argparse
 import cv2
 import json
+import warnings
 from pathlib import Path
 import sys
 import os
+
+# Фильтрация предупреждений от библиотек
+warnings.filterwarnings('ignore', category=UserWarning)
+warnings.filterwarnings('ignore', message='.*pkg_resources.*')
 
 # Добавление пути к модулям
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))

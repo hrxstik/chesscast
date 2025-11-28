@@ -9,6 +9,7 @@ import {
 } from '@nestjs/websockets';
 import { Server, Socket } from 'socket.io';
 import { Logger } from '@nestjs/common';
+import { join } from 'path';
 import { ChessRecognitionService } from './chess-recognition.service';
 import { MediasoupService } from './mediasoup.service';
 
@@ -43,17 +44,17 @@ export class ChessRecognitionGateway
   handleDisconnect(client: Socket) {
     const gameToken = this.clientGameTokens.get(client.id);
     const roomId = this.clientRooms.get(client.id);
-    
+
     if (gameToken) {
       this.chessRecognitionService.stopStreamProcessing(gameToken);
       this.clientGameTokens.delete(client.id);
     }
-    
+
     if (roomId) {
       this.mediasoupService.closeRoom(roomId);
       this.clientRooms.delete(client.id);
     }
-    
+
     this.logger.log(`Client disconnected: ${client.id}`);
   }
 
@@ -69,18 +70,28 @@ export class ChessRecognitionGateway
       return;
     }
 
-    // Проверка наличия маппинга
-    if (!this.chessRecognitionService.hasMapping(token)) {
-      client.emit('error', {
-        message: 'Board mapping not found. Please calibrate first.',
-      });
-      return;
-    }
-
-    // Путь к модели по умолчанию
+    // Не проверяем маппинг при старте - калибровка произойдет автоматически при первом кадре
+    // Путь к модели по умолчанию (относительно корня проекта)
+    // Если модель не найдена, Python скрипт будет использовать предобученную YOLO11n
+    const cwd = process.cwd();
+    const projectRoot =
+      cwd.endsWith('backend') ||
+      cwd.endsWith('backend\\') ||
+      cwd.endsWith('backend/')
+        ? join(cwd, '..')
+        : cwd;
     const defaultModelPath =
       process.env.YOLO_MODEL_PATH ||
-      './chess-recognition/assets/models/chess_pieces_yolo11_n_best.pt';
+      join(
+        projectRoot,
+        'chess-recognition',
+        'assets',
+        'models',
+        'chess_pieces_yolo11_n_best.pt',
+      );
+
+    // Если файл модели не существует, передаем путь все равно
+    // Python скрипт сам обработает отсутствие файла и использует предобученную модель
 
     // Запуск обработки потока
     this.chessRecognitionService.startStreamProcessing(
@@ -111,7 +122,8 @@ export class ChessRecognitionGateway
     }
 
     try {
-      const rtpCapabilities = await this.mediasoupService.getRouterRtpCapabilities(token);
+      const rtpCapabilities =
+        await this.mediasoupService.getRouterRtpCapabilities(token);
       client.emit('router-rtp-capabilities', rtpCapabilities);
     } catch (error) {
       client.emit('error', { message: error.message });
@@ -150,12 +162,18 @@ export class ChessRecognitionGateway
   ) {
     const { token, dtlsParameters } = data;
     if (!token || !dtlsParameters) {
-      client.emit('error', { message: 'Token and dtlsParameters are required' });
+      client.emit('error', {
+        message: 'Token and dtlsParameters are required',
+      });
       return;
     }
 
     try {
-      await this.mediasoupService.connectTransport(token, client.id, dtlsParameters);
+      await this.mediasoupService.connectTransport(
+        token,
+        client.id,
+        dtlsParameters,
+      );
       client.emit('transport-connected');
     } catch (error) {
       client.emit('error', { message: error.message });
@@ -164,12 +182,15 @@ export class ChessRecognitionGateway
 
   @SubscribeMessage('produce')
   async handleProduce(
-    @MessageBody() data: { token: string; transportId: string; rtpParameters: any },
+    @MessageBody()
+    data: { token: string; transportId: string; rtpParameters: any },
     @ConnectedSocket() client: Socket,
   ) {
     const { token, transportId, rtpParameters } = data;
     if (!token || !transportId || !rtpParameters) {
-      client.emit('error', { message: 'Token, transportId and rtpParameters are required' });
+      client.emit('error', {
+        message: 'Token, transportId and rtpParameters are required',
+      });
       return;
     }
 
@@ -180,12 +201,25 @@ export class ChessRecognitionGateway
         transportId,
         rtpParameters,
       );
-      
+
       // Запускаем обработку потока для этого токена
+      const cwd = process.cwd();
+      const projectRoot =
+        cwd.endsWith('backend') ||
+        cwd.endsWith('backend\\') ||
+        cwd.endsWith('backend/')
+          ? join(cwd, '..')
+          : cwd;
       const defaultModelPath =
         process.env.YOLO_MODEL_PATH ||
-        './chess-recognition/assets/models/chess_pieces_yolo11_n_best.pt';
-      
+        join(
+          projectRoot,
+          'chess-recognition',
+          'assets',
+          'models',
+          'chess_pieces_yolo11_n_best.pt',
+        );
+
       this.chessRecognitionService.startStreamProcessing(
         token,
         defaultModelPath,
@@ -205,8 +239,9 @@ export class ChessRecognitionGateway
   }
 
   @SubscribeMessage('frame')
-  handleFrame(
-    @MessageBody() data: { token: string; frame: Buffer | Uint8Array | number[] },
+  async handleFrame(
+    @MessageBody()
+    data: { token: string; frame: Buffer | Uint8Array | number[] },
     @ConnectedSocket() client: Socket,
   ) {
     const { token, frame } = data;
@@ -221,7 +256,34 @@ export class ChessRecognitionGateway
       const frameBuffer = Buffer.isBuffer(frame)
         ? frame
         : Buffer.from(frame as Uint8Array | number[]);
-      
+
+      // Проверяем наличие маппинга при первом кадре
+      if (!this.chessRecognitionService.hasMapping(token)) {
+        this.logger.log(
+          `No mapping found for token ${token}, starting calibration...`,
+        );
+        client.emit('calibration-started', {
+          message: 'Starting board calibration...',
+        });
+
+        // Запускаем калибровку на первом кадре
+        const calibrationResult =
+          await this.chessRecognitionService.calibrateBoard(token, frameBuffer);
+
+        if (!calibrationResult.success) {
+          client.emit('error', {
+            message: `Calibration failed: ${calibrationResult.message}. Please ensure the board is empty.`,
+          });
+          return;
+        }
+
+        client.emit('calibration-completed', {
+          message: 'Board calibrated successfully',
+          mappingData: calibrationResult.mappingData,
+        });
+        this.logger.log(`Calibration completed for token ${token}`);
+      }
+
       // Отправка бинарного кадра в процесс обработки
       this.chessRecognitionService.sendFrame(token, frameBuffer);
     } catch (error) {
@@ -244,5 +306,3 @@ export class ChessRecognitionGateway
     client.emit('stream-stopped', { token });
   }
 }
-
-

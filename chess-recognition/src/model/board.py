@@ -11,12 +11,13 @@ from dotenv import dotenv_values
 class Board:
   contours: list = None
   squares: list[Square] = None
-  network: Darknet = Darknet.instance()
+  network: Darknet = None  # Ленивая загрузка
   __squaresAverage: int
   __config: Dict = None
 
   def __init__(self) -> None:
     self.__config = dotenv_values()
+    # Darknet загружается только при необходимости, не при импорте класса
 
   def colorBuild(self):
     """
@@ -63,6 +64,10 @@ class Board:
     @return
     A list of `Square` with position of each piece on image
     """
+    # Ленивая загрузка Darknet (только если используется старый код)
+    if self.network is None:
+      self.network = Darknet.instance()
+    
     # previews all image classes
     thresh = float(self.__config.get('PREDICTION_THRESHOLD'))
     res = int(self.__config.get('RESOLUTION'))

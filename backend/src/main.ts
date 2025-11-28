@@ -7,6 +7,9 @@ async function bootstrap() {
   app.setGlobalPrefix('api');
   app.useGlobalPipes(new ValidationPipe());
   app.enableCors(); // Включение CORS для WebSocket
-  await app.listen(process.env.PORT ?? 5000);
+  const port = process.env.PORT ?? 5000;
+  await app.listen(port, '0.0.0.0'); // Слушаем на всех интерфейсах для доступа из сети
+  console.log(`Application is running on: http://0.0.0.0:${port}`);
+  console.log(`Local access: http://localhost:${port}`);
 }
 bootstrap();

@@ -28,7 +28,38 @@ class YOLO11Detector:
         if YOLO is None:
             raise ImportError("ultralytics is required. Install with: pip install ultralytics")
         
-        self.model = YOLO(model_path)
+        # Проверка существования файла модели
+        from pathlib import Path
+        model_file = Path(model_path)
+        
+        if not model_file.exists():
+            # Если пользовательская модель не найдена, используем предобученную YOLO11n
+            # YOLO автоматически скачает модель при первом использовании
+            import warnings
+            warnings.warn(f"Model file not found: {model_path}. Using pretrained YOLO11n model (will be downloaded automatically).")
+            try:
+                # YOLO автоматически скачает предобученную модель при первом вызове
+                self.model = YOLO('yolo11n.pt')  # Предобученная nano модель
+            except Exception as e:
+                raise FileNotFoundError(
+                    f"Failed to load model. Custom model not found: {model_path}. "
+                    f"Pretrained model download also failed: {str(e)}. "
+                    f"Please train a custom model or check your internet connection."
+                )
+        else:
+            try:
+                self.model = YOLO(model_path)
+            except Exception as e:
+                # Если загрузка пользовательской модели не удалась, пробуем предобученную
+                import warnings
+                warnings.warn(f"Failed to load custom model {model_path}: {e}. Trying pretrained YOLO11n model.")
+                try:
+                    self.model = YOLO('yolo11n.pt')
+                except Exception as e2:
+                    raise FileNotFoundError(
+                        f"Failed to load both custom model ({model_path}) and pretrained model: {str(e2)}"
+                    )
+        
         self.conf_threshold = conf_threshold
         self.iou_threshold = iou_threshold
         
