@@ -9,11 +9,13 @@ import { Button } from '@/components/ui/button';
 interface ChessVideoStreamProps {
   gameToken: string;
   modelPath?: string;
+  viewer?: boolean; // Режим просмотра (не стримит, только получает кадры)
 }
 
 export const ChessVideoStreamWebRTC: React.FC<ChessVideoStreamProps> = ({
   gameToken,
   modelPath,
+  viewer = false,
 }) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -41,13 +43,38 @@ export const ChessVideoStreamWebRTC: React.FC<ChessVideoStreamProps> = ({
 
   // Захват кадра и отправка бинарных данных
   const captureAndSendFrame = useCallback(() => {
-    if (!videoRef.current || !canvasRef.current || !socket) return;
+    // Используем socketRef вместо socket, чтобы всегда иметь актуальное значение
+    const currentSocket = socketRef.current || socket;
+
+    if (!videoRef.current || !canvasRef.current || !currentSocket) {
+      console.warn('⚠️ [STREAMER] Cannot capture frame:', {
+        hasVideo: !!videoRef.current,
+        hasCanvas: !!canvasRef.current,
+        hasSocket: !!currentSocket,
+        hasSocketRef: !!socketRef.current,
+        hasSocketState: !!socket,
+      });
+      return;
+    }
 
     const video = videoRef.current;
     const canvas = canvasRef.current;
     const ctx = canvas.getContext('2d');
 
-    if (!ctx) return;
+    if (!ctx) {
+      console.warn('⚠️ [STREAMER] Cannot get canvas context');
+      return;
+    }
+
+    // Проверяем, что видео готово
+    if (video.videoWidth === 0 || video.videoHeight === 0) {
+      console.warn('⚠️ [STREAMER] Video not ready:', {
+        videoWidth: video.videoWidth,
+        videoHeight: video.videoHeight,
+        readyState: video.readyState,
+      });
+      return;
+    }
 
     // Устанавливаем размеры canvas равными видео
     canvas.width = video.videoWidth;
@@ -59,22 +86,31 @@ export const ChessVideoStreamWebRTC: React.FC<ChessVideoStreamProps> = ({
     // Конвертируем в JPEG бинарные данные
     canvas.toBlob(
       (blob) => {
-        if (!blob) return;
+        if (!blob) {
+          console.warn('⚠️ [STREAMER] Failed to create blob from canvas');
+          return;
+        }
 
         // Читаем blob как ArrayBuffer и отправляем бинарные данные
         blob.arrayBuffer().then((buffer) => {
+          const frameData = new Uint8Array(buffer);
+          console.log('📹 [STREAMER] Sending frame', {
+            token: gameToken,
+            frameSize: frameData.length,
+            videoSize: `${video.videoWidth}x${video.videoHeight}`,
+          });
           // Отправляем бинарные данные через WebSocket
           // Socket.IO автоматически обрабатывает ArrayBuffer
-          socket.emit('frame', {
+          currentSocket.emit('frame', {
             token: gameToken,
-            frame: new Uint8Array(buffer),
+            frame: frameData,
           });
         });
       },
       'image/jpeg',
       0.8,
     );
-  }, [socket, gameToken]);
+  }, [socket, gameToken]); // socket оставляем для реактивности, но используем socketRef внутри
 
   // Инициализация камеры
   const startCamera = useCallback(async () => {
@@ -271,31 +307,191 @@ export const ChessVideoStreamWebRTC: React.FC<ChessVideoStreamProps> = ({
 
   // Подключение к WebSocket
   const connectWebSocket = useCallback(() => {
-    // URL для WebSocket (порт бэкенда, обычно 5000)
-    const wsUrl = process.env.NEXT_PUBLIC_WS_URL || 'http://localhost:5000';
+    // URL для WebSocket
+    // Если задана переменная окружения, используем её
+    // Иначе определяем автоматически на основе текущего хоста
+    let wsUrl = process.env.NEXT_PUBLIC_WS_URL;
+
+    if (!wsUrl && typeof window !== 'undefined') {
+      // Автоматически определяем URL на основе текущего хоста
+      const host = window.location.hostname;
+      // Для WebSocket используем ws:// для HTTP и wss:// для HTTPS
+      const protocol = window.location.protocol === 'https:' ? 'https:' : 'http:';
+      // Предполагаем, что бэкенд на порту 5000
+      wsUrl = `${protocol}//${host}:5000`;
+    }
+
+    // Fallback на localhost если ничего не определено
+    if (!wsUrl) {
+      wsUrl = 'http://localhost:5000';
+    }
+
+    // Конвертируем http:// в ws:// и https:// в wss:// для Socket.IO
+    // Socket.IO должен делать это автоматически, но иногда нужно явно указать
+    let socketUrl = wsUrl;
+    if (wsUrl.startsWith('http://')) {
+      socketUrl = wsUrl.replace('http://', 'ws://');
+    } else if (wsUrl.startsWith('https://')) {
+      socketUrl = wsUrl.replace('https://', 'wss://');
+    }
+
+    console.log('🔌 Connecting to WebSocket:', `${socketUrl}/chess-stream`);
+
     const newSocket = io(`${wsUrl}/chess-stream`, {
       transports: ['websocket'],
+      reconnection: true,
+      reconnectionDelay: 1000,
+      reconnectionAttempts: 5,
+      // Явно указываем, что для http:// нужно использовать ws://
+      secure: wsUrl.startsWith('https://'),
+    });
+
+    // Регистрируем обработчик video-frame ДО подключения, чтобы не пропустить кадры
+    // Обработчик для получения видеокадров (режим просмотра)
+    newSocket.on('video-frame', (data: { token: string; frame: string }) => {
+      console.log('📹 [VIEWER] Received video-frame event', {
+        token: data.token,
+        expectedToken: gameToken,
+        frameLength: data.frame?.length,
+        hasVideo: !!videoRef.current,
+        hasCanvas: !!canvasRef.current,
+      });
+
+      if (!videoRef.current || !canvasRef.current) {
+        console.warn('⚠️ Video or canvas ref is null');
+        return;
+      }
+
+      const video = videoRef.current;
+      const canvas = canvasRef.current;
+      const ctx = canvas.getContext('2d');
+
+      if (!ctx) {
+        console.error('❌ Cannot get canvas context');
+        return;
+      }
+
+      // Создаем изображение из base64
+      const img = new Image();
+      img.onload = () => {
+        console.log('✅ Frame image loaded', {
+          width: img.width,
+          height: img.height,
+          canvasWidth: canvas.width,
+          canvasHeight: canvas.height,
+        });
+
+        // Устанавливаем размеры canvas равными изображению
+        if (canvas.width !== img.width || canvas.height !== img.height) {
+          canvas.width = img.width;
+          canvas.height = img.height;
+          console.log('📐 Canvas resized', {
+            width: canvas.width,
+            height: canvas.height,
+          });
+        }
+
+        // Рисуем изображение на canvas
+        ctx.drawImage(img, 0, 0);
+
+        // Если еще не создан поток из canvas, создаем его
+        if (!video.srcObject) {
+          try {
+            console.log('🎬 Creating MediaStream from canvas');
+            // Создаем MediaStream из canvas
+            // Используем 2 FPS, так как кадры приходят с такой частотой
+            const stream = canvas.captureStream(2);
+            video.srcObject = stream;
+            setHasVideoStream(true);
+            console.log('✅ Stream assigned to video, attempting to play');
+
+            // Убеждаемся, что video элемент настроен правильно
+            video.muted = true;
+            video.playsInline = true;
+            video.autoplay = true;
+
+            video
+              .play()
+              .then(() => {
+                console.log('✅ Video playing successfully');
+              })
+              .catch((err) => {
+                console.error('❌ Error playing video stream:', err);
+                // Пытаемся еще раз после небольшой задержки
+                setTimeout(() => {
+                  video.play().catch((e) => {
+                    console.error('❌ Retry play failed:', e);
+                  });
+                }, 100);
+              });
+          } catch (err) {
+            console.error('❌ Error creating stream from canvas:', err);
+            // Если captureStream не поддерживается, это критическая ошибка
+            setError('Ваш браузер не поддерживает отображение видеопотока');
+          }
+        } else {
+          // Поток уже создан, canvas обновляется автоматически
+          // Canvas.captureStream() автоматически подхватывает изменения canvas
+          console.log('🔄 Canvas updated, stream should update automatically');
+        }
+      };
+      img.onerror = (err) => {
+        console.error('❌ Error loading frame image:', err);
+      };
+      img.src = `data:image/jpeg;base64,${data.frame}`;
     });
 
     newSocket.on('connect', () => {
-      console.log('WebSocket connected');
+      console.log('✅ WebSocket connected', { viewer, gameToken });
       setError(null);
 
-      // Запускаем стрим
-      newSocket.emit('start-stream', {
-        token: gameToken,
-        modelPath,
-      });
+      if (viewer) {
+        // Режим просмотра - присоединяемся к комнате
+        console.log('👀 [VIEWER] Joining stream room for token:', gameToken);
+        newSocket.emit('join-stream', {
+          token: gameToken,
+        });
+        setIsStreaming(true); // Помечаем как активный просмотр
+      } else {
+        // Режим стримера - запускаем стрим
+        console.log('📹 [STREAMER] Starting stream for token:', gameToken);
+        newSocket.emit('start-stream', {
+          token: gameToken,
+          modelPath,
+        });
+      }
     });
 
     newSocket.on('stream-started', () => {
       console.log('Stream started');
       setIsStreaming(true);
 
-      // Начинаем отправлять кадры (2 FPS для обработки)
-      frameIntervalRef.current = setInterval(() => {
-        captureAndSendFrame();
-      }, 500); // 2 FPS
+      if (!viewer) {
+        // Начинаем отправлять кадры только если не в режиме просмотра
+        frameIntervalRef.current = setInterval(() => {
+          captureAndSendFrame();
+        }, 500); // 2 FPS
+      }
+    });
+
+    newSocket.on('stream-joined', (data: { token: string }) => {
+      console.log('✅ [VIEWER] Joined stream room', {
+        token: data.token,
+        expectedToken: gameToken,
+      });
+      setIsStreaming(true);
+    });
+
+    newSocket.on('stream-stopped', (data: { token: string }) => {
+      console.log('Stream stopped by streamer');
+      if (viewer) {
+        // В режиме просмотра очищаем поток
+        if (videoRef.current) {
+          videoRef.current.srcObject = null;
+          setHasVideoStream(false);
+        }
+        setIsStreaming(false);
+      }
     });
 
     newSocket.on('calibration-started', (data: { message: string }) => {
@@ -373,9 +569,15 @@ export const ChessVideoStreamWebRTC: React.FC<ChessVideoStreamProps> = ({
 
   // Запуск стриминга
   const startStreaming = useCallback(async () => {
-    await startCamera();
-    connectWebSocket();
-  }, [startCamera, connectWebSocket]);
+    if (viewer) {
+      // В режиме просмотра просто подключаемся к WebSocket
+      connectWebSocket();
+    } else {
+      // В режиме стримера запускаем камеру и подключаемся
+      await startCamera();
+      connectWebSocket();
+    }
+  }, [startCamera, connectWebSocket, viewer]);
 
   // Отслеживание изменений videoRef для обновления состояния
   useEffect(() => {
@@ -484,6 +686,15 @@ export const ChessVideoStreamWebRTC: React.FC<ChessVideoStreamProps> = ({
     };
   }, []); // Убираем hasVideoStream из зависимостей, чтобы не пересоздавать эффект
 
+  // Автоматическое подключение в режиме просмотра
+  useEffect(() => {
+    if (viewer && !socket && !isStreaming) {
+      // Автоматически подключаемся к стриму при монтировании в режиме просмотра
+      connectWebSocket();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [viewer]); // Выполняется только при изменении viewer
+
   // Очистка при размонтировании
   useEffect(() => {
     return () => {
@@ -569,14 +780,14 @@ export const ChessVideoStreamWebRTC: React.FC<ChessVideoStreamProps> = ({
           {!hasVideoStream && !videoRef.current?.srcObject && (
             <div className="absolute inset-0 flex items-center justify-center bg-gray-900 text-white">
               <div className="text-center">
-                <p className="mb-4">Видео не запущено</p>
-                {!isStreaming && <Button onClick={startStreaming}>Начать стрим</Button>}
+                <p className="mb-4">{viewer ? 'Ожидание видеопотока...' : 'Видео не запущено'}</p>
+                {!isStreaming && !viewer && <Button onClick={startStreaming}>Начать стрим</Button>}
               </div>
             </div>
           )}
           {hasVideoStream && videoRef.current?.srcObject && (
             <div className="absolute top-2 left-2 bg-green-500 text-white px-2 py-1 rounded text-xs z-10">
-              Камера активна
+              {viewer ? 'Просмотр активен' : 'Камера активна'}
             </div>
           )}
           <canvas ref={canvasRef} className="hidden" />
