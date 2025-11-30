@@ -11,6 +11,20 @@ from scipy.cluster.hierarchy import linkage, fcluster
 from scipy.spatial.distance import pdist
 from datetime import datetime
 
+# Импорт SAM2.1 для улучшенной калибровки (опционально)
+try:
+    from .sam21_board_detection import detect_board_with_sam21, detect_board_with_sam21_auto
+    SAM3_AVAILABLE = True
+except (ImportError, ValueError):
+    # Если относительный импорт не работает, пробуем абсолютный
+    try:
+        from sam21_board_detection import detect_board_with_sam21, detect_board_with_sam21_auto
+        SAM3_AVAILABLE = True
+    except ImportError:
+        SAM3_AVAILABLE = False
+        detect_board_with_sam21 = None
+        detect_board_with_sam21_auto = None
+
 # Параметры маппинга
 OUTPUT_IMAGE_SIZE = (640, 640)
 MIN_BOARD_AREA_RATIO = 0.1
@@ -69,8 +83,45 @@ def perspective_transform(image: np.ndarray, corners: np.ndarray, output_size: T
 
 def detect_board_boundaries(image: np.ndarray, 
                            min_area_ratio: float = MIN_BOARD_AREA_RATIO,
-                           max_area_ratio: float = MAX_BOARD_AREA_RATIO) -> Optional[np.ndarray]:
-    """Улучшенное определение границ доски"""
+                           max_area_ratio: float = MAX_BOARD_AREA_RATIO,
+                           use_sam3: bool = False) -> Optional[np.ndarray]:
+    """
+    Улучшенное определение границ доски
+    
+    Args:
+        image: Входное изображение
+        min_area_ratio: Минимальная площадь доски относительно изображения
+        max_area_ratio: Максимальная площадь доски относительно изображения
+        use_sam3: Использовать ли SAM3 для определения границ (требует ultralytics>=8.3.0)
+    
+    Returns:
+        Массив из 4 углов доски (4, 2) или None
+    """
+    # Попытка использовать SAM2.1 если доступен и запрошен
+    if use_sam3 and SAM3_AVAILABLE and detect_board_with_sam21_auto:
+        try:
+            sam3_result = detect_board_with_sam21_auto(image)
+            if sam3_result is not None:
+                # Проверяем, что результат соответствует требованиям по размеру
+                h, w = image.shape[:2]
+                total_area = h * w
+                min_area = total_area * min_area_ratio
+                max_area = total_area * max_area_ratio
+                
+                # Вычисляем площадь найденной доски
+                corners = sam3_result
+                width = max(calculate_distance(corners[0], corners[1]), 
+                           calculate_distance(corners[2], corners[3]))
+                height = max(calculate_distance(corners[0], corners[3]), 
+                            calculate_distance(corners[1], corners[2]))
+                area = width * height
+                
+                if min_area <= area <= max_area:
+                    return sam3_result
+        except Exception as e:
+            print(f"SAM3 detection failed, falling back to traditional method: {e}")
+    
+    # Традиционный метод
     h, w = image.shape[:2]
     total_area = h * w
     min_area = total_area * min_area_ratio
@@ -348,7 +399,7 @@ def map_chessboard(image: np.ndarray,
     }
     
     try:
-        board_corners = detect_board_boundaries(image)
+        board_corners = detect_board_boundaries(image, use_sam3=use_sam3)
         
         if board_corners is None:
             result['error'] = "Не удалось определить границы доски"
