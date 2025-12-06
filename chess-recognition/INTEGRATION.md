@@ -201,3 +201,4 @@ YOLO_MODEL_PATH=./chess-recognition/assets/models/chess_pieces_yolo11_n_best.pt
 ```
 
 
+

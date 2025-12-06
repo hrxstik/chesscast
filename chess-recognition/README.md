@@ -46,3 +46,4 @@ python src/stream_server.py --token <game_token> --model <path_to_yolo_model> --
 - `stop-stream` - Остановка обработки
 
 
+
