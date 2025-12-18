@@ -29,6 +29,10 @@ def main():
     mappings_dir = Path(args.mappings_dir)
     
     # Инициализация обработчика потока
+    # Тестовый лог для проверки stderr
+    import sys
+    print(f"🚀 [STARTUP] Starting stream server for token {args.token}, model: {args.model}", file=sys.stderr, flush=True)
+    
     try:
         processor = StreamProcessor(
             model_path=args.model,
@@ -36,6 +40,7 @@ def main():
             mapping_dir=mappings_dir,
             on_move_detected=lambda move, board_state: None
         )
+        print(f"✅ [STARTUP] StreamProcessor initialized successfully", file=sys.stderr, flush=True)
     except FileNotFoundError as e:
         error_msg = f"File not found: {str(e)}. Make sure the model file exists or the system will use a pretrained model."
         print(json.dumps({'status': 'error', 'message': error_msg}), flush=True)

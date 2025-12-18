@@ -21,6 +21,26 @@ export const ChessVideoStream: React.FC<ChessVideoStreamProps> = ({ gameToken, m
   const streamRef = useRef<MediaStream | null>(null);
   const frameIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
+  // Состояние калибровки
+  const [calibrationInProgress, setCalibrationInProgress] = useState(false);
+  const [calibrationCompleted, setCalibrationCompleted] = useState(false);
+  const [calibrationMessage, setCalibrationMessage] = useState<string | null>(null);
+  const calibrationTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const [showManualHint, setShowManualHint] = useState(false);
+
+  // Ручная калибровка (полигон из 4 точек в нормализованных координатах 0..1)
+  const [manualMode, setManualMode] = useState(false);
+  const [manualSubmitting, setManualSubmitting] = useState(false);
+  const [manualCorners, setManualCorners] = useState<
+    { x: number; y: number }[]
+  >([
+    { x: 0.2, y: 0.2 },
+    { x: 0.8, y: 0.2 },
+    { x: 0.8, y: 0.8 },
+    { x: 0.2, y: 0.8 },
+  ]);
+  const [dragIndex, setDragIndex] = useState<number | null>(null);
+
   const {
     chessPosition,
     positionEvaluation,
@@ -67,7 +87,7 @@ export const ChessVideoStream: React.FC<ChessVideoStreamProps> = ({ gameToken, m
     }
   }, []);
 
-  // Захват кадра и отправка на сервер
+  // Захват кадра и отправка на сервер (бинарные данные)
   const captureAndSendFrame = useCallback(() => {
     if (!videoRef.current || !canvasRef.current || !socket) return;
 
@@ -75,23 +95,26 @@ export const ChessVideoStream: React.FC<ChessVideoStreamProps> = ({ gameToken, m
     const canvas = canvasRef.current;
     const ctx = canvas.getContext('2d');
 
-    if (!ctx) return;
+    if (!ctx || video.videoWidth === 0 || video.videoHeight === 0) return;
 
-    // Устанавливаем размеры canvas равными видео
     canvas.width = video.videoWidth;
     canvas.height = video.videoHeight;
-
-    // Рисуем кадр на canvas
     ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
-    // Конвертируем в base64 (в будущем можно использовать бинарные данные)
-    const frameData = canvas.toDataURL('image/jpeg', 0.8).split(',')[1];
-
-    // Отправляем кадр на сервер
+    canvas.toBlob(
+      (blob) => {
+        if (!blob) return;
+        blob.arrayBuffer().then((buffer) => {
+          const frameUint8 = new Uint8Array(buffer);
     socket.emit('frame', {
       token: gameToken,
-      frame: frameData,
+            frame: frameUint8,
+          });
     });
+      },
+      'image/jpeg',
+      0.8,
+    );
   }, [socket, gameToken]);
 
   // Подключение к WebSocket
@@ -116,11 +139,41 @@ export const ChessVideoStream: React.FC<ChessVideoStreamProps> = ({ gameToken, m
       console.log('Stream started');
       setIsStreaming(true);
 
+      // Сбрасываем состояние калибровки
+      setCalibrationCompleted(false);
+      setCalibrationMessage(null);
+      setCalibrationInProgress(false);
+      setShowManualHint(false);
+      if (calibrationTimeoutRef.current) {
+        clearTimeout(calibrationTimeoutRef.current);
+      }
+      // Если авто-калибровка долго не приходит - подсветим ручную
+      calibrationTimeoutRef.current = setTimeout(() => {
+        if (!calibrationCompleted) {
+          setShowManualHint(true);
+        }
+      }, 8000);
+
       // Начинаем отправлять кадры (например, 2 FPS для обработки)
       frameIntervalRef.current = setInterval(() => {
         captureAndSendFrame();
       }, 500); // 2 FPS
     });
+
+    newSocket.on('calibration-started', (data: { message?: string }) => {
+      setCalibrationInProgress(true);
+      setCalibrationMessage(data?.message || 'Калибровка доски...');
+    });
+
+    newSocket.on(
+      'calibration-completed',
+      (data: { message?: string; mappingData?: any }) => {
+        setCalibrationInProgress(false);
+        setCalibrationCompleted(true);
+        setCalibrationMessage(data?.message || 'Калибровка выполнена');
+        setShowManualHint(false);
+      },
+    );
 
     newSocket.on('frame-processed', (data: any) => {
       console.log('Frame processed:', data);
@@ -140,6 +193,7 @@ export const ChessVideoStream: React.FC<ChessVideoStreamProps> = ({ gameToken, m
     newSocket.on('disconnect', () => {
       console.log('WebSocket disconnected');
       setIsStreaming(false);
+      setCalibrationInProgress(false);
       if (frameIntervalRef.current) {
         clearInterval(frameIntervalRef.current);
         frameIntervalRef.current = null;
@@ -147,7 +201,7 @@ export const ChessVideoStream: React.FC<ChessVideoStreamProps> = ({ gameToken, m
     });
 
     setSocket(newSocket);
-  }, [gameToken, modelPath, captureAndSendFrame]);
+  }, [gameToken, modelPath, captureAndSendFrame, calibrationCompleted]);
 
   // Запуск стриминга
   const startStreaming = useCallback(async () => {
@@ -164,6 +218,11 @@ export const ChessVideoStream: React.FC<ChessVideoStreamProps> = ({ gameToken, m
     }
     stopCamera();
     setIsStreaming(false);
+    setCalibrationInProgress(false);
+    if (calibrationTimeoutRef.current) {
+      clearTimeout(calibrationTimeoutRef.current);
+      calibrationTimeoutRef.current = null;
+    }
     if (frameIntervalRef.current) {
       clearInterval(frameIntervalRef.current);
       frameIntervalRef.current = null;
@@ -174,34 +233,185 @@ export const ChessVideoStream: React.FC<ChessVideoStreamProps> = ({ gameToken, m
   useEffect(() => {
     return () => {
       stopStreaming();
+      if (calibrationTimeoutRef.current) {
+        clearTimeout(calibrationTimeoutRef.current);
+      }
     };
   }, [stopStreaming]);
+
+  // Обработка перетаскивания углов полигона
+  const handlePointerDownCorner = useCallback(
+    (index: number) => (e: React.PointerEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      setDragIndex(index);
+    },
+    [],
+  );
+
+  const handlePointerUp = useCallback(() => {
+    setDragIndex(null);
+  }, []);
+
+  const handlePointerMove = useCallback(
+    (e: React.PointerEvent) => {
+      if (dragIndex === null || !videoRef.current) return;
+      const videoEl = videoRef.current;
+      const rect = videoEl.getBoundingClientRect();
+      const xNorm = (e.clientX - rect.left) / rect.width;
+      const yNorm = (e.clientY - rect.top) / rect.height;
+      if (xNorm < 0 || xNorm > 1 || yNorm < 0 || yNorm > 1) return;
+      setManualCorners((prev) =>
+        prev.map((c, i) => (i === dragIndex ? { x: xNorm, y: yNorm } : c)),
+      );
+    },
+    [dragIndex],
+  );
+
+  // Отправка одного кадра и полигона для ручной калибровки
+  const handleManualCalibrate = useCallback(() => {
+    if (!socket || !videoRef.current || !canvasRef.current) return;
+    const video = videoRef.current;
+    const canvas = canvasRef.current;
+    const ctx = canvas.getContext('2d');
+    if (!ctx || video.videoWidth === 0 || video.videoHeight === 0) return;
+
+    setManualSubmitting(true);
+    setCalibrationMessage('Ручная калибровка...');
+
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+    const cornersPx = manualCorners.map((c) => ({
+      x: c.x * canvas.width,
+      y: c.y * canvas.height,
+    }));
+
+    canvas.toBlob(
+      (blob) => {
+        if (!blob) {
+          setManualSubmitting(false);
+          return;
+        }
+        blob.arrayBuffer().then((buffer) => {
+          const frameUint8 = new Uint8Array(buffer);
+          socket.emit(
+            'manual-calibrate',
+            {
+              token: gameToken,
+              frame: frameUint8,
+              corners: cornersPx,
+            },
+            () => {
+              // ack не обязателен, но оставим хук
+            },
+          );
+          setManualSubmitting(false);
+          setManualMode(false);
+        });
+      },
+      'image/jpeg',
+      0.8,
+    );
+  }, [socket, gameToken, manualCorners]);
 
   return (
     <div className="flex flex-col lg:flex-row gap-4 p-4">
       {/* Видео поток */}
       <div className="flex-1">
-        <div className="relative bg-black rounded-lg overflow-hidden">
+        <div
+          className="relative bg-black rounded-lg overflow-hidden"
+          onPointerMove={manualMode ? handlePointerMove : undefined}
+          onPointerUp={manualMode ? handlePointerUp : undefined}
+          onPointerLeave={manualMode ? handlePointerUp : undefined}
+        >
           <video ref={videoRef} autoPlay playsInline muted className="w-full h-auto" />
           <canvas ref={canvasRef} className="hidden" />
+
+          {/* Оверлей статуса калибровки и LIVE */}
+          {isStreaming && (
+            <div className="absolute top-2 right-2 flex flex-col items-end gap-2">
+              <div className="bg-red-500 text-white px-2 py-1 rounded text-sm">LIVE</div>
+              {calibrationInProgress && (
+                <div className="bg-yellow-500 text-white px-2 py-1 rounded text-xs">
+                  {calibrationMessage || 'Калибровка...'}
+                </div>
+              )}
+              {calibrationCompleted && (
+                <div className="bg-emerald-600 text-white px-2 py-1 rounded text-xs">
+                  Калибровка выполнена
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Оверлей ручной калибровки (полигон) */}
+          {isStreaming && manualMode && (
+            <>
+              <div className="absolute inset-0 pointer-events-none">
+                <svg className="w-full h-full">
+                  <polygon
+                    points={manualCorners
+                      .map((c) => `${c.x * 100}%,${c.y * 100}%`)
+                      .join(' ')}
+                    fill="rgba(59,130,246,0.15)"
+                    stroke="rgba(59,130,246,0.9)"
+                    strokeWidth="2"
+                  />
+                </svg>
+              </div>
+              {manualCorners.map((c, idx) => (
+                <div
+                  key={idx}
+                  onPointerDown={handlePointerDownCorner(idx)}
+                  className="absolute w-4 h-4 -ml-2 -mt-2 rounded-full bg-blue-500 border-2 border-white shadow cursor-pointer"
+                  style={{
+                    left: `${c.x * 100}%`,
+                    top: `${c.y * 100}%`,
+                    touchAction: 'none',
+                  }}
+                />
+              ))}
+            </>
+          )}
+
           {!isStreaming && (
             <div className="absolute inset-0 flex items-center justify-center bg-black/50">
               <Button onClick={startStreaming}>Начать стрим</Button>
             </div>
           )}
-          {isStreaming && (
-            <div className="absolute top-2 right-2">
-              <div className="bg-red-500 text-white px-2 py-1 rounded text-sm">LIVE</div>
-            </div>
-          )}
         </div>
         {cameraError && <p className="text-red-500 text-sm mt-2">{cameraError}</p>}
         {error && <p className="text-red-500 text-sm mt-2">{error}</p>}
+        <div className="mt-2 flex flex-col gap-2">
         {isStreaming && (
-          <Button onClick={stopStreaming} className="mt-2" variant="destructive">
+            <Button onClick={stopStreaming} variant="destructive">
             Остановить стрим
           </Button>
         )}
+          {isStreaming && (
+            <div className="flex flex-col sm:flex-row gap-2">
+              <Button
+                type="button"
+                variant={manualMode ? 'default' : 'outline'}
+                className={showManualHint ? 'border-yellow-400 text-yellow-400' : ''}
+                onClick={() => setManualMode((prev) => !prev)}
+              >
+                Проблемы с калибровкой? Нажми сюда
+              </Button>
+              {manualMode && (
+                <Button
+                  type="button"
+                  onClick={handleManualCalibrate}
+                  disabled={manualSubmitting}
+                >
+                  {manualSubmitting ? 'Отправка...' : 'Подтвердить калибровку'}
+                </Button>
+              )}
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Виртуальная доска и анализ */}

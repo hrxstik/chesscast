@@ -104,7 +104,9 @@ export class MediasoupService {
     const transport = await room.router.createWebRtcTransport({
       listenIps: [
         {
-          ip: '127.0.0.1',
+          // Слушаем на всех интерфейсах, а наружный IP берём из MEDIASOUP_ANNOUNCED_IP
+          // (например, 192.168.1.143 в локалке)
+          ip: '0.0.0.0',
           announcedIp: process.env.MEDIASOUP_ANNOUNCED_IP || '127.0.0.1',
         },
       ],
@@ -194,6 +196,7 @@ export class MediasoupService {
     clientId: string,
     transportId: string,
     producerId: string,
+    rtpCapabilities: mediasoup.types.RtpCapabilities,
   ) {
     const room = this.rooms.get(roomId);
     if (!room) {
@@ -212,7 +215,8 @@ export class MediasoupService {
 
     const consumer = await transport.consume({
       producerId: producer.id,
-      rtpCapabilities: room.router.rtpCapabilities,
+      // Используем RTP‑возможности конкретного клиента, а не роутера
+      rtpCapabilities,
     });
 
     room.consumers.set(consumer.id, consumer);
@@ -253,5 +257,17 @@ export class MediasoupService {
     }
 
     return room.router.rtpCapabilities;
+  }
+
+  async getProducers(roomId: string) {
+    const room = this.rooms.get(roomId);
+    if (!room) {
+      return [];
+    }
+
+    return Array.from(room.producers.values()).map((producer) => ({
+      id: producer.id,
+      kind: producer.kind,
+    }));
   }
 }

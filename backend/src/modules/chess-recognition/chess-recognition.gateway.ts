@@ -16,8 +16,10 @@ import { MediasoupService } from './mediasoup.service';
 @WebSocketGateway({
   cors: {
     origin: '*',
+    credentials: true,
   },
   namespace: '/chess-stream',
+  transports: ['websocket', 'polling'], // Поддержка WebSocket и polling для совместимости
 })
 export class ChessRecognitionGateway
   implements OnGatewayConnection, OnGatewayDisconnect
@@ -29,7 +31,12 @@ export class ChessRecognitionGateway
   private readonly clientGameTokens: Map<string, string> = new Map();
   private readonly clientRooms: Map<string, string> = new Map(); // clientId -> roomId
   private readonly streamers: Map<string, string> = new Map(); // clientId -> token (клиенты, которые отправляют кадры)
-  private readonly calibrationAttempted: Map<string, boolean> = new Map(); // token -> attempted (чтобы калибровка запускалась только один раз)
+  private readonly calibrationAttempted: Map<string, boolean> = new Map(); // token -> attempted (чтобы калибровка запускалась только один раз
+  private readonly lastCalibrationFrames: Map<string, Buffer> = new Map(); // token -> последний кадр для калибровки (интервальная калибровка)
+  private readonly processStartedAfterCalibration: Map<string, boolean> =
+    new Map(); // token -> started (чтобы не запускать процесс дважды после калибровки)
+  private readonly autoCalibrationTimers: Map<string, NodeJS.Timeout> =
+    new Map(); // token -> таймер автоматической калибровки
 
   constructor(
     private readonly chessRecognitionService: ChessRecognitionService,
@@ -94,9 +101,10 @@ export class ChessRecognitionGateway
 
     if (isStreamer) {
       this.streamers.delete(client.id);
-      // Очищаем флаг калибровки при отключении стримера
+      // Очищаем флаги калибровки и процесса при отключении стримера
       if (gameToken) {
         this.calibrationAttempted.delete(gameToken);
+        this.processStartedAfterCalibration.delete(gameToken);
       }
       this.logger.log(
         `Streamer ${client.id} disconnected, stopping stream for token ${gameToken}`,
@@ -112,7 +120,7 @@ export class ChessRecognitionGateway
   }
 
   @SubscribeMessage('start-stream')
-  handleStartStream(
+  async handleStartStream(
     @MessageBody() data: { token: string; modelPath?: string },
     @ConnectedSocket() client: Socket,
   ) {
@@ -126,6 +134,10 @@ export class ChessRecognitionGateway
     this.logger.log(
       `📹 [STREAMER] Client ${client.id} starting stream for token ${token}`,
     );
+
+    // Удаляем существующий маппинг при старте стрима (для тестирования)
+    // Это позволяет каждый раз запускать калибровку заново
+    await this.chessRecognitionService.deleteMapping(token);
 
     // Не проверяем маппинг при старте - калибровка произойдет автоматически при первом кадре
     // Путь к модели по умолчанию (относительно корня проекта)
@@ -150,18 +162,8 @@ export class ChessRecognitionGateway
     // Если файл модели не существует, передаем путь все равно
     // Python скрипт сам обработает отсутствие файла и использует предобученную модель
 
-    // Запуск обработки потока
-    this.chessRecognitionService.startStreamProcessing(
-      token,
-      modelPath || defaultModelPath,
-      (result) => {
-        // Отправка результата клиенту
-        client.emit('frame-processed', result);
-      },
-      (error) => {
-        client.emit('error', { message: error.message });
-      },
-    );
+    // НЕ запускаем обработку потока здесь - она запустится в handleProduce после создания Mediasoup producer
+    // Это нужно, чтобы callback отправлял события всем в комнате, а не только стримеру
 
     this.clientGameTokens.set(client.id, token);
 
@@ -200,11 +202,21 @@ export class ChessRecognitionGateway
       return;
     }
 
+    this.logger.log(
+      `📹 [MEDIASOUP] Client ${client.id} requested RTP capabilities for token ${token}`,
+    );
+
     try {
       const rtpCapabilities =
         await this.mediasoupService.getRouterRtpCapabilities(token);
       client.emit('router-rtp-capabilities', rtpCapabilities);
+      this.logger.log(
+        `✅ [MEDIASOUP] RTP capabilities sent to client ${client.id}`,
+      );
     } catch (error) {
+      this.logger.error(
+        `❌ [MEDIASOUP] Error getting RTP capabilities: ${error.message}`,
+      );
       client.emit('error', { message: error.message });
     }
   }
@@ -273,12 +285,20 @@ export class ChessRecognitionGateway
       return;
     }
 
+    this.logger.log(
+      `📹 [STREAMER] Creating producer for client ${client.id}, token ${token}`,
+    );
+
     try {
       const producer = await this.mediasoupService.createProducer(
         token,
         client.id,
         transportId,
         rtpParameters,
+      );
+
+      this.logger.log(
+        `✅ [STREAMER] Producer created: ${producer.id} for token ${token}`,
       );
 
       // Запускаем обработку потока для этого токена
@@ -291,28 +311,174 @@ export class ChessRecognitionGateway
           : cwd;
       const defaultModelPath =
         process.env.YOLO_MODEL_PATH ||
-        join(
-          projectRoot,
-          'chess-recognition',
-          'assets',
-          'models',
-          'chess_pieces_yolo11_n_best.pt',
-        );
+        join(projectRoot, 'chess-recognition', 'bestmerged.pt');
 
+      // Запускаем обработку потока только если еще не запущена И маппинг уже есть
+      // Если маппинга еще нет, процесс будет запущен после завершения калибровки в handleFrame
+      if (
+        !this.chessRecognitionService.hasActiveProcess(token) &&
+        this.chessRecognitionService.hasMapping(token)
+      ) {
+        this.logger.log(
+          `📹 [STREAMER] Starting stream processing for token ${token} in handleProduce`,
+        );
       this.chessRecognitionService.startStreamProcessing(
         token,
         defaultModelPath,
         (result) => {
+            // Логирование информации о детекциях
+            if (result?.detections_info) {
+              const detInfo = result.detections_info;
+              if (detInfo.total_detections > 0) {
+                const classesStr = Object.entries(
+                  detInfo.classes_detected || {},
+                )
+                  .map(([cls, count]) => `${cls}: ${count}`)
+                  .join(', ');
+                this.logger.log(
+                  `🔍 [DETECTION] Token ${token}: Found ${detInfo.total_detections} pieces (${classesStr})`,
+                );
+              } else {
+                this.logger.debug(
+                  `🔍 [DETECTION] Token ${token}: No pieces detected${detInfo.message ? ` - ${detInfo.message}` : ''}`,
+                );
+              }
+            }
+
+            // Отправляем результат стримеру
           client.emit('frame-processed', result);
+
+            // И, дополнительно, всем зрителям в комнате
+            const roomId = `stream:${token}`;
+            this.server.to(roomId).emit('frame-processed', result);
+
+            if (result?.move) {
+              this.logger.log(
+                `♟️ Move detected for token ${token}: ${result.move} (${result.move_san || 'SAN?'})`,
+              );
+            }
         },
         (error) => {
           client.emit('error', { message: error.message });
         },
       );
+      } else {
+        if (this.chessRecognitionService.hasActiveProcess(token)) {
+          this.logger.log(
+            `📹 [STREAMER] Stream processing already active for token ${token}, skipping duplicate start`,
+          );
+        } else {
+          this.logger.log(
+            `📹 [STREAMER] Waiting for calibration to complete before starting stream processing for token ${token}`,
+          );
+        }
+      }
 
       this.clientGameTokens.set(client.id, token);
+      this.streamers.set(client.id, token); // Помечаем как стримера
+
+      // Уведомляем всех в комнате о новом producer
+      const roomId = `stream:${token}`;
+
+      // Получаем количество клиентов в комнате для логирования
+      let clientsInRoom = 0;
+      try {
+        const adapter = this.server.sockets.adapter;
+        if (adapter && adapter.rooms) {
+          const room = adapter.rooms.get(roomId);
+          clientsInRoom = room ? Array.from(room).length : 0;
+        }
+      } catch (error) {
+        // Игнорируем ошибку
+      }
+
+      this.logger.log(
+        `📹 [STREAMER] Notifying ${clientsInRoom} clients in room ${roomId} about new producer ${producer.id}`,
+      );
+
+      client.to(roomId).emit('producer-created', {
+        producerId: producer.id,
+        token,
+      });
+
       client.emit('produced', producer);
     } catch (error) {
+      client.emit('error', { message: error.message });
+    }
+  }
+
+  @SubscribeMessage('consume')
+  async handleConsume(
+    @MessageBody()
+    data: {
+      token: string;
+      transportId: string;
+      producerId: string;
+      rtpCapabilities: any;
+    },
+    @ConnectedSocket() client: Socket,
+  ) {
+    const { token, transportId, producerId, rtpCapabilities } = data;
+    if (!token || !transportId || !producerId || !rtpCapabilities) {
+      client.emit('error', {
+        message:
+          'Token, transportId, producerId and rtpCapabilities are required',
+      });
+      return;
+    }
+
+    this.logger.log(
+      `👀 [VIEWER] Client ${client.id} requesting consumer for producer ${producerId}, token ${token}`,
+    );
+
+    try {
+      const consumer = await this.mediasoupService.createConsumer(
+        token,
+        client.id,
+        transportId,
+        producerId,
+        rtpCapabilities,
+      );
+
+      this.logger.log(
+        `✅ [VIEWER] Consumer created: ${consumer.id} for client ${client.id}`,
+      );
+
+      this.clientRooms.set(client.id, token);
+      client.emit('consumed', consumer);
+    } catch (error) {
+      this.logger.error(
+        `❌ [VIEWER] Error creating consumer: ${error.message}`,
+      );
+      client.emit('error', { message: error.message });
+    }
+  }
+
+  @SubscribeMessage('get-producers')
+  async handleGetProducers(
+    @MessageBody() data: { token: string },
+    @ConnectedSocket() client: Socket,
+  ) {
+    const { token } = data;
+    if (!token) {
+      client.emit('error', { message: 'Token is required' });
+      return;
+    }
+
+    this.logger.log(
+      `👀 [VIEWER] Client ${client.id} requested producers for token ${token}`,
+    );
+
+    try {
+      const producers = await this.mediasoupService.getProducers(token);
+      this.logger.log(
+        `✅ [VIEWER] Sending ${producers.length} producers to client ${client.id}`,
+      );
+      client.emit('producers', producers);
+    } catch (error) {
+      this.logger.error(
+        `❌ [VIEWER] Error getting producers: ${error.message}`,
+      );
       client.emit('error', { message: error.message });
     }
   }
@@ -330,9 +496,7 @@ export class ChessRecognitionGateway
       return;
     }
 
-    this.logger.debug(
-      `📹 [STREAMER] Received frame from client ${client.id} for token ${token}, frame size: ${Array.isArray(frame) ? frame.length : frame.length || 'unknown'}`,
-    );
+    // Логирование получения кадров убрано - слишком много спама
 
     try {
       // Конвертируем в Buffer если нужно
@@ -340,85 +504,195 @@ export class ChessRecognitionGateway
         ? frame
         : Buffer.from(frame as Uint8Array | number[]);
 
-      // Проверяем наличие маппинга при первом кадре (только один раз)
-      if (
-        !this.chessRecognitionService.hasMapping(token) &&
-        !this.calibrationAttempted.get(token)
-      ) {
+      // Интервальная калибровка: сохраняем последний кадр пока маппинг не создан
+      // Это позволяет пользователю двигать камеру и использовать последний кадр для калибровки
+      if (!this.chessRecognitionService.hasMapping(token)) {
+        // Сохраняем последний кадр для калибровки (обновляется каждый раз)
+        this.lastCalibrationFrames.set(token, frameBuffer);
+
+        // Уведомляем пользователя только один раз
+        if (!this.calibrationAttempted.get(token)) {
         this.calibrationAttempted.set(token, true);
         this.logger.log(
-          `No mapping found for token ${token}, starting calibration...`,
+            `No mapping found for token ${token}, starting automatic calibration...`,
         );
         client.emit('calibration-started', {
-          message: 'Starting board calibration...',
+            message:
+              'Определение доски... Пожалуйста, подождите. Вы можете двигать камеру - будет использован последний кадр.',
         });
 
-        // Запускаем калибровку на первом кадре (асинхронно, не блокируем трансляцию)
-        this.chessRecognitionService
-          .calibrateBoard(token, frameBuffer)
-          .then((calibrationResult) => {
-            if (!calibrationResult.success) {
-              client.emit('error', {
-                message: `Calibration failed: ${calibrationResult.message}. Please ensure the board is empty. Video will still stream.`,
-              });
-              // Не останавливаем трансляцию, просто логируем ошибку
-              this.logger.warn(
-                `Calibration failed for token ${token}, but streaming continues`,
+          // Запускаем периодическую автоматическую калибровку (каждые 5 секунд)
+          this.startAutoCalibration(token, client);
+        }
+        // this.chessRecognitionService
+        //   .calibrateBoard(token, frameBuffer)
+        //   .then(async (calibrationResult) => {
+        //     if (!calibrationResult.success) {
+        //       client.emit('error', {
+        //         message: `Калибровка не удалась: ${calibrationResult.message}. Видео продолжает транслироваться. Попробуйте улучшить освещение или использовать ручную калибровку.`,
+        //       });
+        //       // Не останавливаем трансляцию, просто логируем ошибку
+        //       this.logger.warn(
+        //         `Calibration failed for token ${token}: ${calibrationResult.message}. Streaming continues.`,
+        //       );
+        //     } else {
+        //       client.emit('calibration-completed', {
+        //         message: 'Board calibrated successfully',
+        //         mappingData: calibrationResult.mappingData,
+        //       });
+        //       this.logger.log(`Calibration completed for token ${token}`);
+
+        //       // Перезапускаем процесс обработки потока, чтобы он загрузил новый маппинг
+        //       // Останавливаем старый процесс, если он был запущен до калибровки
+        //       if (this.chessRecognitionService.hasActiveProcess(token)) {
+        //         this.logger.log(
+        //           `🔄 Restarting stream processing for token ${token} after calibration`,
+        //         );
+        //         this.chessRecognitionService.stopStreamProcessing(token);
+        //         // Небольшая задержка, чтобы процесс успел остановиться
+        //         await new Promise((resolve) => setTimeout(resolve, 100));
+        //       }
+
+        //       // Помечаем, что процесс запущен после калибровки
+        //       this.processStartedAfterCalibration.set(token, true);
+
+        //       // Запускаем процесс обработки с правильным callback
+        //       const cwd = process.cwd();
+        //       const projectRoot =
+        //         cwd.endsWith('backend') ||
+        //         cwd.endsWith('backend\\') ||
+        //         cwd.endsWith('backend/')
+        //           ? join(cwd, '..')
+        //           : cwd;
+        //       const defaultModelPath =
+        //         process.env.YOLO_MODEL_PATH ||
+        //         join(projectRoot, 'chess-recognition', 'bestmerged.pt');
+
+        //       this.chessRecognitionService.startStreamProcessing(
+        //         token,
+        //         defaultModelPath,
+        //         (result) => {
+        //           // Логирование информации о детекциях
+        //           if (result?.detections_info) {
+        //             const detInfo = result.detections_info;
+        //             if (detInfo.total_detections > 0) {
+        //               const classesStr = Object.entries(
+        //                 detInfo.classes_detected || {},
+        //               )
+        //                 .map(([cls, count]) => `${cls}: ${count}`)
+        //                 .join(', ');
+        //               this.logger.log(
+        //                 `🔍 [DETECTION] Token ${token}: Found ${detInfo.total_detections} pieces (${classesStr})`,
+        //               );
+        //             } else {
+        //               this.logger.debug(
+        //                 `🔍 [DETECTION] Token ${token}: No pieces detected${detInfo.message ? ` - ${detInfo.message}` : ''}`,
+        //               );
+        //             }
+        //           }
+
+        //           // Отправляем результат стримеру
+        //           client.emit('frame-processed', result);
+
+        //           // И всем зрителям в комнате
+        //           const roomId = `stream:${token}`;
+        //           this.server.to(roomId).emit('frame-processed', result);
+
+        //           if (result?.move) {
+        //             this.logger.log(
+        //               `♟️ Move detected for token ${token}: ${result.move} (${result.move_san || 'SAN?'})`,
+        //             );
+        //           }
+        //         },
+        //         (error) => {
+        //           client.emit('error', { message: error.message });
+        //         },
+        //       );
+        //     }
+        //   })
+        //   .catch((error) => {
+        //     this.logger.error(
+        //       `Calibration error for token ${token}:`,
+        //       error.message,
+        //     );
+        //     client.emit('error', {
+        //       message: `Ошибка калибровки: ${error.message}. Видео продолжает транслироваться.`,
+        //     });
+        //   });
+      }
+
+      // Запускаем обработку потока, если еще не запущена И маппинг уже есть
+      // Если маппинга еще нет, процесс будет запущен после завершения калибровки
+      // Не запускаем процесс, если он уже был запущен после калибровки или калибровка в процессе
+      if (
+        !this.chessRecognitionService.hasActiveProcess(token) &&
+        this.chessRecognitionService.hasMapping(token) &&
+        !this.processStartedAfterCalibration.get(token) &&
+        !this.calibrationAttempted.get(token) // Не запускаем, если калибровка еще не завершена
+      ) {
+        const cwd = process.cwd();
+        const projectRoot =
+          cwd.endsWith('backend') ||
+          cwd.endsWith('backend\\') ||
+          cwd.endsWith('backend/')
+            ? join(cwd, '..')
+            : cwd;
+        const defaultModelPath =
+          process.env.YOLO_MODEL_PATH ||
+          join(projectRoot, 'chess-recognition', 'bestmerged.pt');
+
+        this.chessRecognitionService.startStreamProcessing(
+          token,
+          defaultModelPath,
+          (result) => {
+            // Логирование информации о детекциях
+            if (result?.detections_info) {
+              const detInfo = result.detections_info;
+              if (detInfo.total_detections > 0) {
+                const classesStr = Object.entries(
+                  detInfo.classes_detected || {},
+                )
+                  .map(([cls, count]) => `${cls}: ${count}`)
+                  .join(', ');
+                this.logger.log(
+                  `🔍 [DETECTION] Token ${token}: Found ${detInfo.total_detections} pieces (${classesStr})`,
               );
             } else {
-              client.emit('calibration-completed', {
-                message: 'Board calibrated successfully',
-                mappingData: calibrationResult.mappingData,
-              });
-              this.logger.log(`Calibration completed for token ${token}`);
+                this.logger.debug(
+                  `🔍 [DETECTION] Token ${token}: No pieces detected${detInfo.message ? ` - ${detInfo.message}` : ''}`,
+                );
+              }
             }
-          })
-          .catch((error) => {
-            this.logger.error(
-              `Calibration error for token ${token}:`,
-              error.message,
+
+            // Отправляем результат стримеру
+            client.emit('frame-processed', result);
+
+            // И всем зрителям в комнате
+            const roomId = `stream:${token}`;
+            this.server.to(roomId).emit('frame-processed', result);
+
+            if (result?.move) {
+              this.logger.log(
+                `♟️ Move detected for token ${token}: ${result.move} (${result.move_san || 'SAN?'})`,
             );
-            client.emit('error', {
-              message: `Calibration error: ${error.message}. Video will still stream.`,
-            });
-          });
+            }
+          },
+          (error) => {
+            client.emit('error', { message: error.message });
+          },
+        );
       }
 
       // Отправка бинарного кадра в процесс обработки
-      this.chessRecognitionService.sendFrame(token, frameBuffer);
-
-      // Транслируем кадр всем клиентам в комнате (кроме отправителя)
-      // Конвертируем Buffer в base64 для передачи через WebSocket
-      const frameBase64 = frameBuffer.toString('base64');
-      const roomId = `stream:${token}`;
-
-      // Получаем список клиентов в комнате для логирования
-      let clientsInRoom = 0;
       try {
-        const adapter = this.server.sockets.adapter;
-        if (adapter && adapter.rooms) {
-          const room = adapter.rooms.get(roomId);
-          clientsInRoom = room ? Array.from(room).length : 0;
-        }
+      this.chessRecognitionService.sendFrame(token, frameBuffer);
       } catch (error) {
-        this.logger.warn(
-          `Could not get room info for ${roomId}:`,
-          error.message,
-        );
-        // Продолжаем работу даже если не удалось получить информацию о комнате
+        // Игнорируем ошибку, если процесс еще не готов (кадры будут отправлены позже)
+        // Логирование убрано - слишком много спама
       }
 
-      // Отправляем кадр всем в комнате, кроме отправителя
-      this.logger.log(
-        `📹 Broadcasting frame to room ${roomId} (${clientsInRoom} clients), frame size: ${frameBase64.length} bytes, excluding sender ${client.id}`,
-      );
-
-      client.to(roomId).emit('video-frame', {
-        token,
-        frame: frameBase64,
-      });
-
-      this.logger.log(`✅ Frame broadcasted to room ${roomId}`);
+      // НЕ отправляем кадры через WebSocket для зрителей - теперь используется Mediasoup WebRTC
+      // Кадры отправляются только для анализа (2 FPS), а для просмотра используется Mediasoup producer
     } catch (error) {
       client.emit('error', { message: error.message });
     }
@@ -437,9 +711,13 @@ export class ChessRecognitionGateway
 
     // Убираем клиента из стримеров
     this.streamers.delete(client.id);
-    // Очищаем флаг калибровки при остановке стрима
+    // Очищаем флаги калибровки и процесса при остановке стрима
     if (token) {
       this.calibrationAttempted.delete(token);
+      this.processStartedAfterCalibration.delete(token);
+      this.lastCalibrationFrames.delete(token);
+      // Останавливаем автоматическую калибровку
+      this.stopAutoCalibration(token);
     }
 
     // Уведомляем всех в комнате, что стрим остановлен
@@ -448,5 +726,342 @@ export class ChessRecognitionGateway
 
     this.clientGameTokens.delete(client.id);
     client.emit('stream-stopped', { token });
+  }
+
+  /**
+   * Ручная установка ориентации по клику на a1
+   */
+  @SubscribeMessage('set-a1')
+  async handleSetA1(
+    @MessageBody()
+    data: {
+      token: string;
+      x: number;
+      y: number;
+    },
+    @ConnectedSocket() client: Socket,
+  ) {
+    const { token, x, y } = data;
+
+    if (!token || x === undefined || y === undefined) {
+      client.emit('error', {
+        message: 'Token, x and y coordinates are required',
+      });
+      return;
+    }
+
+    this.logger.log(
+      `🎯 [A1] Setting a1 orientation for token ${token} at (${x}, ${y})`,
+    );
+
+    try {
+      const result = await this.chessRecognitionService.setA1Orientation(
+        token,
+        x,
+        y,
+      );
+
+      if (!result.success) {
+        client.emit('error', {
+          message: `Failed to set a1 orientation: ${result.message}`,
+        });
+        this.logger.warn(
+          `Failed to set a1 orientation for token ${token}: ${result.message}`,
+        );
+      } else {
+        client.emit('a1-set', {
+          message: result.message || 'Orientation set successfully',
+        });
+        this.logger.log(`A1 orientation set for token ${token}`);
+      }
+    } catch (error) {
+      this.logger.error(
+        `Error setting a1 orientation for token ${token}:`,
+        (error as Error).message,
+      );
+      client.emit('error', {
+        message: `Error setting a1 orientation: ${(error as Error).message}`,
+      });
+    }
+  }
+
+  /**
+   * Запуск периодической автоматической калибровки в фоне
+   */
+  private startAutoCalibration(
+    token: string,
+    client: Socket,
+    intervalMs: number = 2000, // Каждые 2 секунды (было 5)
+  ) {
+    // Останавливаем предыдущий таймер, если есть
+    this.stopAutoCalibration(token);
+
+    // Запускаем новый таймер
+    const timer = setInterval(async () => {
+      // Проверяем, что маппинг еще не создан
+      if (this.chessRecognitionService.hasMapping(token)) {
+        this.stopAutoCalibration(token);
+        return;
+      }
+
+      // Берем последний сохраненный кадр
+      const lastFrame = this.lastCalibrationFrames.get(token);
+      if (!lastFrame) {
+        this.logger.warn(
+          `No frame available for auto calibration, token: ${token}`,
+        );
+        return;
+      }
+
+      try {
+        this.logger.log(
+          `🔄 [AUTO-CALIBRATION] Attempting automatic calibration for token ${token}`,
+        );
+
+        const calibrationResult =
+          await this.chessRecognitionService.calibrateBoard(token, lastFrame);
+
+        if (calibrationResult.success) {
+          // Успешная калибровка!
+          this.logger.log(
+            `✅ [AUTO-CALIBRATION] Automatic calibration succeeded for token ${token}`,
+          );
+          this.stopAutoCalibration(token);
+
+          client.emit('calibration-completed', {
+            message: 'Доска успешно определена автоматически',
+            mappingData: calibrationResult.mappingData,
+          });
+
+          // Запускаем процесс обработки потока после успешной калибровки
+          if (this.chessRecognitionService.hasActiveProcess(token)) {
+            this.logger.log(
+              `🔄 Restarting stream processing for token ${token} after auto calibration`,
+            );
+            this.chessRecognitionService.stopStreamProcessing(token);
+            // Увеличиваем задержку, чтобы процесс успел полностью закрыться
+            await new Promise((resolve) => setTimeout(resolve, 500));
+          }
+
+          // Получаем путь к модели
+          const cwd = process.cwd();
+          const projectRoot =
+            cwd.endsWith('backend') ||
+            cwd.endsWith('backend\\') ||
+            cwd.endsWith('backend/')
+              ? join(cwd, '..')
+              : cwd;
+          const defaultModelPath =
+            process.env.YOLO_MODEL_PATH ||
+            join(projectRoot, 'chess-recognition', 'bestmerged.pt');
+
+          this.processStartedAfterCalibration.set(token, true);
+          this.chessRecognitionService.startStreamProcessing(
+            token,
+            defaultModelPath,
+            (result) => {
+              // Логирование информации о детекциях
+              if (result?.detections_info) {
+                const detInfo = result.detections_info;
+                if (detInfo.total_detections > 0) {
+                  const classesStr = Object.entries(
+                    detInfo.classes_detected || {},
+                  )
+                    .map(([cls, count]) => `${cls}: ${count}`)
+                    .join(', ');
+                  this.logger.log(
+                    `🔍 [DETECTION] Token ${token}: Found ${detInfo.total_detections} pieces (${classesStr})`,
+                  );
+                } else {
+                  this.logger.debug(
+                    `🔍 [DETECTION] Token ${token}: No pieces detected${detInfo.message ? ` - ${detInfo.message}` : ''}`,
+                  );
+                }
+              }
+
+              // Отправляем результат стримеру
+              client.emit('frame-processed', result);
+
+              // И всем зрителям в комнате
+              const roomId = `stream:${token}`;
+              this.server.to(roomId).emit('frame-processed', result);
+
+              if (result?.move) {
+                this.logger.log(
+                  `♟️ Move detected for token ${token}: ${result.move} (${result.move_san || 'SAN?'})`,
+                );
+              }
+            },
+            (error) => {
+              client.emit('error', { message: error.message });
+            },
+          );
+        } else {
+          // Калибровка не удалась - продолжаем попытки (не показываем ошибку пользователю)
+          this.logger.debug(
+            `⚠️ [AUTO-CALIBRATION] Calibration attempt failed for token ${token}: ${calibrationResult.message}`,
+          );
+        }
+      } catch (error) {
+        // Ошибка при калибровке - продолжаем попытки (не показываем ошибку пользователю)
+        this.logger.warn(
+          `⚠️ [AUTO-CALIBRATION] Calibration error for token ${token}: ${(error as Error).message}`,
+        );
+      }
+    }, intervalMs);
+
+    this.autoCalibrationTimers.set(token, timer);
+  }
+
+  /**
+   * Остановка автоматической калибровки
+   */
+  private stopAutoCalibration(token: string) {
+    const timer = this.autoCalibrationTimers.get(token);
+    if (timer) {
+      clearInterval(timer);
+      this.autoCalibrationTimers.delete(token);
+      this.logger.log(
+        `🛑 [AUTO-CALIBRATION] Stopped automatic calibration for token ${token}`,
+      );
+    }
+  }
+
+  /**
+   * Ручная калибровка по полигону с фронта
+   */
+  @SubscribeMessage('manual-calibrate')
+  async handleManualCalibrate(
+    @MessageBody()
+    data: {
+      token: string;
+      frame: Buffer | Uint8Array | number[];
+      corners: { x: number; y: number }[];
+    },
+    @ConnectedSocket() client: Socket,
+  ) {
+    const { token, frame, corners } = data;
+
+    if (!token || !frame || !corners || corners.length !== 4) {
+      client.emit('error', {
+        message: 'Token, frame and exactly 4 corners are required',
+      });
+      return;
+    }
+
+    this.logger.log(
+      `🛠 [MANUAL] Manual calibration requested for token ${token} with 4 corners`,
+    );
+
+    // Останавливаем автоматическую калибровку при начале ручной
+    this.stopAutoCalibration(token);
+
+    try {
+      // Используем последний сохраненный кадр для калибровки (интервальная калибровка)
+      // Это позволяет пользователю двигать камеру, и будет использован последний кадр
+      const lastFrame = this.lastCalibrationFrames.get(token);
+      const frameBuffer = lastFrame
+        ? lastFrame
+        : Buffer.isBuffer(frame)
+          ? frame
+          : Buffer.from(frame as Uint8Array | number[]);
+
+      if (lastFrame) {
+        this.logger.log(
+          `🔄 [MANUAL] Using last saved frame for calibration (intervals calibration)`,
+        );
+      }
+
+      const result = await this.chessRecognitionService.manualCalibrateBoard(
+        token,
+        frameBuffer,
+        corners,
+      );
+
+      if (!result.success) {
+        client.emit('error', {
+          message: `Manual calibration failed: ${result.message}`,
+        });
+        this.logger.warn(
+          `Manual calibration failed for token ${token}: ${result.message}`,
+        );
+      } else {
+        client.emit('calibration-completed', {
+          message: 'Board manually calibrated successfully',
+          mappingData: result.mappingData,
+        });
+        this.logger.log(`Manual calibration completed for token ${token}`);
+        // Очищаем сохраненный кадр после успешной калибровки
+        this.lastCalibrationFrames.delete(token);
+        // Останавливаем автоматическую калибровку
+        this.stopAutoCalibration(token);
+
+        // Запускаем процесс обработки потока после успешной ручной калибровки
+        if (!this.chessRecognitionService.hasActiveProcess(token)) {
+          const cwd = process.cwd();
+          const projectRoot =
+            cwd.endsWith('backend') ||
+            cwd.endsWith('backend\\') ||
+            cwd.endsWith('backend/')
+              ? join(cwd, '..')
+              : cwd;
+          const defaultModelPath =
+            process.env.YOLO_MODEL_PATH ||
+            join(projectRoot, 'chess-recognition', 'bestmerged.pt');
+
+          this.logger.log(
+            `Starting stream processing for token ${token} after manual calibration`,
+          );
+          this.chessRecognitionService.startStreamProcessing(
+            token,
+            defaultModelPath,
+            (result) => {
+              // Логирование информации о детекциях
+              if (result?.detections_info) {
+                const detInfo = result.detections_info;
+                if (detInfo.total_detections > 0) {
+                  const classesStr = Object.entries(
+                    detInfo.classes_detected || {},
+                  )
+                    .map(([cls, count]) => `${cls}: ${count}`)
+                    .join(', ');
+                  this.logger.log(
+                    `🔍 [DETECTION] Token ${token}: Found ${detInfo.total_detections} pieces (${classesStr})`,
+                  );
+                } else {
+                  this.logger.debug(
+                    `🔍 [DETECTION] Token ${token}: No pieces detected${detInfo.message ? ` - ${detInfo.message}` : ''}`,
+                  );
+                }
+              }
+
+              // Отправляем результат стримеру
+              client.emit('frame-processed', result);
+
+              // И всем зрителям в комнате
+              const roomId = `stream:${token}`;
+              this.server.to(roomId).emit('frame-processed', result);
+
+              if (result?.move) {
+                this.logger.log(
+                  `♟️ Move detected for token ${token}: ${result.move} (${result.move_san || 'SAN?'})`,
+                );
+              }
+            },
+            (error) => {
+              client.emit('error', { message: error.message });
+            },
+          );
+        }
+      }
+    } catch (error) {
+      this.logger.error(
+        `Manual calibration error for token ${token}:`,
+        (error as Error).message,
+      );
+      client.emit('error', {
+        message: `Manual calibration error: ${(error as Error).message}`,
+      });
+    }
   }
 }

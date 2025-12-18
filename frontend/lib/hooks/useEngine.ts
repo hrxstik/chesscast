@@ -15,13 +15,24 @@ interface UseEngineReturn {
   bestMove: string | undefined;
   onPieceDrop: (args: PieceDropHandlerArgs) => boolean;
   chessboardOptions: ChessboardOptions;
+  applyExternalMove: (uciMove: string) => void;
+  setPositionFromFen: (fen: string) => void;
 }
 
 export function useEngine(initialFen?: string): UseEngineReturn {
   const engineRef = useRef<Engine | null>(null);
   const [engineReady, setEngineReady] = useState(false);
 
-  const chessGameRef = useRef(new Chess(initialFen));
+  // Инициализируем начальную позицию (пустая доска невалидна в chess.js)
+  // Пустую доску будем устанавливать через setPositionFromFen когда придет board_state
+  let initialChess: Chess;
+  try {
+    initialChess = new Chess(initialFen);
+  } catch (error) {
+    // Если FEN невалидный или не указан, используем начальную позицию
+    initialChess = new Chess();
+  }
+  const chessGameRef = useRef(initialChess);
   const chessGame = chessGameRef.current;
 
   const [chessPosition, setChessPosition] = useState(chessGame.fen());
@@ -114,6 +125,21 @@ export function useEngine(initialFen?: string): UseEngineReturn {
     },
   };
 
+  const setPositionFromFen = useCallback((fen: string) => {
+    try {
+      // Проверяем, что FEN валидный перед загрузкой
+      const testChess = new Chess(fen);
+      chessGameRef.current.load(fen);
+      setPossibleMate('');
+      setChessPosition(chessGameRef.current.fen());
+      engineRef.current?.stop();
+      setBestLine('');
+    } catch (error) {
+      // Игнорируем некорректные FEN, но логируем для отладки
+      console.debug('Failed to set position from FEN:', fen, error);
+    }
+  }, []);
+
   return {
     chessPosition,
     positionEvaluation,
@@ -124,5 +150,17 @@ export function useEngine(initialFen?: string): UseEngineReturn {
     bestMove,
     onPieceDrop,
     chessboardOptions,
+    applyExternalMove: useCallback((uciMove: string) => {
+      try {
+        chessGameRef.current.move(uciMove, { sloppy: true });
+        setPossibleMate('');
+        setChessPosition(chessGameRef.current.fen());
+        engineRef.current?.stop();
+        setBestLine('');
+      } catch {
+        // игнорируем некорректные/нелегальные ходы от бэка
+      }
+    }, []),
+    setPositionFromFen,
   };
 }
