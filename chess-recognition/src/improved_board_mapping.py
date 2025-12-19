@@ -201,7 +201,6 @@ def _detect_board_corners_resnet(image: np.ndarray,
     if model_path is None:
         model_path = _default_corner_model_path()
 
-    print(f"[RESNET] Corner model path: {model_path}", file=sys.stderr, flush=True)
     
     if not Path(model_path).exists():
         print(f"[RESNET] Model not found: {model_path}", file=sys.stderr, flush=True)
@@ -219,9 +218,8 @@ def _detect_board_corners_resnet(image: np.ndarray,
     if debug_image_out is None:
         debug_image_out = image.copy()
     
-    # Логируем порог кропа
+    # Порог кропа
     crop_threshold_ratio = 0.8  # 80% порог
-    print(f"[RESNET] Crop threshold: {crop_threshold_ratio*100:.0f}% of frame width ({w_orig_full}px = {int(w_orig_full * crop_threshold_ratio)}px)", file=sys.stderr, flush=True)
     
     # ВСЕГДА ищем фигуры через YOLO (YOLO возвращает ТОЛЬКО фигуры, не область доски!)
     board_bbox = None
@@ -229,7 +227,6 @@ def _detect_board_corners_resnet(image: np.ndarray,
     
     if yolo_model_path:
         try:
-            print(f"[RESNET] Searching pieces via YOLO, model: {yolo_model_path}", file=sys.stderr, flush=True)
             # Используем высокий порог уверенности (0.7) чтобы исключить ложные срабатывания
             result = _detect_board_from_pieces(image, model_path=yolo_model_path, 
                                                conf_threshold=0.7, min_pieces=4, min_span_ratio=0.2,
@@ -241,17 +238,12 @@ def _detect_board_corners_resnet(image: np.ndarray,
             if result is not None:
                 if isinstance(result, tuple):
                     board_bbox_from_pca, pieces_info = result  # Первый элемент (board_bbox через PCA) игнорируем
-                    print(f"[RESNET] YOLO returned {len(pieces_info)} pieces (ignoring PCA board_bbox, building our own)", file=sys.stderr, flush=True)
                 else:
                     # Если вернулся не tuple, значит что-то не так
                     pieces_info = []
-                    print(f"[RESNET] YOLO returned unexpected format, ignoring", file=sys.stderr, flush=True)
-            else:
-                print(f"[RESNET] YOLO returned None - no pieces found", file=sys.stderr, flush=True)
             
             # ВСЕГДА визуализируем фигуры на debug изображении (оранжевый цвет)
             if pieces_info:
-                print(f"[RESNET] DRAWING {len(pieces_info)} PIECES ON IMAGE!", file=sys.stderr, flush=True)
                 for i, piece in enumerate(pieces_info):
                     x1, y1, x2, y2 = piece['bbox']
                     conf = piece['confidence']
@@ -263,12 +255,9 @@ def _detect_board_corners_resnet(image: np.ndarray,
                     # Рисуем центр фигуры
                     cx, cy = int(piece['center'][0]), int(piece['center'][1])
                     cv2.circle(debug_image_out, (cx, cy), 3, (0, 165, 255), -1)
-            else:
-                print(f"[RESNET] ERROR: pieces_info is EMPTY! Pieces will NOT be drawn!", file=sys.stderr, flush=True)
             
             # ВСЕГДА строим область доски из фигур (с margin для большей области!)
             if pieces_info:
-                print(f"[RESNET] Building board area from {len(pieces_info)} pieces...", file=sys.stderr, flush=True)
                 # Вычисляем bounding box всех фигур
                 x_min_raw = int(min(piece['bbox'][0] for piece in pieces_info))
                 y_min_raw = int(min(piece['bbox'][1] for piece in pieces_info))
@@ -285,13 +274,10 @@ def _detect_board_corners_resnet(image: np.ndarray,
                 x_max_raw = min(w_orig_full, x_max_raw + margin_x)
                 y_max_raw = min(h_orig_full, y_max_raw + margin_y)
                 
-                print(f"[RESNET] Board area from pieces: ({x_min_raw}, {y_min_raw}) - ({x_max_raw}, {y_max_raw})", file=sys.stderr, flush=True)
-                
                 # Сохраняем область доски для визуализации
                 board_bbox_raw = (x_min_raw, y_min_raw, x_max_raw, y_max_raw)
                 
                 # ВСЕГДА рисуем синюю рамку области доски
-                print(f"[RESNET] DRAWING BOARD AREA: ({x_min_raw}, {y_min_raw}) - ({x_max_raw}, {y_max_raw})", file=sys.stderr, flush=True)
                 cv2.rectangle(debug_image_out, (x_min_raw, y_min_raw), (x_max_raw, y_max_raw), (255, 0, 0), 5)
                 cv2.putText(debug_image_out, 'Board Area', (x_min_raw, y_min_raw - 10), 
                            cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 0, 0), 3)
@@ -301,11 +287,8 @@ def _detect_board_corners_resnet(image: np.ndarray,
                 board_height = y_max_raw - y_min_raw
                 board_width_ratio = board_width / w_orig_full
                 
-                print(f"[RESNET] Board width: {board_width}px ({board_width_ratio*100:.1f}% of frame width, crop threshold: {crop_threshold_ratio*100:.0f}%)", file=sys.stderr, flush=True)
-                
                 # Если доска маленькая (< 80% ширины кадра), кропаем добавляя сверху/снизу для 3:4
                 if board_width_ratio < crop_threshold_ratio:
-                    print(f"[RESNET] Board is small ({board_width_ratio*100:.1f}% < {crop_threshold_ratio*100:.0f}% threshold), applying crop with 3:4 aspect ratio...", file=sys.stderr, flush=True)
                     
                     target_aspect = 3 / 4  # Портретное соотношение (width/height = 0.75)
                     
@@ -342,17 +325,10 @@ def _detect_board_corners_resnet(image: np.ndarray,
                     crop_x_offset = x_min
                     crop_y_offset = y_min
                     
-                    final_crop_width = x_max - x_min
-                    final_crop_height = y_max - y_min
-                    final_aspect = final_crop_width / final_crop_height if final_crop_height > 0 else 0
-                    print(f"[RESNET] Crop area: ({x_min}, {y_min}) - ({x_max}, {y_max}), crop size: {final_crop_width}x{final_crop_height}, aspect: {final_aspect:.3f} (target: {target_aspect:.3f})", file=sys.stderr, flush=True)
-                    
                     # Сохраняем bbox для визуализации (фиолетовый цвет)
                     crop_bbox = (x_min, y_min, x_max, y_max)
                     
                     # ВСЕГДА рисуем фиолетовую рамку кропа (толстая яркая рамка, БЕЗ заливки!)
-                    print(f"[RESNET] DRAWING PURPLE CROP RECTANGLE: ({x_min}, {y_min}) - ({x_max}, {y_max})", file=sys.stderr, flush=True)
-                    # Рисуем толстую яркую рамку
                     cv2.rectangle(debug_image_out, (x_min, y_min), (x_max, y_max), (255, 0, 255), 5)
                     cv2.putText(debug_image_out, 'Crop Area (3:4)', (x_min, y_max + 30), 
                                cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 0, 255), 3)
@@ -361,16 +337,12 @@ def _detect_board_corners_resnet(image: np.ndarray,
                     image = cropped_image
                     was_cropped = True
                 else:
-                    print(f"[RESNET] Board is large ({board_width_ratio*100:.1f}% >= {crop_threshold_ratio*100:.0f}% threshold), using full image without crop", file=sys.stderr, flush=True)
                     # Рисуем фиолетовую рамку на полном изображении, чтобы показать что используется полное изображение
-                    print(f"[RESNET] DRAWING PURPLE CROP RECTANGLE ON FULL IMAGE: (0, 0) - ({w_orig_full}, {h_orig_full})", file=sys.stderr, flush=True)
                     cv2.rectangle(debug_image_out, (0, 0), (w_orig_full, h_orig_full), (255, 0, 255), 5)
                     cv2.putText(debug_image_out, 'Full Image (No Crop)', (10, h_orig_full - 20), 
                                cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 0, 255), 3)
             else:
-                print("[RESNET] No pieces found, using full image", file=sys.stderr, flush=True)
                 # Если фигур нет, рисуем рамку кропа на полном изображении
-                print(f"[RESNET] DRAWING PURPLE CROP RECTANGLE ON FULL IMAGE: (0, 0) - ({w_orig_full}, {h_orig_full})", file=sys.stderr, flush=True)
                 cv2.rectangle(debug_image_out, (0, 0), (w_orig_full, h_orig_full), (255, 0, 255), 5)
                 cv2.putText(debug_image_out, 'Full Image (No Pieces)', (10, h_orig_full - 20), 
                            cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 0, 255), 3)
@@ -379,8 +351,6 @@ def _detect_board_corners_resnet(image: np.ndarray,
             import traceback
             traceback.print_exc()
             print(f"[RESNET] Using full image due to YOLO error", file=sys.stderr, flush=True)
-    else:
-        print(f"[RESNET] yolo_model_path is None, YOLO not called!", file=sys.stderr, flush=True)
     
     try:
         # Определяем имя модели из пути
@@ -405,12 +375,6 @@ def _detect_board_corners_resnet(image: np.ndarray,
         
         if was_cropped:
             max_dim = max(h_resnet, w_resnet)
-            if max_dim < 640:
-                print(f"[RESNET] Кропнутое изображение {w_resnet}x{h_resnet} меньше 640, увеличиваем до {model_input_size}x{model_input_size} (upscale сохраняет детали)", file=sys.stderr, flush=True)
-            else:
-                print(f"[RESNET] Кропнутое изображение {w_resnet}x{h_resnet} больше 640, уменьшаем до {model_input_size}x{model_input_size} (но детали уже сохранены в кропе)", file=sys.stderr, flush=True)
-        else:
-            print(f"[RESNET] Используем стандартный размер входного изображения: {model_input_size}x{model_input_size}", file=sys.stderr, flush=True)
         
         # Преобразуем изображение для модели
         # Для кропнутого изображения используем качественный ресайз через OpenCV перед PIL
@@ -421,7 +385,6 @@ def _detect_board_corners_resnet(image: np.ndarray,
             image_resized = cv2.resize(image, (model_input_size, model_input_size), interpolation=interpolation)
             img_rgb = cv2.cvtColor(image_resized, cv2.COLOR_BGR2RGB)
             img_pil = Image.fromarray(img_rgb)
-            print(f"[RESNET] Использован качественный ресайз через OpenCV (interpolation: {interpolation})", file=sys.stderr, flush=True)
         else:
             # Для полного изображения используем стандартный PIL ресайз
             img_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
@@ -446,11 +409,6 @@ def _detect_board_corners_resnet(image: np.ndarray,
         with torch.no_grad():
             coords_normalized = model(img_tensor).cpu().numpy().reshape(-1)  # 8 чисел [0, 1]
         
-        # Логируем нормализованные координаты для отладки
-        print(f"[RESNET] Normalized coordinates from model: {coords_normalized}", file=sys.stderr, flush=True)
-        print(f"[RESNET] Image size for ResNet: {w_resnet}x{h_resnet}", file=sys.stderr, flush=True)
-        if was_cropped:
-            print(f"[RESNET] Смещение кропа: ({crop_x_offset}, {crop_y_offset})", file=sys.stderr, flush=True)
         
         # Преобразуем нормализованные координаты в пиксели
         # Координаты нормализованы относительно размера изображения, которое мы подали в ResNet
@@ -466,9 +424,6 @@ def _detect_board_corners_resnet(image: np.ndarray,
             # Координаты в кропнутом изображении -> координаты в исходном изображении
             corners[:, 0] += crop_x_offset  # добавляем смещение по X
             corners[:, 1] += crop_y_offset  # добавляем смещение по Y
-            print(f"[RESNET] Координаты преобразованы обратно к исходному изображению {w_orig_full}x{h_orig_full}", file=sys.stderr, flush=True)
-        
-        print(f"[RESNET] Координаты в пикселях (до сортировки): {corners.tolist()}", file=sys.stderr, flush=True)
         
         # Применяем канонический порядок (TL, TR, BR, BL)
         points = corners.copy()
@@ -490,9 +445,6 @@ def _detect_board_corners_resnet(image: np.ndarray,
         new_x = ordered_corners[0][0] - correction_x
         # Ограничиваем координату в пределах изображения
         ordered_corners[0][0] = max(0, new_x)  # Не меньше 0
-        print(f"[RESNET] Applied correction to corner 0: shifted left by {correction_x:.1f}px (2% of board width {board_width:.1f}px), new X: {ordered_corners[0][0]:.1f}", file=sys.stderr, flush=True)
-        
-        print(f"[RESNET] Detection successful, corners: {ordered_corners.tolist()}", file=sys.stderr, flush=True)
         
         # Визуализация уже выполнена выше при определении области доски
         # Здесь только возвращаем результат
@@ -653,22 +605,9 @@ def _detect_board_from_pieces(image: np.ndarray,
     if model_path is None:
         model_path = _default_model_path()
     
-    print(f"[BOARD_DETECT] Calling YOLO detector, model: {model_path}, confidence threshold: {conf_threshold}", file=sys.stderr, flush=True)
-    
     # Детектим фигуры
     detector = YOLO11Detector(model_path, conf_threshold=conf_threshold)
     detections = detector.predict(image)
-    
-    print(f"[BOARD_DETECT] YOLO returned {len(detections)} detections", file=sys.stderr, flush=True)
-    
-    # Выводим все детекции YOLO
-    if len(detections) > 0:
-        print(f"[BOARD_DETECT] YOLO detections:", file=sys.stderr, flush=True)
-        for idx, (class_name, bbox, conf, class_id) in enumerate(detections):
-            x1, y1, x2, y2 = bbox
-            print(f"[BOARD_DETECT]   [{idx}] {class_name} (conf={conf:.3f}, class_id={class_id}), bbox=({x1:.1f}, {y1:.1f}, {x2:.1f}, {y2:.1f})", file=sys.stderr, flush=True)
-    else:
-        print(f"[BOARD_DETECT] YOLO found no pieces!", file=sys.stderr, flush=True)
     
     # Собираем центры фигур с фильтрацией по уверенности
     centers = []
@@ -690,25 +629,10 @@ def _detect_board_from_pieces(image: np.ndarray,
                 'center': (cx, cy)
             })
     
-    if filtered_count > 0:
-        print(f"[BOARD_DETECT] Filtered {filtered_count} detections with low confidence (< {conf_threshold})", file=sys.stderr, flush=True)
-    
-    print(f"[BOARD_DETECT] After filtering: {len(centers)} pieces remaining (minimum required: {min_pieces})", file=sys.stderr, flush=True)
-    
     if len(centers) < min_pieces:
-        print(f"[BOARD_DETECT] Not enough pieces to detect board: {len(centers)} < {min_pieces}", file=sys.stderr, flush=True)
-        print(f"[BOARD_DETECT] RETURNING pieces_info with {len(pieces_info)} pieces for visualization", file=sys.stderr, flush=True)
         if return_pieces_info:
             return None, pieces_info
         return None
-    
-    print(f"[BOARD_DETECT] Using {len(centers)} pieces to detect board area", file=sys.stderr, flush=True)
-    # Выводим информацию о фигурах, которые используются
-    for idx, piece in enumerate(pieces_info if return_pieces_info else []):
-        bbox = piece['bbox']
-        conf = piece['confidence']
-        center = piece['center']
-        print(f"[BOARD_DETECT]   Piece [{idx}]: bbox={bbox}, conf={conf:.3f}, center=({center[0]:.1f}, {center[1]:.1f})", file=sys.stderr, flush=True)
     
     centers = np.array(centers, dtype=np.float32)
     mean = centers.mean(axis=0)
@@ -718,8 +642,6 @@ def _detect_board_from_pieces(image: np.ndarray,
     try:
         _, _, Vt = np.linalg.svd(X, full_matrices=False)
     except np.linalg.LinAlgError:
-        print("[BOARD_DETECT] SVD error during PCA", file=sys.stderr, flush=True)
-        print(f"[BOARD_DETECT] RETURNING pieces_info with {len(pieces_info)} pieces for visualization", file=sys.stderr, flush=True)
         if return_pieces_info:
             return None, pieces_info
         return None
@@ -739,51 +661,32 @@ def _detect_board_from_pieces(image: np.ndarray,
     h, w = image.shape[:2]
     max_dim = max(h, w)
     
-    print(f"[BOARD_DETECT] Checking board area validity: s_span={s_span:.1f}, t_span={t_span:.1f}, min_span_required={min_span_ratio * max_dim:.1f}, max_dim={max_dim:.1f}", file=sys.stderr, flush=True)
-    
     # Если фигуры слишком скучены в центре, не рискуем строить доску
     if s_span < min_span_ratio * max_dim or t_span < min_span_ratio * max_dim:
-        print(f"[BOARD_DETECT] Pieces too clustered: s_span={s_span:.1f}, t_span={t_span:.1f}, min_span={min_span_ratio * max_dim:.1f}", file=sys.stderr, flush=True)
-        print(f"[BOARD_DETECT] RETURNING pieces_info with {len(pieces_info)} pieces for visualization", file=sys.stderr, flush=True)
         if return_pieces_info:
             return None, pieces_info
         return None
     
     # Дополнительная проверка: если область слишком большая (больше 50% кадра), вероятно ложные срабатывания
     estimated_area_ratio = (s_span * t_span) / (w * h)
-    print(f"[BOARD_DETECT] Checking area size: estimated_area_ratio={estimated_area_ratio:.3f} (threshold: 0.5)", file=sys.stderr, flush=True)
     if estimated_area_ratio > 0.5:
-        print(f"[BOARD_DETECT] Board area too large ({estimated_area_ratio*100:.1f}% of frame), likely false positives", file=sys.stderr, flush=True)
-        print(f"[BOARD_DETECT] RETURNING pieces_info with {len(pieces_info)} pieces for visualization", file=sys.stderr, flush=True)
         if return_pieces_info:
             return None, pieces_info
         return None
     
     # Дополнительная проверка: если разброс фигур слишком большой относительно размера кадра
-    # (например, фигуры разбросаны по всей ширине/высоте кадра)
-    spread_threshold = 0.7 * max(w, h)
-    print(f"[BOARD_DETECT] Checking spread: s_span={s_span:.1f}, t_span={t_span:.1f}, threshold={spread_threshold:.1f}", file=sys.stderr, flush=True)
     if s_span > 0.7 * max(w, h) or t_span > 0.7 * max(w, h):
-        print(f"[BOARD_DETECT] Pieces too spread out (s_span={s_span:.1f}, t_span={t_span:.1f}, max_dim={max(w, h):.1f}), likely false positives", file=sys.stderr, flush=True)
-        print(f"[BOARD_DETECT] RETURNING pieces_info with {len(pieces_info)} pieces for visualization", file=sys.stderr, flush=True)
         if return_pieces_info:
             return None, pieces_info
         return None
     
     # Дополнительная проверка: если область доски выходит за разумные границы
-    # (например, если фигуры находятся слишком близко к краям кадра)
     margin_threshold = 0.05  # 5% от размера кадра
-    margin_value = margin_threshold * max(w, h)
-    print(f"[BOARD_DETECT] Checking bounds: s_min={s_min:.1f}, s_max={s_max:.1f}, t_min={t_min:.1f}, t_max={t_max:.1f}, margin={margin_value:.1f}", file=sys.stderr, flush=True)
     if (s_min < -margin_threshold * max(w, h) or s_max > max(w, h) * (1 + margin_threshold) or
         t_min < -margin_threshold * max(w, h) or t_max > max(w, h) * (1 + margin_threshold)):
-        print(f"[BOARD_DETECT] Board area exceeds reasonable bounds, likely false positives", file=sys.stderr, flush=True)
-        print(f"[BOARD_DETECT] RETURNING pieces_info with {len(pieces_info)} pieces for visualization", file=sys.stderr, flush=True)
         if return_pieces_info:
             return None, pieces_info
         return None
-    
-    print(f"[BOARD_DETECT] All checks passed! Computing board area...", file=sys.stderr, flush=True)
     
     # Адаптивный margin: чем меньше фигур, тем больше margin
     # Это помогает покрыть всю доску когда фигур мало
@@ -817,10 +720,6 @@ def _detect_board_from_pieces(image: np.ndarray,
     # Ограничиваем внутри изображения
     pts[:, 0] = np.clip(pts[:, 0], 0, w - 1)
     pts[:, 1] = np.clip(pts[:, 1], 0, h - 1)
-    
-    print(f"[BOARD_DETECT] Board area found, corners:", file=sys.stderr, flush=True)
-    for i, pt in enumerate(pts):
-        print(f"[BOARD_DETECT]   Corner {i}: ({pt[0]:.1f}, {pt[1]:.1f})", file=sys.stderr, flush=True)
     
     if return_pieces_info:
         return pts, pieces_info
@@ -880,11 +779,8 @@ def map_chessboard(image: np.ndarray,
         #         print(f"[MAPPING] Failed to count pieces: {e}", file=sys.stderr, flush=True)
         
         # Шаг 1: Определение границ доски через ResNet модель
-        print("[MAPPING] Using ResNet model for board corner detection", file=sys.stderr, flush=True)
-        
         # Определяем устройство (GPU если доступно, иначе CPU)
         device = 'cuda' if TORCH_AVAILABLE and torch.cuda.is_available() else 'cpu'
-        print(f"[MAPPING] Using device: {device}", file=sys.stderr, flush=True)
         
         # Используем YOLO для предварительного кропа области доски (если модель доступна)
         yolo_model_path = model_path if model_path else None
@@ -909,13 +805,7 @@ def map_chessboard(image: np.ndarray,
             )
             return result
         
-        print("[MAPPING] ResNet detection succeeded", file=sys.stderr, flush=True)
-        
         result['board_corners'] = board_corners.tolist()
-        
-        # Логируем координаты углов для отладки
-        h, w = image.shape[:2]
-        print(f"[MAPPING] Board corners: {board_corners.tolist()}, image size: {w}x{h}", file=sys.stderr, flush=True)
         
         # Сохраняем исходное изображение с нарисованными границами для отладки
         # debug_image уже содержит визуализацию области поиска из функции детекции:
@@ -948,10 +838,7 @@ def map_chessboard(image: np.ndarray,
         result['perspective_matrix'] = perspective_matrix.tolist()
         result['warped_image_shape'] = warped_image.shape
         
-        print(f"[MAPPING] Warped image shape: {warped_image.shape}", file=sys.stderr, flush=True)
-        
         # Шаг 3: Генерируем равномерную сетку клеток 8x8
-        print("[MAPPING] Generating uniform 8x8 grid", file=sys.stderr, flush=True)
         square_corners = _generate_uniform_square_grid(warped_image, SQUARE_COUNT)
         
         result['square_corners'] = square_corners.tolist()

@@ -5,12 +5,13 @@ import { useSearchParams } from 'next/navigation';
 import { ChessVideoStreamWebRTC } from '@/components/shared';
 
 type Props = {
-  params: {
+  params: Promise<{
     token: string;
-  };
+  }>;
 };
 
 export default function WatchGamePage({ params }: Props) {
+  const resolvedParams = React.use(params);
   const searchParams = useSearchParams();
   // Читаем параметр viewer из URL (по умолчанию true для страницы просмотра)
   const viewerParam = searchParams.get('viewer');
@@ -18,10 +19,8 @@ export default function WatchGamePage({ params }: Props) {
 
   return (
     <div className="container mx-auto py-8">
-      <h1 className="text-2xl font-bold mb-4">
-        {viewer ? 'Просмотр игры' : 'Стрим игры'}
-      </h1>
-      <ChessVideoStreamWebRTC gameToken={params.token} viewer={viewer} />
+      <h1 className="text-2xl font-bold mb-4">{viewer ? 'Просмотр игры' : 'Стрим игры'}</h1>
+      <ChessVideoStreamWebRTC gameToken={resolvedParams.token} viewer={viewer} />
     </div>
   );
 }

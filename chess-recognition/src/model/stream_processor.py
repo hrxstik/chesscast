@@ -278,7 +278,6 @@ class StreamProcessor:
         
         # Если рука обнаружена, не обновляем состояние доски - используем предыдущее стабилизированное
         if hand_detected:
-            print(f"✋ [HAND] Hand detected, skipping board state update", file=sys.stderr, flush=True)
             # Используем последнее стабилизированное состояние из истории
             if len(self.board_state_history) > 0:
                 current_board_state = self.board_state_history[-1][0].copy()  # Берем только board_state
@@ -293,7 +292,9 @@ class StreamProcessor:
                     current_board_state = board_state_raw
         else:
             # Нормальная обработка - маппинг треков на доску
-            board_state_raw, confidence_map_raw = self.board_mapper.tracks_to_board_state(filtered_tracks, square_corners)
+            board_state_raw = self.board_mapper.tracks_to_board_state(filtered_tracks, square_corners)
+            # BoardStateMapper возвращает только board_state, без confidence_map
+            confidence_map_raw = None
 
             # Если ориентация ещё не определена, пробуем авто-детекцию для стартовой позиции
             if self.index_map is None:
@@ -302,12 +303,12 @@ class StreamProcessor:
             # Применяем ориентацию, если index_map уже есть
             if self.index_map is not None:
                 current_board_state_raw = self._apply_index_map(board_state_raw)
-                # Применяем ту же трансформацию к confidence_map
-                current_confidence_map_raw = self._apply_index_map_to_confidence(confidence_map_raw)
             else:
                 # Фолбек: работаем в сырой системе, если ориентация не определена
                 current_board_state_raw = board_state_raw
-                current_confidence_map_raw = confidence_map_raw
+            
+            # BoardStateMapper не возвращает confidence_map, создаем пустой
+            current_confidence_map_raw = np.zeros((8, 8), dtype=np.float32)
             
             # Стабилизация состояния доски: добавляем в историю и усредняем
             self.board_state_history.append((current_board_state_raw.copy(), current_confidence_map_raw.copy()))
@@ -320,24 +321,7 @@ class StreamProcessor:
         # Определение хода (только если уже инициализирован, в ориентированной системе)
         move = None
         if self.initialized and self.previous_board_state is not None:
-            # Логируем состояния доски для отладки (периодически)
-            if (not hasattr(self, '_last_board_state_log') or (self._frame_count if hasattr(self, '_frame_count') else 0) % 60 == 0):
-                # Подсчитываем заполненные клетки
-                prev_filled = np.sum(self.previous_board_state != -1)
-                curr_filled = np.sum(current_board_state != -1)
-                print(f"📊 [MOVE-DEBUG] Board state: previous={prev_filled} filled, current={curr_filled} filled, history_size={len(self.board_state_history)}", file=sys.stderr, flush=True)
-                self._last_board_state_log = True
-            
             move = self._detect_move_stable(current_board_state)
-            if move:
-                print(f"♟️ [MOVE] Move detected: {move.uci()} ({self.virtual_board.san(move)})", file=sys.stderr, flush=True)
-        else:
-            # Логируем, почему ход не детектится (только периодически, чтобы не спамить)
-            if not hasattr(self, '_last_init_log') or (self._frame_count if hasattr(self, '_frame_count') else 0) % 30 == 0:
-                if not self.initialized:
-                    print(f"⚠️ [MOVE] Not initialized yet (initialized={self.initialized})", file=sys.stderr, flush=True)
-                elif self.previous_board_state is None:
-                    print(f"⚠️ [MOVE] Previous board state is None", file=sys.stderr, flush=True)
         
         # Счетчик кадров для периодического логирования
         if not hasattr(self, '_frame_count'):
@@ -378,17 +362,12 @@ class StreamProcessor:
         # Инициализация previous_board_state при первом кадре
         if self.previous_board_state is None:
             self.previous_board_state = current_board_state.copy()
-            filled_count = np.sum(current_board_state != -1)
-            print(f"[INIT] Initial board state: {filled_count}/64 squares filled", file=sys.stderr, flush=True)
-            if filled_count == 0:
-                print("[INIT] Board is empty - ready for testing", file=sys.stderr, flush=True)
         else:
             self.previous_board_state = current_board_state.copy()
 
         if not self.initialized:
             self.initialized = True
             filled_count = np.sum(current_board_state != -1)
-            print(f"✅ [INIT] Stream processor initialized for token {self.game_token}, {filled_count}/64 squares filled", file=sys.stderr, flush=True)
         
         return result
     
@@ -457,12 +436,6 @@ class StreamProcessor:
                 else:
                     stabilized[i, j] = -1
         
-        # Логируем статистику стабилизации (периодически)
-        if (not hasattr(self, '_last_stabilization_log') or (self._frame_count if hasattr(self, '_frame_count') else 0) % 60 == 0):
-            filled_count = np.sum(stabilized != -1)
-            print(f"[STABILIZATION] Stabilized board: {filled_count}/64 squares filled, history_size={len(history)}, using weighted voting", file=sys.stderr, flush=True)
-            self._last_stabilization_log = True
-        
         return stabilized
     
     def _detect_move_stable(self, current_state: np.ndarray) -> Optional[chess.Move]:
@@ -491,19 +464,8 @@ class StreamProcessor:
                 if diff[i, j] != 0:
                     changed_squares.append((i, j))
         
-        # Логируем изменения для отладки (периодически, чтобы не спамить)
-        if not hasattr(self, '_last_move_debug_log') or (self._frame_count if hasattr(self, '_frame_count') else 0) % 30 == 0:
-            if len(changed_squares) > 0:
-                columns = list("abcdefgh")
-                rows = list("87654321")
-                changes_str = ', '.join([f"{columns[j]}{rows[i]}: {self.previous_board_state[i,j]}->{current_state[i,j]}" 
-                                       for i, j in changed_squares[:10]])  # Логируем первые 10 изменений
-                print(f"🔍 [MOVE-DEBUG] Changed squares ({len(changed_squares)}): {changes_str}", file=sys.stderr, flush=True)
-        
         if len(changed_squares) != 2:
             # Если изменений не 2 клетки, сбрасываем ожидаемый ход
-            if len(changed_squares) > 0 and (not hasattr(self, '_last_move_debug_log') or (self._frame_count if hasattr(self, '_frame_count') else 0) % 30 == 0):
-                print(f"⚠️ [MOVE-DEBUG] Expected 2 changed squares, got {len(changed_squares)}. Resetting pending move.", file=sys.stderr, flush=True)
             self.pending_move = None
             self.pending_move_frames = 0
             return None
@@ -532,8 +494,6 @@ class StreamProcessor:
         
         if detected_move is None:
             # Ход невалидный, сбрасываем ожидание
-            if (not hasattr(self, '_last_move_debug_log') or (self._frame_count if hasattr(self, '_frame_count') else 0) % 30 == 0):
-                print(f"⚠️ [MOVE-DEBUG] Invalid moves from changed squares {squares_uci}: {', '.join(invalid_moves)}. Legal moves count: {len(self.virtual_board.legal_moves)}", file=sys.stderr, flush=True)
             self.pending_move = None
             self.pending_move_frames = 0
             return None
@@ -542,8 +502,6 @@ class StreamProcessor:
         if self.pending_move == detected_move:
             # Тот же ход, увеличиваем счетчик
             self.pending_move_frames += 1
-            if (not hasattr(self, '_last_move_debug_log') or (self._frame_count if hasattr(self, '_frame_count') else 0) % 30 == 0):
-                print(f"🔄 [MOVE-DEBUG] Same move detected: {detected_move.uci()}, confirmation frames: {self.pending_move_frames}/{self.move_confirmation_frames}", file=sys.stderr, flush=True)
             if self.pending_move_frames >= self.move_confirmation_frames:
                 # Ход подтвержден, возвращаем его и сбрасываем ожидание
                 confirmed_move = self.pending_move
@@ -556,10 +514,6 @@ class StreamProcessor:
                 return confirmed_move
         else:
             # Новый ход, начинаем отсчет заново
-            if self.pending_move is not None:
-                print(f"🔄 [MOVE-DEBUG] Move changed: {self.pending_move.uci()} -> {detected_move.uci()}, resetting confirmation", file=sys.stderr, flush=True)
-            else:
-                print(f"🔄 [MOVE-DEBUG] New move detected: {detected_move.uci()}, starting confirmation (1/{self.move_confirmation_frames})", file=sys.stderr, flush=True)
             self.pending_move = detected_move
             self.pending_move_frames = 1
         

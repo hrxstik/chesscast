@@ -53,7 +53,7 @@ export class ChessRecognitionGateway
 
   // Подключение к комнате для просмотра стрима
   @SubscribeMessage('join-stream')
-  handleJoinStream(
+  async handleJoinStream(
     @MessageBody() data: { token: string },
     @ConnectedSocket() client: Socket,
   ) {
@@ -84,6 +84,21 @@ export class ChessRecognitionGateway
     this.logger.log(
       `👀 [VIEWER] Client ${client.id} joined stream room for token ${token} (${clientsInRoom} clients in room)`,
     );
+
+    // Проверяем, есть ли уже producer в комнате mediasoup
+    try {
+      const producers = await this.mediasoupService.getProducers(token);
+      if (producers.length > 0) {
+        this.logger.log(
+          `👀 [VIEWER] Found ${producers.length} existing producers, sending to client ${client.id}`,
+        );
+        // Отправляем существующие producers сразу после присоединения к комнате
+        client.emit('producers', producers);
+      }
+    } catch (error) {
+      this.logger.warn(`Failed to get producers for viewer: ${error.message}`);
+    }
+
     client.emit('stream-joined', { token });
   }
 
@@ -110,11 +125,13 @@ export class ChessRecognitionGateway
       this.logger.log(
         `Streamer ${client.id} disconnected, stopping stream for token ${gameToken}`,
       );
-    }
-
-    if (roomId) {
-      this.mediasoupService.closeRoom(roomId);
-      this.clientRooms.delete(client.id);
+      // НЕ закрываем комнату при отключении стримера - producer может быть нужен зрителям
+      // Комната закроется только когда все клиенты отключатся
+    } else {
+      // Для зрителей просто удаляем из clientRooms, но не закрываем комнату
+      if (roomId) {
+        this.clientRooms.delete(client.id);
+      }
     }
 
     this.logger.log(`Client disconnected: ${client.id}`);
@@ -291,6 +308,9 @@ export class ChessRecognitionGateway
     );
 
     try {
+      // Убеждаемся, что комната существует перед созданием producer
+      await this.mediasoupService.createRoom(token);
+
       const producer = await this.mediasoupService.createProducer(
         token,
         client.id,
@@ -351,6 +371,15 @@ export class ChessRecognitionGateway
 
             // И, дополнительно, всем зрителям в комнате
             const roomId = `stream:${token}`;
+            // Проверяем количество клиентов в комнате
+            const adapter = this.server.sockets.adapter;
+            const room = adapter.rooms.get(roomId);
+            const clientsInRoom = room ? Array.from(room).length : 0;
+            if (clientsInRoom > 0) {
+              this.logger.log(
+                `📹 [FRAME-PROCESSED] Sending to ${clientsInRoom} clients in room ${roomId}`,
+              );
+            }
             this.server.to(roomId).emit('frame-processed', result);
 
             if (result?.move) {
@@ -397,7 +426,8 @@ export class ChessRecognitionGateway
         `📹 [STREAMER] Notifying ${clientsInRoom} clients in room ${roomId} about new producer ${producer.id}`,
       );
 
-      client.to(roomId).emit('producer-created', {
+      // Отправляем событие всем в комнате (включая зрителей)
+      this.server.to(roomId).emit('producer-created', {
         producerId: producer.id,
         token,
       });
@@ -455,6 +485,35 @@ export class ChessRecognitionGateway
     }
   }
 
+  @SubscribeMessage('resume-consumer')
+  async handleResumeConsumer(
+    @MessageBody() data: { token: string; consumerId: string },
+    @ConnectedSocket() client: Socket,
+  ) {
+    const { token, consumerId } = data;
+    if (!token || !consumerId) {
+      client.emit('error', { message: 'Token and consumerId are required' });
+      return;
+    }
+
+    this.logger.log(
+      `👀 [VIEWER] Client ${client.id} requesting resume for consumer ${consumerId}, token ${token}`,
+    );
+
+    try {
+      await this.mediasoupService.resumeConsumer(token, consumerId);
+      this.logger.log(
+        `✅ [VIEWER] Consumer ${consumerId} resumed for client ${client.id}`,
+      );
+      client.emit('consumer-resumed', { consumerId });
+    } catch (error) {
+      this.logger.error(
+        `❌ [VIEWER] Error resuming consumer ${consumerId}: ${error.message}`,
+      );
+      client.emit('error', { message: error.message });
+    }
+  }
+
   @SubscribeMessage('get-producers')
   async handleGetProducers(
     @MessageBody() data: { token: string },
@@ -471,14 +530,25 @@ export class ChessRecognitionGateway
     );
 
     try {
+      // Убеждаемся, что комната существует (если нет - создаем, но producers будет пустым)
+      try {
+        await this.mediasoupService.getRouterRtpCapabilities(token);
+        this.logger.log(`👀 [VIEWER] Room ${token} exists`);
+      } catch (error) {
+        this.logger.warn(
+          `👀 [VIEWER] Room ${token} does not exist yet, creating it...`,
+        );
+        await this.mediasoupService.createRoom(token);
+      }
+
       const producers = await this.mediasoupService.getProducers(token);
       this.logger.log(
-        `✅ [VIEWER] Sending ${producers.length} producers to client ${client.id}`,
+        `✅ [VIEWER] Sending ${producers.length} producers to client ${client.id} for token ${token}`,
       );
       client.emit('producers', producers);
     } catch (error) {
       this.logger.error(
-        `❌ [VIEWER] Error getting producers: ${error.message}`,
+        `❌ [VIEWER] Error getting producers for token ${token}: ${error.message}`,
       );
       client.emit('error', { message: error.message });
     }
@@ -520,9 +590,7 @@ export class ChessRecognitionGateway
           const imageHeight = metadata.height || 0;
           const currentImageSize = `${imageWidth}x${imageHeight}`;
 
-          this.logger.log(
-            `📹 [FRAME] Token ${token}: data=${frameBuffer.length} bytes, image=${imageWidth}x${imageHeight}`,
-          );
+          // Frame logging removed to reduce spam
 
           (this as any)[lastLogKey] = {
             time: now,
@@ -531,9 +599,7 @@ export class ChessRecognitionGateway
           };
         } catch (error) {
           // Если не удалось декодировать, просто логируем размер данных
-          this.logger.log(
-            `📹 [FRAME] Token ${token}: data=${frameBuffer.length} bytes (failed to decode image: ${error.message})`,
-          );
+          // Frame logging removed to reduce spam
           (this as any)[lastLogKey] = {
             time: now,
             size: frameBuffer.length,
@@ -842,6 +908,12 @@ export class ChessRecognitionGateway
         return;
       }
 
+      // Проверяем, что процесс уже не запущен после калибровки (защита от множественных рестартов)
+      if (this.processStartedAfterCalibration.get(token)) {
+        this.stopAutoCalibration(token);
+        return;
+      }
+
       // Берем последний сохраненный кадр
       const lastFrame = this.lastCalibrationFrames.get(token);
       if (!lastFrame) {
@@ -864,7 +936,17 @@ export class ChessRecognitionGateway
           this.logger.log(
             `✅ [AUTO-CALIBRATION] Automatic calibration succeeded for token ${token}`,
           );
+
+          // Останавливаем таймер СРАЗУ, чтобы избежать повторных срабатываний
           this.stopAutoCalibration(token);
+
+          // Проверяем еще раз, что маппинг создан (защита от race condition)
+          if (!this.chessRecognitionService.hasMapping(token)) {
+            this.logger.warn(
+              `⚠️ [AUTO-CALIBRATION] Mapping not found after successful calibration for token ${token}`,
+            );
+            return;
+          }
 
           client.emit('calibration-completed', {
             message: 'Доска успешно определена автоматически',
@@ -872,6 +954,14 @@ export class ChessRecognitionGateway
           });
 
           // Запускаем процесс обработки потока после успешной калибровки
+          // Проверяем, что процесс еще не запущен (защита от множественных рестартов)
+          if (this.processStartedAfterCalibration.get(token)) {
+            this.logger.warn(
+              `⚠️ [AUTO-CALIBRATION] Process already started after calibration for token ${token}, skipping restart`,
+            );
+            return;
+          }
+
           if (this.chessRecognitionService.hasActiveProcess(token)) {
             this.logger.log(
               `🔄 Restarting stream processing for token ${token} after auto calibration`,
@@ -893,7 +983,9 @@ export class ChessRecognitionGateway
             process.env.YOLO_MODEL_PATH ||
             join(projectRoot, 'chess-recognition', 'bestmerged.pt');
 
+          // Устанавливаем флаг ДО запуска процесса (защита от race condition)
           this.processStartedAfterCalibration.set(token, true);
+
           this.chessRecognitionService.startStreamProcessing(
             token,
             defaultModelPath,

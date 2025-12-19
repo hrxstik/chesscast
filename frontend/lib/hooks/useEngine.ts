@@ -129,14 +129,26 @@ export function useEngine(initialFen?: string): UseEngineReturn {
     try {
       // Проверяем, что FEN валидный перед загрузкой
       const testChess = new Chess(fen);
+      const oldFen = chessGameRef.current.fen();
       chessGameRef.current.load(fen);
+      const newFen = chessGameRef.current.fen();
       setPossibleMate('');
-      setChessPosition(chessGameRef.current.fen());
+      setChessPosition(newFen);
       engineRef.current?.stop();
       setBestLine('');
+
+      // Логируем изменение позиции (периодически)
+      if (oldFen !== newFen) {
+        console.log(
+          `🔄 [BOARD] Position updated: ${oldFen.substring(0, 30)}... -> ${newFen.substring(
+            0,
+            30,
+          )}...`,
+        );
+      }
     } catch (error) {
       // Игнорируем некорректные FEN, но логируем для отладки
-      console.debug('Failed to set position from FEN:', fen, error);
+      console.warn('⚠️ Failed to set position from FEN:', fen.substring(0, 50), error);
     }
   }, []);
 

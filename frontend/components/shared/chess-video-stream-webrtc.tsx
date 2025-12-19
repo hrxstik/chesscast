@@ -437,7 +437,7 @@ export const ChessVideoStreamWebRTC: React.FC<ChessVideoStreamProps> = ({
 
   // Функция для конвертации board_state (8x8 массив с ID фигур) в FEN
   const boardStateToFen = useCallback((boardState: number[][]): string => {
-    // Маппинг ID фигур в FEN символы
+    // Маппинг ID фигур в FEN символы (соответствует stream_processor.py)
     const pieceMap: { [key: number]: string } = {
       0: 'P', // white-pawn
       1: 'R', // white-rook
@@ -471,8 +471,23 @@ export const ChessVideoStreamWebRTC: React.FC<ChessVideoStreamProps> = ({
             fen += emptyCount.toString();
             emptyCount = 0;
           }
-          // Добавляем символ фигуры
-          fen += pieceMap[pieceId] || '';
+          // Получаем символ фигуры
+          const pieceSymbol = pieceMap[pieceId];
+          if (!pieceSymbol) {
+            // Неизвестный ID - пропускаем (или логируем для отладки)
+            emptyCount++;
+            continue;
+          }
+
+          // Проверяем валидность позиции: пешки не могут быть на краевых рядах (0 и 7)
+          const isPawn = pieceId === 0 || pieceId === 6; // white-pawn или black-pawn
+          if (isPawn && (row === 0 || row === 7)) {
+            // Пешка на краевом ряду - это невалидная позиция, пропускаем
+            emptyCount++;
+            continue;
+          }
+
+          fen += pieceSymbol;
         }
       }
 
@@ -491,19 +506,20 @@ export const ChessVideoStreamWebRTC: React.FC<ChessVideoStreamProps> = ({
     const hasWhiteKing = boardState.some((row) => row.some((cell) => cell === 4));
     const hasBlackKing = boardState.some((row) => row.some((cell) => cell === 9));
 
-    // Если нет хотя бы одного короля, используем минимальную валидную позицию
-    // Это нужно для тестирования пустой доски
-    if (!hasWhiteKing || !hasBlackKing) {
-      // Если доска полностью пустая или нет королей, используем минимальную валидную позицию
-      const isEmpty = boardState.every((row) => row.every((cell) => cell === -1));
-      if (isEmpty || (!hasWhiteKing && !hasBlackKing)) {
-        return '8/8/8/8/8/8/8/4K2k w - - 0 1';
-      }
+    // Если нет хотя бы одного короля или FEN пустой, используем минимальную валидную позицию
+    if (!hasWhiteKing || !hasBlackKing || fen === '8/8/8/8/8/8/8/8') {
+      return '8/8/8/8/8/8/8/4K2k w - - 0 1';
     }
 
     // Добавляем остальные части FEN (ход, рокировки, en passant, счетчик ходов)
-    // Для тестирования используем стандартные значения
     fen += ' w - - 0 1';
+
+    // Финальная проверка валидности FEN перед возвратом
+    // Проверяем базовые правила: пешки не на краевых рядах уже проверены выше
+    // Дополнительно проверяем, что есть хотя бы один король
+    if (!hasWhiteKing || !hasBlackKing) {
+      return '8/8/8/8/8/8/8/4K2k w - - 0 1';
+    }
 
     return fen;
   }, []);
@@ -543,13 +559,35 @@ export const ChessVideoStreamWebRTC: React.FC<ChessVideoStreamProps> = ({
       return;
     }
 
-    // УБРАЛИ ВСЕ ПОВОРОТЫ - отправляем как есть с камеры
-    // Координаты модели будут адаптированы на бэкенде если нужно
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
-    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    // iPhone всегда возвращает 1600x1200 (ландшафт), но модели нужен 1200x1600 (портрет)
+    // Поворачиваем только для WebSocket (Python модель), Mediasoup получает оригинал
+    const isLandscape = video.videoWidth > video.videoHeight;
+    const needsRotation = isLandscape && video.videoWidth === 1600 && video.videoHeight === 1200;
 
-    console.log(`📤 [STREAMER] Sending canvas AS-IS from camera: ${canvas.width}x${canvas.height}`);
+    if (needsRotation) {
+      // Поворачиваем 1600x1200 -> 1200x1600 для модели
+      canvas.width = 1200;
+      canvas.height = 1600;
+      ctx.save();
+      ctx.translate(canvas.width / 2, canvas.height / 2);
+      ctx.rotate(Math.PI / 2);
+      ctx.drawImage(
+        video,
+        -video.videoHeight / 2,
+        -video.videoWidth / 2,
+        video.videoHeight,
+        video.videoWidth,
+      );
+      ctx.restore();
+    } else {
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    }
+
+    console.log(
+      `📤 [STREAMER] Sending canvas: ${canvas.width}x${canvas.height} (from ${video.videoWidth}x${video.videoHeight})`,
+    );
 
     // Конвертируем в JPEG бинарные данные
     canvas.toBlob(
@@ -648,6 +686,10 @@ export const ChessVideoStreamWebRTC: React.FC<ChessVideoStreamProps> = ({
             errback: (error: Error) => void,
           ) => {
             try {
+              console.log('📹 [STREAMER] Connecting transport...', {
+                transportId: sendTransport.id,
+                dtlsParameters: !!dtlsParameters,
+              });
               socketRef.current!.emit('connect-transport', {
                 token: gameToken,
                 dtlsParameters,
@@ -659,6 +701,7 @@ export const ChessVideoStreamWebRTC: React.FC<ChessVideoStreamProps> = ({
                 );
                 socketRef.current!.once('transport-connected', () => {
                   clearTimeout(timeout);
+                  console.log('✅ [STREAMER] Transport connected successfully');
                   resolve();
                 });
                 socketRef.current!.once('error', (error: any) => {
@@ -667,11 +710,30 @@ export const ChessVideoStreamWebRTC: React.FC<ChessVideoStreamProps> = ({
                 });
               });
               callback();
+
+              // Проверяем состояние transport после подключения
+              setTimeout(() => {
+                console.log('📹 [STREAMER] Transport state after connect:', {
+                  connectionState: sendTransport.connectionState,
+                });
+              }, 500);
             } catch (error) {
+              console.error('❌ [STREAMER] Transport connect error:', error);
               errback(error as Error);
             }
           },
         );
+
+        // Отслеживаем изменения состояния transport
+        sendTransport.on('connectionstatechange', (state) => {
+          console.log(`📹 [STREAMER] Transport connection state changed: ${state}`);
+          if (state === 'failed' || state === 'disconnected') {
+            console.error(`❌ [STREAMER] Transport connection state: ${state}`);
+          }
+        });
+
+        // На клиенте mediasoup нет события dtlsstatechange
+        // Состояние DTLS отслеживается через connectionstatechange
 
         sendTransport.on(
           'produce',
@@ -687,24 +749,37 @@ export const ChessVideoStreamWebRTC: React.FC<ChessVideoStreamProps> = ({
             errback: (error: Error) => void,
           ) => {
             try {
+              console.log('📹 [STREAMER] Produce event fired:', {
+                kind,
+                transportId: sendTransport.id,
+                hasRtpParameters: !!rtpParameters,
+                transportConnectionState: sendTransport.connectionState,
+              });
               socketRef.current!.emit('produce', {
                 token: gameToken,
                 transportId: sendTransport.id,
                 rtpParameters,
               });
+              console.log('📹 [STREAMER] Produce event emitted to server, waiting for response...');
               const { id } = await new Promise<any>((resolve, reject) => {
-                const timeout = setTimeout(() => reject(new Error('Produce timeout')), 10000);
+                const timeout = setTimeout(() => {
+                  console.error('❌ [STREAMER] Produce timeout - no response from server');
+                  reject(new Error('Produce timeout'));
+                }, 10000);
                 socketRef.current!.once('produced', (data: any) => {
                   clearTimeout(timeout);
+                  console.log('✅ [STREAMER] Producer created on server:', data);
                   resolve(data);
                 });
                 socketRef.current!.once('error', (error: any) => {
                   clearTimeout(timeout);
+                  console.error('❌ [STREAMER] Produce error from server:', error);
                   reject(new Error(error.message));
                 });
               });
               callback({ id });
             } catch (error) {
+              console.error('❌ [STREAMER] Produce callback error:', error);
               errback(error as Error);
             }
           },
@@ -719,37 +794,256 @@ export const ChessVideoStreamWebRTC: React.FC<ChessVideoStreamProps> = ({
           throw new Error('No video track in stream');
         }
 
-        // Получаем настройки трека для логирования ориентации
-        const trackSettings = videoTrack.getSettings();
+        // Убеждаемся, что track активен и не остановлен
+        if (videoTrack.readyState !== 'live') {
+          console.error('❌ [STREAMER] Video track is NOT live:', {
+            trackId: videoTrack.id,
+            readyState: videoTrack.readyState,
+            enabled: videoTrack.enabled,
+            muted: videoTrack.muted,
+          });
+          throw new Error(`Video track is not live: ${videoTrack.readyState}`);
+        }
+
+        // Убеждаемся, что track включен
+        if (!videoTrack.enabled) {
+          console.warn('⚠️ [STREAMER] Video track is disabled, enabling...');
+          videoTrack.enabled = true;
+        }
+
+        // Проверяем, что track не muted (muted - read-only свойство, нельзя изменить напрямую)
+        if (videoTrack.muted) {
+          console.warn('⚠️ [STREAMER] Video track is muted - this may prevent data transmission');
+        }
+
+        // Получаем финальные настройки трека для логирования (после возможного поворота)
+        const finalTrackSettings = videoTrack.getSettings();
         console.log('📹 [STREAMER] Producing video track...', {
           trackId: videoTrack.id,
           trackEnabled: videoTrack.enabled,
           trackReadyState: videoTrack.readyState,
-          width: trackSettings.width,
-          height: trackSettings.height,
-          aspectRatio: trackSettings.aspectRatio,
+          trackMuted: videoTrack.muted,
+          width: finalTrackSettings.width,
+          height: finalTrackSettings.height,
+          aspectRatio: finalTrackSettings.aspectRatio,
+          frameRate: finalTrackSettings.frameRate,
+          deviceId: finalTrackSettings.deviceId,
+          facingMode: finalTrackSettings.facingMode,
           orientation:
-            trackSettings.width && trackSettings.height
-              ? trackSettings.width > trackSettings.height
+            finalTrackSettings.width && finalTrackSettings.height
+              ? finalTrackSettings.width > finalTrackSettings.height
                 ? 'landscape'
                 : 'portrait'
               : 'unknown',
         });
 
-        const producer = await sendTransport.produce({ track: videoTrack });
-        producerRef.current = producer;
+        // Проверяем состояние transport перед созданием producer
+        console.log('📹 [STREAMER] Transport state before producing:', {
+          transportId: sendTransport.id,
+          connectionState: sendTransport.connectionState,
+        });
 
+        // В mediasoup событие 'connect' вызывается автоматически при создании producer
+        // Не нужно ждать подключения - transport подключится через событие 'connect'
+        console.log('📹 [STREAMER] Attempting to create producer...', {
+          trackId: videoTrack.id,
+          trackReadyState: videoTrack.readyState,
+          trackEnabled: videoTrack.enabled,
+          transportConnectionState: sendTransport.connectionState,
+        });
+        let producer: mediasoupClient.types.Producer;
+        try {
+          producer = await sendTransport.produce({ track: videoTrack });
+          producerRef.current = producer;
+          console.log('✅ [STREAMER] Producer created successfully:', {
+            producerId: producer.id,
+            kind: producer.kind,
+            paused: producer.paused,
+            rtpParameters: {
+              codecs: producer.rtpParameters.codecs?.map((c) => ({
+                mimeType: c.mimeType,
+                clockRate: c.clockRate,
+                payloadType: c.payloadType,
+              })),
+            },
+          });
+        } catch (error) {
+          console.error('❌ [STREAMER] Failed to create producer:', error);
+          throw error;
+        }
+
+        console.log('📹 [STREAMER] Producer created, transport state:', {
+          connectionState: sendTransport.connectionState,
+        });
+
+        // Добавляем обработчики событий producer для отладки
+        producer.on('transportclose', () => {
+          console.warn('⚠️ [STREAMER] Producer transport closed');
+        });
+        producer.on('trackended', () => {
+          console.warn('⚠️ [STREAMER] Producer track ended');
+        });
+
+        // Проверяем состояние track после создания producer
         console.log('✅ [STREAMER] Producer created successfully:', {
           producerId: producer.id,
           kind: producer.kind,
           paused: producer.paused,
+          trackId: videoTrack.id,
+          trackEnabled: videoTrack.enabled,
+          trackReadyState: videoTrack.readyState,
+          trackMuted: videoTrack.muted,
           videoOrientation:
-            trackSettings.width && trackSettings.height
-              ? `${trackSettings.width}x${trackSettings.height} (${
-                  trackSettings.width > trackSettings.height ? 'landscape' : 'portrait'
+            finalTrackSettings.width && finalTrackSettings.height
+              ? `${finalTrackSettings.width}x${finalTrackSettings.height} (${
+                  finalTrackSettings.width > finalTrackSettings.height ? 'landscape' : 'portrait'
                 })`
               : 'unknown',
         });
+
+        // Убеждаемся, что producer не paused
+        if (producer.paused) {
+          console.warn('⚠️ [STREAMER] Producer is paused, resuming...');
+          producer.resume();
+        }
+
+        // Проверяем статистику producer через небольшую задержку (несколько раз)
+        const checkStats = async (delay: number, attempt: number) => {
+          try {
+            // Проверяем состояние track перед проверкой статистики
+            const currentTrack = stream.getVideoTracks()[0];
+            console.log(
+              `📊 [STREAMER] Track state before checking producer stats (attempt ${attempt}, delay ${delay}ms):`,
+              {
+                trackId: currentTrack?.id,
+                readyState: currentTrack?.readyState,
+                enabled: currentTrack?.enabled,
+                muted: currentTrack?.muted,
+              },
+            );
+
+            const stats = await producer.getStats();
+            // stats может быть объектом или массивом
+            const statsArray = Array.isArray(stats) ? stats : Object.values(stats);
+            console.log(`📊 [STREAMER] Producer stats (attempt ${attempt}):`, {
+              producerId: producer.id,
+              producerPaused: producer.paused,
+              producerClosed: producer.closed,
+              statsCount: statsArray.length,
+              statsTypes: statsArray.map((s: any) => s.type),
+              stats: statsArray.map((s: any) => ({
+                type: s.type,
+                timestamp: s.timestamp,
+                bytesSent: s.bytesSent,
+                packetsSent: s.packetsSent,
+                framesEncoded: s.framesEncoded,
+                framesSent: s.framesSent,
+                bytesReceived: s.bytesReceived,
+                packetsReceived: s.packetsReceived,
+              })),
+            });
+
+            // Проверяем, отправляет ли producer данные
+            const videoStats = statsArray.find((s: any) => s.type === 'outbound-rtp');
+            if (!videoStats) {
+              console.warn(
+                `⚠️ [STREAMER] No outbound-rtp stats found (attempt ${attempt})! Available types:`,
+                statsArray.map((s: any) => s.type),
+              );
+              // Если это первая попытка и статистики нет, проверяем еще раз через 3 секунды
+              if (attempt === 1) {
+                setTimeout(() => checkStats(3000, 2), 3000);
+              }
+            } else if (videoStats.bytesSent === 0) {
+              console.error(
+                `❌ [STREAMER] Producer is not sending any data! (attempt ${attempt})`,
+                {
+                  bytesSent: videoStats.bytesSent,
+                  packetsSent: videoStats.packetsSent,
+                  framesEncoded: videoStats.framesEncoded,
+                  framesSent: videoStats.framesSent,
+                  trackReadyState: currentTrack?.readyState,
+                  trackEnabled: currentTrack?.enabled,
+                  trackMuted: currentTrack?.muted,
+                  transportConnectionState: sendTransport.connectionState,
+                  codecId: videoStats.codecId,
+                  mimeType: videoStats.mimeType,
+                  ssrc: videoStats.ssrc,
+                  // Проверяем все доступные поля
+                  allVideoStatsFields: Object.keys(videoStats),
+                },
+              );
+            } else if (videoStats.bytesSent > 0) {
+              console.log(`✅ [STREAMER] Producer is sending data! (attempt ${attempt})`, {
+                bytesSent: videoStats.bytesSent,
+                packetsSent: videoStats.packetsSent,
+                framesEncoded: videoStats.framesEncoded,
+                framesSent: videoStats.framesSent,
+                codecId: videoStats.codecId,
+                mimeType: videoStats.mimeType,
+                ssrc: videoStats.ssrc,
+              });
+            }
+          } catch (error) {
+            console.warn(`⚠️ [STREAMER] Failed to get producer stats (attempt ${attempt}):`, error);
+          }
+        };
+
+        // Проверяем статистику через 2 секунды, затем через 5 секунд
+        setTimeout(() => checkStats(2000, 1), 2000);
+        setTimeout(() => checkStats(5000, 2), 5000);
+
+        // Периодически проверяем состояние producer и track
+        let lastProducerCheckTime = Date.now();
+        const producerCheckInterval = setInterval(() => {
+          if (!producerRef.current) {
+            clearInterval(producerCheckInterval);
+            return;
+          }
+          const currentProducer = producerRef.current;
+          const currentTrack = stream.getVideoTracks()[0];
+          if (currentTrack) {
+            const status = {
+              producerId: currentProducer.id,
+              producerPaused: currentProducer.paused,
+              producerClosed: currentProducer.closed,
+              trackId: currentTrack.id,
+              trackEnabled: currentTrack.enabled,
+              trackReadyState: currentTrack.readyState,
+              trackMuted: currentTrack.muted,
+              trackActive: currentTrack.readyState === 'live',
+            };
+
+            console.log('📊 [STREAMER] Producer status check:', status);
+
+            // Если producer paused, пытаемся возобновить
+            if (currentProducer.paused && !currentProducer.closed) {
+              console.warn('⚠️ [STREAMER] Producer is paused, attempting to resume...');
+              currentProducer.resume();
+            }
+
+            // Если track не активен, предупреждаем
+            if (currentTrack.readyState !== 'live') {
+              console.warn('⚠️ [STREAMER] Track is not live:', {
+                readyState: currentTrack.readyState,
+              });
+            }
+
+            // Проверяем, что track действительно передает данные
+            // Если track остановлен или не активен, producer не сможет отправлять данные
+            if (currentTrack.readyState === 'ended') {
+              console.error('❌ [STREAMER] Track has ended! Producer cannot send data.');
+            }
+          }
+        }, 5000); // Проверяем каждые 5 секунд
+
+        // Очищаем интервал при размонтировании
+        setTimeout(() => {
+          if (producerRef.current === producer) {
+            clearInterval(producerCheckInterval);
+          }
+        }, 60000); // Очищаем через минуту
+
         return producer;
       } catch (error) {
         console.error('❌ Error creating producer:', error);
@@ -765,6 +1059,8 @@ export const ChessVideoStreamWebRTC: React.FC<ChessVideoStreamProps> = ({
   const lastDetectionLogRef = useRef<number>(0);
   // Ref для throttling логирования обновлений board_state (логируем раз в 2 секунды)
   const lastBoardStateLogRef = useRef<number>(0);
+  // Ref для throttling логирования frame-processed событий (логируем раз в 3 секунды)
+  const lastFrameProcessedLogRef = useRef<number>(0);
 
   // Создание consumer для зрителей
   const createConsumer = useCallback(
@@ -886,14 +1182,149 @@ export const ChessVideoStreamWebRTC: React.FC<ChessVideoStreamProps> = ({
 
         consumerRef.current = consumer;
 
+        // Критично: убеждаемся, что track включен ДО присвоения к video
+        consumer.track.enabled = true;
+
+        // Убеждаемся, что consumer не paused и уведомляем сервер
+        // В mediasoup consumer создается в paused состоянии по умолчанию
+        console.log('👀 [VIEWER] Consumer initial state:', {
+          paused: consumer.paused,
+          closed: consumer.closed,
+        });
+
+        // Всегда вызываем resume и уведомляем сервер
+        if (consumer.paused) {
+          console.log('👀 [VIEWER] Consumer is paused, resuming...');
+          consumer.resume();
+        }
+
+        // Уведомляем сервер о resume (критично для mediasoup)
+        socketRef.current?.emit('resume-consumer', {
+          token: gameToken,
+          consumerId: consumer.id,
+        });
+        console.log('👀 [VIEWER] Sent resume-consumer event to server');
+
+        // Проверяем статистику consumer через небольшую задержку
+        setTimeout(async () => {
+          try {
+            const stats = await consumer.getStats();
+            // stats может быть объектом или массивом
+            const statsArray = Array.isArray(stats) ? stats : Object.values(stats);
+            console.log('📊 [VIEWER] Consumer stats:', {
+              consumerId: consumer.id,
+              producerId: consumer.producerId,
+              statsCount: statsArray.length,
+              stats: statsArray.map((s: any) => ({
+                type: s.type,
+                timestamp: s.timestamp,
+                bytesReceived: s.bytesReceived,
+                packetsReceived: s.packetsReceived,
+                packetsLost: s.packetsLost,
+              })),
+            });
+
+            // Если bytesReceived = 0, значит данные не приходят
+            const videoStats = statsArray.find((s: any) => s.type === 'inbound-rtp');
+            if (videoStats && videoStats.bytesReceived === 0) {
+              console.error('❌ [VIEWER] Consumer is not receiving any data!', {
+                bytesReceived: videoStats.bytesReceived,
+                packetsReceived: videoStats.packetsReceived,
+                framesReceived: videoStats.framesReceived,
+                framesDecoded: videoStats.framesDecoded,
+                width: videoStats.width,
+                height: videoStats.height,
+                frameWidth: videoStats.frameWidth,
+                frameHeight: videoStats.frameHeight,
+              });
+            } else if (videoStats && videoStats.bytesReceived > 0) {
+              console.log('✅ [VIEWER] Consumer is receiving data:', {
+                bytesReceived: videoStats.bytesReceived,
+                packetsReceived: videoStats.packetsReceived,
+                framesReceived: videoStats.framesReceived,
+                framesDecoded: videoStats.framesDecoded,
+                width: videoStats.width,
+                height: videoStats.height,
+                frameWidth: videoStats.frameWidth,
+                frameHeight: videoStats.frameHeight,
+                videoElementWidth: videoRef.current?.videoWidth,
+                videoElementHeight: videoRef.current?.videoHeight,
+              });
+            } else {
+              console.warn(
+                '⚠️ [VIEWER] No inbound-rtp stats found! Available types:',
+                statsArray.map((s: any) => s.type),
+              );
+            }
+          } catch (error) {
+            console.warn('⚠️ [VIEWER] Failed to get consumer stats:', error);
+          }
+        }, 2000);
+
+        // Получаем реальные размеры track через getSettings
+        const trackSettings = consumer.track.getSettings();
         console.log('👀 [VIEWER] Consumer track obtained:', {
           consumerId: consumer.id,
+          producerId: consumer.producerId,
           trackId: consumer.track.id,
           trackKind: consumer.track.kind,
           trackEnabled: consumer.track.enabled,
           trackReadyState: consumer.track.readyState,
           trackMuted: consumer.track.muted,
+          consumerPaused: consumer.paused,
+          consumerClosed: consumer.closed,
+          trackWidth: trackSettings.width,
+          trackHeight: trackSettings.height,
+          trackAspectRatio: trackSettings.aspectRatio,
+          trackFrameRate: trackSettings.frameRate,
         });
+
+        // Добавляем обработчики событий consumer
+        consumer.on('transportclose', () => {
+          console.warn('⚠️ [VIEWER] Consumer transport closed');
+          setHasVideoStream(false);
+        });
+
+        // Периодически проверяем состояние consumer
+        const consumerCheckInterval = setInterval(() => {
+          if (!consumerRef.current || consumerRef.current !== consumer) {
+            clearInterval(consumerCheckInterval);
+            return;
+          }
+          const currentConsumer = consumerRef.current;
+          const status = {
+            consumerId: currentConsumer.id,
+            producerId: currentConsumer.producerId,
+            consumerPaused: currentConsumer.paused,
+            consumerClosed: currentConsumer.closed,
+            trackId: currentConsumer.track.id,
+            trackEnabled: currentConsumer.track.enabled,
+            trackReadyState: currentConsumer.track.readyState,
+            trackMuted: currentConsumer.track.muted,
+          };
+
+          console.log('📊 [VIEWER] Consumer status check:', status);
+
+          // Если consumer paused, пытаемся возобновить
+          if (currentConsumer.paused && !currentConsumer.closed) {
+            console.warn('⚠️ [VIEWER] Consumer is paused, attempting to resume...');
+            currentConsumer.resume();
+          }
+
+          // Если track не активен, предупреждаем
+          if (currentConsumer.track.readyState !== 'live') {
+            console.warn('⚠️ [VIEWER] Track is not live:', {
+              readyState: currentConsumer.track.readyState,
+            });
+          }
+        }, 5000); // Проверяем каждые 5 секунд
+
+        // Очищаем интервал при размонтировании
+        setTimeout(() => {
+          if (consumerRef.current === consumer) {
+            clearInterval(consumerCheckInterval);
+          }
+        }, 60000); // Очищаем через минуту
 
         // Присваиваем track к video элементу
         const stream = new MediaStream([consumer.track]);
@@ -909,6 +1340,9 @@ export const ChessVideoStreamWebRTC: React.FC<ChessVideoStreamProps> = ({
 
         if (videoRef.current) {
           console.log('👀 [VIEWER] Assigning stream to video element...');
+          // Сохраняем stream в refs для возможности восстановления через updateVideoState
+          streamRef.current = stream;
+          streamBackupRef.current = stream;
           videoRef.current.srcObject = stream;
           setHasVideoStream(true);
 
@@ -920,6 +1354,7 @@ export const ChessVideoStreamWebRTC: React.FC<ChessVideoStreamProps> = ({
           // Добавляем обработчики событий track для отладки
           consumer.track.onended = () => {
             console.warn('⚠️ [VIEWER] Consumer track ended');
+            setHasVideoStream(false);
           };
           consumer.track.onmute = () => {
             console.warn('⚠️ [VIEWER] Consumer track muted');
@@ -929,11 +1364,16 @@ export const ChessVideoStreamWebRTC: React.FC<ChessVideoStreamProps> = ({
           };
 
           // Проверяем состояние track сразу после присвоения
+          const currentTrackSettings = consumer.track.getSettings();
           console.log('👀 [VIEWER] Track state immediately after assignment:', {
             trackId: consumer.track.id,
             enabled: consumer.track.enabled,
             readyState: consumer.track.readyState,
             muted: consumer.track.muted,
+            trackWidth: currentTrackSettings.width,
+            trackHeight: currentTrackSettings.height,
+            videoElementWidth: videoRef.current?.videoWidth,
+            videoElementHeight: videoRef.current?.videoHeight,
           });
 
           // Проверяем состояние через 1 секунду
@@ -1030,57 +1470,31 @@ export const ChessVideoStreamWebRTC: React.FC<ChessVideoStreamProps> = ({
         isSecureContext: window.isSecureContext,
         protocol: window.location.protocol,
       });
-      // Пробуем запросить портретную ориентацию с разными подходами
-      // Проблема: некоторые браузеры игнорируют exact constraints или конфликтуют width/height с aspectRatio
-      let stream: MediaStream;
-      try {
-        // Подход 1: Запрашиваем 1600x1200 (альбомная) - камера может поменять местами и дать 1200x1600 (портретная)
-        stream = await navigator.mediaDevices.getUserMedia({
-          video: {
-            width: { ideal: 1600, min: 1200, max: 1920 },
-            height: { ideal: 1200, min: 800, max: 1600 },
-            aspectRatio: { exact: 4 / 3 }, // Соотношение 4:3 (width/height = 1.33) - альбомная ориентация
-            facingMode: 'environment',
-          },
-          audio: false,
-        });
-      } catch (aspectError) {
-        console.warn('⚠️ [CAMERA] AspectRatio exact failed, trying without exact:', aspectError);
-        try {
-          // Подход 2: Без exact, только ideal
-          stream = await navigator.mediaDevices.getUserMedia({
-            video: {
-              width: { ideal: 1600 },
-              height: { ideal: 1200 },
-              aspectRatio: 4 / 3, // Без exact
-              facingMode: 'environment',
-            },
-            audio: false,
-          });
-        } catch (idealError) {
-          console.warn('⚠️ [CAMERA] Ideal constraints failed, using minimal:', idealError);
-          // Подход 3: Минимальные constraints
-          stream = await navigator.mediaDevices.getUserMedia({
-            video: {
-              facingMode: 'environment',
-            },
-            audio: false,
-          });
-        }
-      }
+
+      // iPhone всегда возвращает 1600x1200 (ландшафт), независимо от ориентации экрана
+      // Поэтому просто запрашиваем поток без constraints и используем как есть
+      // Для модели Python будем поворачивать кадры на бэкенде если нужно
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          facingMode: 'environment',
+        },
+        audio: false,
+      });
+
+      const videoTrack = stream.getVideoTracks()[0];
 
       // Логируем реальное разрешение
-      const videoTrack = stream.getVideoTracks()[0];
       const settings = videoTrack.getSettings();
-      const actualWidth = settings.width || 0;
-      const actualHeight = settings.height || 0;
-      const actualAspectRatio = settings.aspectRatio || 0;
-      const isPortrait = actualHeight > actualWidth;
-
-      console.log('📹 [CAMERA] Camera returned:', {
-        width: actualWidth,
-        height: actualHeight,
-        aspectRatio: actualAspectRatio,
+      console.log('📹 [CAMERA] Получено разрешение:', {
+        width: settings.width,
+        height: settings.height,
+        aspectRatio: settings.aspectRatio,
+        orientation:
+          settings.width && settings.height
+            ? settings.width > settings.height
+              ? 'landscape'
+              : 'portrait'
+            : 'unknown',
       });
 
       if (videoRef.current) {
@@ -1287,8 +1701,8 @@ export const ChessVideoStreamWebRTC: React.FC<ChessVideoStreamProps> = ({
     // Регистрируем обработчик video-frame ДО подключения (fallback для старых клиентов)
     // Этот обработчик используется только если mediasoup не работает
     newSocket.on('video-frame', (data: { token: string; frame: string }) => {
-      // Пропускаем если уже есть mediasoup consumer
-      if (consumerRef.current) {
+      // Пропускаем если уже есть mediasoup consumer или это зритель с mediasoup
+      if (consumerRef.current || (viewer && deviceRef.current)) {
         return;
       }
       console.log('📹 [VIEWER] Received video-frame event', {
@@ -1410,6 +1824,7 @@ export const ChessVideoStreamWebRTC: React.FC<ChessVideoStreamProps> = ({
 
       if (!viewer) {
         // Для анализа отправляем кадры с низкой частотой (2 FPS) через WebSocket
+        // ТОЛЬКО для стримера - зрители получают только видеопоток через WebRTC
         frameIntervalRef.current = setInterval(() => {
           captureAndSendFrame();
         }, 500); // 2 FPS для анализа
@@ -1515,12 +1930,14 @@ export const ChessVideoStreamWebRTC: React.FC<ChessVideoStreamProps> = ({
           console.error('❌ [VIEWER] Error creating consumer:', error);
           setError(`Ошибка подключения к потоку: ${(error as Error).message}`);
         }
-      } else {
-        console.log('👀 [VIEWER] Skipping consumer creation:', {
-          isViewer: viewer,
-          hasProducers: producers.length > 0,
-          hasConsumer: !!consumerRef.current,
-        });
+      } else if (viewer && producers.length === 0 && !consumerRef.current) {
+        // Если producers пустой, повторяем запрос через 1 секунду
+        console.log('👀 [VIEWER] No producers found, retrying in 1 second...');
+        setTimeout(() => {
+          if (socketRef.current && !consumerRef.current) {
+            socketRef.current.emit('get-producers', { token: gameToken });
+          }
+        }, 1000);
       }
     });
 
@@ -1541,6 +1958,12 @@ export const ChessVideoStreamWebRTC: React.FC<ChessVideoStreamProps> = ({
             // Consumer будет создан после инициализации device
             console.log('👀 [VIEWER] Requesting RTP capabilities for new producer...');
             newSocket.emit('get-router-rtp-capabilities', { token: gameToken });
+            // Также запрашиваем producers для надежности
+            setTimeout(() => {
+              if (socketRef.current && !consumerRef.current) {
+                socketRef.current.emit('get-producers', { token: gameToken });
+              }
+            }, 500);
           } else {
             // Device уже инициализирован, создаем consumer сразу
             console.log('👀 [VIEWER] Creating consumer for new producer:', data.producerId);
@@ -1623,6 +2046,28 @@ export const ChessVideoStreamWebRTC: React.FC<ChessVideoStreamProps> = ({
     });
 
     newSocket.on('frame-processed', (data: any) => {
+      // Логируем получение события (периодически)
+      const now = Date.now();
+      if (!lastFrameProcessedLogRef.current) {
+        lastFrameProcessedLogRef.current = 0;
+      }
+      if (now - lastFrameProcessedLogRef.current > 3000) {
+        console.log('📹 [FRAME-PROCESSED] Event received:', {
+          hasBoardState: !!data.board_state,
+          hasMove: !!data.move,
+          hasDetections: !!data.detections_info,
+          status: data.status,
+          boardStateLength: data.board_state?.length,
+          tracksCount: data.tracks_count,
+        });
+        lastFrameProcessedLogRef.current = now;
+      }
+
+      // Логируем первое событие всегда
+      if (!lastFrameProcessedLogRef.current || lastFrameProcessedLogRef.current === 0) {
+        console.log('📹 [FRAME-PROCESSED] First event received:', data);
+      }
+
       // Логируем информацию о детекциях
       if (data.detections_info) {
         const detInfo = data.detections_info;
@@ -1648,17 +2093,22 @@ export const ChessVideoStreamWebRTC: React.FC<ChessVideoStreamProps> = ({
       if (data.board_state && Array.isArray(data.board_state)) {
         try {
           const fen = boardStateToFen(data.board_state);
-          setPositionFromFen(fen);
           // Логируем обновление доски (периодически, чтобы не спамить)
           const now = Date.now();
           if (now - lastBoardStateLogRef.current > 2000) {
             // Считаем заполненные клетки
             const filled = data.board_state.flat().filter((id: number) => id !== -1).length;
-            console.log(`🔄 [BOARD] Updated board state from backend: ${filled}/64 squares filled`);
+            console.log(
+              `🔄 [BOARD] Updating board state: ${filled}/64 squares filled, FEN: ${fen.substring(
+                0,
+                50,
+              )}...`,
+            );
             lastBoardStateLogRef.current = now;
           }
+          setPositionFromFen(fen);
         } catch (error) {
-          console.warn('⚠️ Failed to convert board_state to FEN:', error);
+          console.warn('⚠️ Failed to convert board_state to FEN:', error, data.board_state);
         }
       }
 
@@ -1846,7 +2296,6 @@ export const ChessVideoStreamWebRTC: React.FC<ChessVideoStreamProps> = ({
             hasStream,
             videoWidth: video.videoWidth,
             videoHeight: video.videoHeight,
-            orientation: video.videoHeight > video.videoWidth ? 'PORTRAIT' : 'LANDSCAPE',
             readyState: video.readyState,
             paused: video.paused,
             streamActive: videoStream?.active,
@@ -1923,6 +2372,20 @@ export const ChessVideoStreamWebRTC: React.FC<ChessVideoStreamProps> = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [viewer]); // Выполняется только при изменении viewer
 
+  // Периодический запрос producers для зрителя, если consumer еще не создан
+  useEffect(() => {
+    if (!viewer || consumerRef.current) return;
+
+    const interval = setInterval(() => {
+      if (socketRef.current && !consumerRef.current && deviceRef.current) {
+        console.log('👀 [VIEWER] Periodically requesting producers...');
+        socketRef.current.emit('get-producers', { token: gameToken });
+      }
+    }, 2000); // Запрашиваем каждые 2 секунды
+
+    return () => clearInterval(interval);
+  }, [viewer, gameToken]);
+
   // Очистка при размонтировании
   useEffect(() => {
     return () => {
@@ -1976,7 +2439,6 @@ export const ChessVideoStreamWebRTC: React.FC<ChessVideoStreamProps> = ({
               backgroundColor: '#000',
               minHeight: '300px',
               cursor: a1SelectionMode || manualCalibrationMode ? 'crosshair' : 'default',
-              // УБРАЛИ CSS ПОВОРОТ - показываем как есть с камеры
             }}
             onClick={handleVideoClick}
             onLoadedMetadata={() => {
@@ -1998,14 +2460,56 @@ export const ChessVideoStreamWebRTC: React.FC<ChessVideoStreamProps> = ({
             }}
             onPlaying={() => {
               console.log('✅ JSX onPlaying fired - video is playing!');
+              const video = videoRef.current;
+              if (video) {
+                console.log('🎥 [VIDEO] Playing state:', {
+                  videoWidth: video.videoWidth,
+                  videoHeight: video.videoHeight,
+                  readyState: video.readyState,
+                  paused: video.paused,
+                  currentTime: video.currentTime,
+                  duration: video.duration,
+                  hasSrcObject: !!video.srcObject,
+                  display: window.getComputedStyle(video).display,
+                  visibility: window.getComputedStyle(video).visibility,
+                  opacity: window.getComputedStyle(video).opacity,
+                  zIndex: window.getComputedStyle(video).zIndex,
+                });
+              }
               setHasVideoStream(true);
             }}
             onLoadedData={() => {
               console.log('✅ JSX onLoadedData fired');
+              const video = videoRef.current;
+              if (video) {
+                console.log('🎥 [VIDEO] Loaded data state:', {
+                  videoWidth: video.videoWidth,
+                  videoHeight: video.videoHeight,
+                  readyState: video.readyState,
+                  hasSrcObject: !!video.srcObject,
+                  display: window.getComputedStyle(video).display,
+                });
+              }
               setHasVideoStream(true);
             }}
             onError={(e) => {
               console.error('❌ JSX Video error:', e);
+              const video = e.currentTarget;
+              console.error('❌ Video error details:', {
+                error: video.error,
+                errorCode: video.error?.code,
+                errorMessage: video.error?.message,
+                networkState: video.networkState,
+                readyState: video.readyState,
+                src: video.src,
+                srcObject: !!video.srcObject,
+              });
+            }}
+            onStalled={() => {
+              console.warn('⚠️ Video stalled');
+            }}
+            onWaiting={() => {
+              console.warn('⚠️ Video waiting for data');
             }}
           />
           {!hasVideoStream && !videoRef.current?.srcObject && (
@@ -2019,6 +2523,22 @@ export const ChessVideoStreamWebRTC: React.FC<ChessVideoStreamProps> = ({
           {hasVideoStream && videoRef.current?.srcObject && (
             <div className="absolute top-2 left-2 bg-green-500 text-white px-2 py-1 rounded text-xs z-10">
               {viewer ? 'Просмотр активен' : 'Камера активна'}
+              {videoRef.current && (
+                <div className="text-xs mt-1">
+                  {videoRef.current.videoWidth}x{videoRef.current.videoHeight} | ReadyState:{' '}
+                  {videoRef.current.readyState} | Paused: {videoRef.current.paused ? 'Yes' : 'No'}
+                  {videoRef.current.srcObject &&
+                    videoRef.current.srcObject instanceof MediaStream && (
+                      <div className="text-xs mt-1">
+                        Stream tracks: {videoRef.current.srcObject.getVideoTracks().length} | Track
+                        active:{' '}
+                        {videoRef.current.srcObject.getVideoTracks()[0]?.readyState || 'N/A'} |
+                        Track enabled:{' '}
+                        {videoRef.current.srcObject.getVideoTracks()[0]?.enabled ? 'Yes' : 'No'}
+                      </div>
+                    )}
+                </div>
+              )}
             </div>
           )}
           <canvas ref={canvasRef} className="hidden" />
@@ -2026,7 +2546,7 @@ export const ChessVideoStreamWebRTC: React.FC<ChessVideoStreamProps> = ({
           {manualCalibrationMode && (
             <canvas
               ref={calibrationCanvasRef}
-              className="absolute inset-0 pointer-events-none z-10"
+              className="absolute inset-0 pointer-events-none z-5"
               style={{ width: '100%', height: '100%' }}
             />
           )}
