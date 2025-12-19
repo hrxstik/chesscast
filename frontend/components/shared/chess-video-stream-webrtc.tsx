@@ -324,7 +324,7 @@ export const ChessVideoStreamWebRTC: React.FC<ChessVideoStreamProps> = ({
         throw new Error('Cannot get canvas context');
       }
 
-      // УБРАЛИ ПОВОРОТЫ - отправляем как есть с камеры
+      // Отправляем кадр как есть, без обработки контрастности
       canvas.width = video.videoWidth;
       canvas.height = video.videoHeight;
       ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
@@ -618,14 +618,22 @@ export const ChessVideoStreamWebRTC: React.FC<ChessVideoStreamProps> = ({
       return;
     }
 
-    // Отправляем кадр как есть, без поворотов - полагаемся на constraints
+    // Отправляем кадр как есть, без обработки контрастности
     canvas.width = video.videoWidth;
     canvas.height = video.videoHeight;
     ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
-    console.log(
-      `📤 [STREAMER] Sending canvas: ${canvas.width}x${canvas.height} (from ${video.videoWidth}x${video.videoHeight})`,
-    );
+    // Логируем отправку кадра (периодически, чтобы не спамить)
+    const now = Date.now();
+    if (!lastFrameSendLogRef.current) {
+      lastFrameSendLogRef.current = 0;
+    }
+    if (now - lastFrameSendLogRef.current > 2000) {
+      console.log(
+        `📤 [STREAMER] Sending canvas: ${canvas.width}x${canvas.height} (from ${video.videoWidth}x${video.videoHeight})`,
+      );
+      lastFrameSendLogRef.current = now;
+    }
 
     // Конвертируем в JPEG бинарные данные
     canvas.toBlob(
@@ -1099,6 +1107,13 @@ export const ChessVideoStreamWebRTC: React.FC<ChessVideoStreamProps> = ({
   const lastBoardStateLogRef = useRef<number>(0);
   // Ref для throttling логирования frame-processed событий (логируем раз в 3 секунды)
   const lastFrameProcessedLogRef = useRef<number>(0);
+  // Ref для throttling логирования отправки кадров (логируем раз в 2 секунды)
+  const lastFrameSendLogRef = useRef<number>(0);
+
+  // Стабилизация доски - храним последние N состояний и обновляем только если состояние стабильно
+  const boardStateHistoryRef = useRef<string[]>([]);
+  const boardStateStableCountRef = useRef<number>(0);
+  const STABLE_THRESHOLD = 5; // Нужно 5 одинаковых FEN подряд для обновления
 
   // Создание consumer для зрителей
   const createConsumer = useCallback(
@@ -1341,7 +1356,7 @@ export const ChessVideoStreamWebRTC: React.FC<ChessVideoStreamProps> = ({
             trackMuted: currentConsumer.track.muted,
           };
 
-          console.log('📊 [VIEWER] Consumer status check:', status);
+          // Логирование статуса consumer убрано для уменьшения спама
 
           // Если consumer paused, пытаемся возобновить
           if (currentConsumer.paused && !currentConsumer.closed) {
@@ -1512,8 +1527,8 @@ export const ChessVideoStreamWebRTC: React.FC<ChessVideoStreamProps> = ({
       const stream = await navigator.mediaDevices.getUserMedia({
         video: {
           facingMode: 'environment',
-          width: { ideal: 1280 },
-          height: { ideal: 960 },
+          width: { ideal: 1440 },
+          height: { ideal: 1080 },
           aspectRatio: { ideal: 3 / 4 },
         },
         audio: false,
@@ -1871,11 +1886,25 @@ export const ChessVideoStreamWebRTC: React.FC<ChessVideoStreamProps> = ({
       setIsStreaming(true);
 
       if (!viewer) {
-        // Для анализа отправляем кадры с низкой частотой (2 FPS) через WebSocket
+        // Для анализа отправляем кадры с частотой 3 FPS через WebSocket
         // ТОЛЬКО для стримера - зрители получают только видеопоток через WebRTC
-        frameIntervalRef.current = setInterval(() => {
-          captureAndSendFrame();
-        }, 500); // 2 FPS для анализа
+        // Ждем, пока видео будет готово, перед началом отправки кадров
+        const startSendingFrames = () => {
+          if (
+            videoRef.current &&
+            videoRef.current.videoWidth > 0 &&
+            videoRef.current.videoHeight > 0
+          ) {
+            console.log('📹 [STREAMER] Video ready, starting frame capture interval');
+            frameIntervalRef.current = setInterval(() => {
+              captureAndSendFrame();
+            }, 333); // 3 FPS для анализа (1000ms / 3 ≈ 333ms)
+          } else {
+            // Повторяем попытку через 100ms
+            setTimeout(startSendingFrames, 100);
+          }
+        };
+        startSendingFrames();
 
         // Для зрителей создаем mediasoup producer из реального потока камеры
         // Проверяем наличие потока и создаем producer
@@ -2094,69 +2123,80 @@ export const ChessVideoStreamWebRTC: React.FC<ChessVideoStreamProps> = ({
     });
 
     newSocket.on('frame-processed', (data: any) => {
-      // Логируем получение события (периодически)
-      const now = Date.now();
-      if (!lastFrameProcessedLogRef.current) {
-        lastFrameProcessedLogRef.current = 0;
-      }
-      if (now - lastFrameProcessedLogRef.current > 3000) {
-        console.log('📹 [FRAME-PROCESSED] Event received:', {
-          hasBoardState: !!data.board_state,
-          hasMove: !!data.move,
-          hasDetections: !!data.detections_info,
-          status: data.status,
-          boardStateLength: data.board_state?.length,
-          tracksCount: data.tracks_count,
-        });
-        lastFrameProcessedLogRef.current = now;
-      }
+      // Логирование убрано для уменьшения спама в консоли
 
-      // Логируем первое событие всегда
-      if (!lastFrameProcessedLogRef.current || lastFrameProcessedLogRef.current === 0) {
-        console.log('📹 [FRAME-PROCESSED] First event received:', data);
-      }
-
-      // Логируем информацию о детекциях
+      // Логируем информацию о детекциях периодически (раз в 2 секунды)
       if (data.detections_info) {
         const detInfo = data.detections_info;
-        if (detInfo.total_detections > 0) {
-          const classesStr = Object.entries(detInfo.classes_detected || {})
-            .map(([cls, count]) => `${cls}: ${count}`)
-            .join(', ');
-          console.log(`🔍 [DETECTION] Found ${detInfo.total_detections} pieces: ${classesStr}`);
-        } else {
-          // Логируем только периодически (раз в 5 секунд), чтобы не спамить консоль
-          const now = Date.now();
-          if (now - lastDetectionLogRef.current > 5000) {
-            lastDetectionLogRef.current = now;
-            console.debug(
+        const now = Date.now();
+        if (now - lastDetectionLogRef.current > 2000) {
+          if (detInfo.total_detections > 0) {
+            const classesStr = Object.entries(detInfo.classes_detected || {})
+              .map(([cls, count]) => `${cls}: ${count}`)
+              .join(', ');
+            console.log(`🔍 [DETECTION] Found ${detInfo.total_detections} pieces: ${classesStr}`);
+          } else {
+            console.log(
               `🔍 [DETECTION] No pieces detected${detInfo.message ? ` - ${detInfo.message}` : ''}`,
             );
           }
+          lastDetectionLogRef.current = now;
         }
       }
 
-      // ВСЕГДА обновляем доску по board_state (даже если фигуры "скачут")
+      // Обновляем доску по board_state только после начала партии
       // board_state содержит актуальное состояние доски на каждый кадр
+      // Используем стабилизацию - обновляем только если состояние стабильно (N одинаковых FEN подряд)
       if (data.board_state && Array.isArray(data.board_state)) {
-        try {
-          const fen = boardStateToFen(data.board_state);
-          // Логируем обновление доски (периодически, чтобы не спамить)
-          const now = Date.now();
-          if (now - lastBoardStateLogRef.current > 2000) {
-            // Считаем заполненные клетки
-            const filled = data.board_state.flat().filter((id: number) => id !== -1).length;
-            console.log(
-              `🔄 [BOARD] Updating board state: ${filled}/64 squares filled, FEN: ${fen.substring(
-                0,
-                50,
-              )}...`,
-            );
-            lastBoardStateLogRef.current = now;
+        // Для стримера обновляем доску только после начала партии
+        // Для зрителей обновляем всегда
+        if (viewer || gameStarted) {
+          try {
+            const fen = boardStateToFen(data.board_state);
+
+            // Стабилизация: проверяем последние N FEN
+            const history = boardStateHistoryRef.current;
+            history.push(fen);
+            // Храним только последние 8 состояний (больше чем STABLE_THRESHOLD для надежности)
+            if (history.length > 8) {
+              history.shift();
+            }
+
+            // Проверяем, стабильно ли состояние (последние N одинаковые)
+            const lastN = history.slice(-STABLE_THRESHOLD);
+            const isStable = lastN.length === STABLE_THRESHOLD && lastN.every((f) => f === fen);
+
+            if (isStable) {
+              // Состояние стабильно - обновляем доску
+              boardStateStableCountRef.current = STABLE_THRESHOLD;
+
+              // Логируем обновление доски (периодически, чтобы не спамить)
+              const now = Date.now();
+              if (now - lastBoardStateLogRef.current > 2000) {
+                // Считаем заполненные клетки
+                const filled = data.board_state.flat().filter((id: number) => id !== -1).length;
+                console.log(
+                  `🔄 [BOARD] Updating board state (stable): ${filled}/64 squares filled, FEN: ${fen.substring(
+                    0,
+                    50,
+                  )}...`,
+                );
+                lastBoardStateLogRef.current = now;
+              }
+
+              // Пытаемся установить позицию, игнорируем ошибки FEN
+              try {
+                setPositionFromFen(fen);
+              } catch (fenError) {
+                // Игнорируем ошибки FEN - виртуальная доска может ругаться, но это нормально
+              }
+            } else {
+              // Состояние нестабильно - не обновляем доску
+              boardStateStableCountRef.current = 0;
+            }
+          } catch (error) {
+            // Игнорируем ошибки конвертации board_state в FEN
           }
-          setPositionFromFen(fen);
-        } catch (error) {
-          console.warn('⚠️ Failed to convert board_state to FEN:', error, data.board_state);
         }
       }
 
@@ -2335,22 +2375,8 @@ export const ChessVideoStreamWebRTC: React.FC<ChessVideoStreamProps> = ({
 
       const videoStream = video.srcObject as MediaStream | null;
 
-      // Всегда логируем для отладки, но реже
-      const shouldLog = hasStream || hasVideoStream;
-
       if (hasStream && videoStream?.active) {
-        if (shouldLog) {
-          console.log('✅ Video state check:', {
-            hasStream,
-            videoWidth: video.videoWidth,
-            videoHeight: video.videoHeight,
-            readyState: video.readyState,
-            paused: video.paused,
-            streamActive: videoStream?.active,
-            streamVideoTracks: videoStream?.getVideoTracks().length || 0,
-            currentHasVideoStream: hasVideoStream,
-          });
-        }
+        // Логирование состояния видео убрано для уменьшения спама
         if (!hasVideoStream) {
           setHasVideoStream(true);
         }

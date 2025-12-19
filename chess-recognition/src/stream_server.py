@@ -56,20 +56,34 @@ def main():
         sys.exit(1)
     
     # Обработка кадров из stdin (бинарные данные)
+    frame_count = 0
     try:
         while True:
             # Читаем длину кадра (4 байта)
             length_bytes = sys.stdin.buffer.read(4)
             if not length_bytes or len(length_bytes) != 4:
+                print(f"[STDIN] No more data or incomplete length bytes: {len(length_bytes) if length_bytes else 0}", file=sys.stderr, flush=True)
                 break
             
             frame_length = int.from_bytes(length_bytes, byteorder='big')
+            
+            # Проверка валидности длины кадра (максимум 10MB)
+            MAX_FRAME_SIZE = 10 * 1024 * 1024  # 10MB
+            if frame_length > MAX_FRAME_SIZE or frame_length <= 0:
+                print(f"[STDIN] Invalid frame length: {frame_length} bytes (max {MAX_FRAME_SIZE}), skipping...", file=sys.stderr, flush=True)
+                # Пытаемся восстановить синхронизацию - пропускаем этот кадр
+                # Читаем и выбрасываем следующие 4 байта, надеясь что это начало следующего кадра
+                sys.stdin.buffer.read(4)
+                continue
+            
+            print(f"[STDIN] Received frame length: {frame_length} bytes", file=sys.stderr, flush=True)
             
             # Читаем сам кадр
             frame_data = b''
             while len(frame_data) < frame_length:
                 chunk = sys.stdin.buffer.read(frame_length - len(frame_data))
                 if not chunk:
+                    print(f"[STDIN] Incomplete frame data: got {len(frame_data)}/{frame_length} bytes", file=sys.stderr, flush=True)
                     break
                 frame_data += chunk
             
@@ -107,7 +121,21 @@ def main():
                     processor._last_size = current_size
                     processor._last_size_log_time = current_time
                 
+                # Логируем обработку каждого кадра
+                frame_count += 1
+                print(f"[FRAME] Processing frame #{frame_count} {w}x{h}...", file=sys.stderr, flush=True)
                 result = processor.process_frame(frame)
+                
+                # Логируем результат детекции
+                if result.get('detections_info'):
+                    det_info = result['detections_info']
+                    total = det_info.get('total_detections', 0)
+                    if total > 0:
+                        classes_str = ', '.join([f"{cls}: {count}" for cls, count in det_info.get('classes_detected', {}).items()])
+                        print(f"[DETECTION] Found {total} pieces: {classes_str}", file=sys.stderr, flush=True)
+                    else:
+                        print(f"[DETECTION] No pieces detected", file=sys.stderr, flush=True)
+                
                 print(json.dumps(result), flush=True)
             except Exception as e:
                 print(json.dumps({'status': 'error', 'message': str(e)}), flush=True)

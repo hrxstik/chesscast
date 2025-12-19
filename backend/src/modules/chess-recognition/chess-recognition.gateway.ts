@@ -360,27 +360,26 @@ export class ChessRecognitionGateway
                   `🔍 [DETECTION] Token ${token}: Found ${detInfo.total_detections} pieces (${classesStr})`,
                 );
               } else {
-                this.logger.debug(
+                // Логируем отсутствие детекций каждый кадр
+                this.logger.log(
                   `🔍 [DETECTION] Token ${token}: No pieces detected${detInfo.message ? ` - ${detInfo.message}` : ''}`,
                 );
               }
             }
 
-            // Отправляем результат стримеру
+            // Отправляем результат стримеру напрямую
             client.emit('frame-processed', result);
 
-            // И, дополнительно, всем зрителям в комнате
+            // И всем зрителям в комнате (исключая стримера, чтобы избежать дублирования)
             const roomId = `stream:${token}`;
             // Проверяем количество клиентов в комнате
             const adapter = this.server.sockets.adapter;
             const room = adapter.rooms.get(roomId);
             const clientsInRoom = room ? Array.from(room).length : 0;
             if (clientsInRoom > 0) {
-              this.logger.log(
-                `📹 [FRAME-PROCESSED] Sending to ${clientsInRoom} clients in room ${roomId}`,
-              );
+              // Отправляем всем в комнате кроме стримера (чтобы избежать дублирования)
+              client.to(roomId).emit('frame-processed', result);
             }
-            this.server.to(roomId).emit('frame-processed', result);
 
             if (result?.move) {
               this.logger.log(
@@ -611,8 +610,30 @@ export class ChessRecognitionGateway
       // Интервальная калибровка: сохраняем последний кадр пока маппинг не создан
       // Это позволяет пользователю двигать камеру и использовать последний кадр для калибровки
       if (!this.chessRecognitionService.hasMapping(token)) {
-        // Сохраняем последний кадр для калибровки (обновляется каждый раз)
-        this.lastCalibrationFrames.set(token, frameBuffer);
+        // Проверяем валидность кадра перед сохранением
+        try {
+          const metadata = await sharp(frameBuffer).metadata();
+          const stats = await sharp(frameBuffer).stats();
+
+          // Проверяем что кадр не пустой и не черный
+          // Средняя яркость должна быть больше 10 (чтобы исключить черные кадры)
+          const avgBrightness = stats.channels[0].mean; // Средняя яркость первого канала
+
+          if (avgBrightness < 10) {
+            this.logger.debug(
+              `⚠️ [CALIBRATION] Skipping black/empty frame for token ${token} (avg brightness: ${avgBrightness.toFixed(1)})`,
+            );
+            // Не сохраняем черный кадр
+          } else {
+            // Сохраняем валидный кадр для калибровки
+            this.lastCalibrationFrames.set(token, frameBuffer);
+          }
+        } catch (error) {
+          this.logger.warn(
+            `⚠️ [CALIBRATION] Failed to validate frame for token ${token}: ${error.message}`,
+          );
+          // В случае ошибки валидации не сохраняем кадр
+        }
 
         // Уведомляем пользователя только один раз
         if (!this.calibrationAttempted.get(token)) {
@@ -762,18 +783,19 @@ export class ChessRecognitionGateway
                   `🔍 [DETECTION] Token ${token}: Found ${detInfo.total_detections} pieces (${classesStr})`,
                 );
               } else {
-                this.logger.debug(
+                // Логируем отсутствие детекций каждый кадр
+                this.logger.log(
                   `🔍 [DETECTION] Token ${token}: No pieces detected${detInfo.message ? ` - ${detInfo.message}` : ''}`,
                 );
               }
             }
 
-            // Отправляем результат стримеру
+            // Отправляем результат стримеру напрямую
             client.emit('frame-processed', result);
 
-            // И всем зрителям в комнате
+            // И всем зрителям в комнате (исключая стримера)
             const roomId = `stream:${token}`;
-            this.server.to(roomId).emit('frame-processed', result);
+            client.to(roomId).emit('frame-processed', result);
 
             if (result?.move) {
               this.logger.log(
@@ -789,10 +811,21 @@ export class ChessRecognitionGateway
 
       // Отправка бинарного кадра в процесс обработки
       try {
+        // Логируем отправку кадра (периодически)
+        const lastFrameSendKey = `frame_send_log_${token}`;
+        const lastFrameSend = (this as any)[lastFrameSendKey] || { time: 0 };
+        const now = Date.now();
+        if (now - lastFrameSend.time > 2000) {
+          this.logger.log(
+            `📤 [FRAME] Sending frame to Python process: ${frameBuffer.length} bytes for token ${token}`,
+          );
+          (this as any)[lastFrameSendKey] = { time: now };
+        }
         this.chessRecognitionService.sendFrame(token, frameBuffer);
       } catch (error) {
-        // Игнорируем ошибку, если процесс еще не готов (кадры будут отправлены позже)
-        // Логирование убрано - слишком много спама
+        this.logger.warn(
+          `⚠️ [FRAME] Failed to send frame to Python process for token ${token}: ${error.message}`,
+        );
       }
 
       // НЕ отправляем кадры через WebSocket для зрителей - теперь используется Mediasoup WebRTC

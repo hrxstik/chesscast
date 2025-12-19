@@ -161,10 +161,11 @@ class StreamProcessor:
                 'message': 'Failed to apply mapping'
             }
         
-        # Визуализация маппинга для отладки (только при первом кадре после инициализации)
-        if not hasattr(self, '_mapping_visualized') and self.mapping_data:
-            self._visualize_mapping(frame, warped)
-            self._mapping_visualized = True
+        # Визуализация маппинга отключена - файлы _mapping_original_vis и _mapping_warped_vis не нужны
+        # Визуализация уже есть в calibration_result.jpg
+        # if not hasattr(self, '_mapping_visualized') and self.mapping_data:
+        #     self._visualize_mapping(frame, warped)
+        #     self._mapping_visualized = True
         
         # Трекинг фигур с использованием ByteTrack
         # persist=True сохраняет треки между кадрами
@@ -276,21 +277,23 @@ class StreamProcessor:
         # Преобразование треков в состояние доски (сырая сетка)
         square_corners = np.array(self.mapping_data['square_corners'])
         
-        # Если рука обнаружена, не обновляем состояние доски - используем предыдущее стабилизированное
-        if hand_detected:
-            # Используем последнее стабилизированное состояние из истории
-            if len(self.board_state_history) > 0:
-                current_board_state = self.board_state_history[-1][0].copy()  # Берем только board_state
-            elif self.previous_board_state is not None:
-                current_board_state = self.previous_board_state.copy()
-            else:
-                # Если нет истории, используем текущее (но не обновляем)
-                board_state_raw, _ = self.board_mapper.tracks_to_board_state(filtered_tracks, square_corners)
-                if self.index_map is not None:
-                    current_board_state = self._apply_index_map(board_state_raw)
-                else:
-                    current_board_state = board_state_raw
-        else:
+        # Детекция руки отключена - всегда обновляем доску
+        # if hand_detected:
+        #     # Используем последнее стабилизированное состояние из истории
+        #     if len(self.board_state_history) > 0:
+        #         current_board_state = self.board_state_history[-1][0].copy()  # Берем только board_state
+        #     elif self.previous_board_state is not None:
+        #         current_board_state = self.previous_board_state.copy()
+        #     else:
+        #         # Если нет истории, используем текущее (но не обновляем)
+        #         board_state_raw, _ = self.board_mapper.tracks_to_board_state(filtered_tracks, square_corners)
+        #         if self.index_map is not None:
+        #             current_board_state = self._apply_index_map(board_state_raw)
+        #         else:
+        #             current_board_state = board_state_raw
+        # else:
+        # Нормальная обработка - маппинг треков на доску (всегда)
+        if True:
             # Нормальная обработка - маппинг треков на доску
             board_state_raw = self.board_mapper.tracks_to_board_state(filtered_tracks, square_corners)
             # BoardStateMapper возвращает только board_state, без confidence_map
@@ -298,7 +301,10 @@ class StreamProcessor:
 
             # Если ориентация ещё не определена, пробуем авто-детекцию для стартовой позиции
             if self.index_map is None:
-                self._try_init_orientation(board_state_raw)
+                # Передаем tracks для определения ориентации по bbox белых фигур
+                # Используем board_filtered_tracks если доступны, иначе filtered_tracks
+                tracks_for_orientation = board_filtered_tracks if 'board_filtered_tracks' in locals() else filtered_tracks
+                self._try_init_orientation(board_state_raw, tracks=tracks_for_orientation)
 
             # Применяем ориентацию, если index_map уже есть
             if self.index_map is not None:
@@ -605,6 +611,31 @@ class StreamProcessor:
         
         return False
     
+    def _apply_orientation(self, board_state: np.ndarray, orientation: str) -> np.ndarray:
+        """
+        Применяет поворот к board_state в зависимости от ориентации.
+        
+        Args:
+            board_state: Массив 8x8 с состояниями клеток
+            orientation: 'identity', 'rot90', 'rot180', 'rot270'
+        
+        Returns:
+            Повернутый массив board_state
+        """
+        if orientation == 'identity':
+            return board_state
+        elif orientation == 'rot90':
+            # Поворот на 90° по часовой стрелке: транспонируем и инвертируем строки
+            return np.flipud(board_state.T)
+        elif orientation == 'rot180':
+            # Поворот на 180°: инвертируем и строки и столбцы
+            return board_state[::-1, ::-1]
+        elif orientation == 'rot270':
+            # Поворот на 270° по часовой (или 90° против): транспонируем и инвертируем столбцы
+            return np.fliplr(board_state.T)
+        else:
+            return board_state
+    
     def _score_orientation(self, observed: np.ndarray, canonical: np.ndarray) -> float:
         """
         Оценка совпадения наблюдаемой позиции с канонической:
@@ -624,45 +655,138 @@ class StreamProcessor:
             return 0.0
         return matches / total
 
-    def _try_init_orientation(self, board_state_raw: np.ndarray, threshold: float = 0.5) -> None:
+    def _try_init_orientation(self, board_state_raw: np.ndarray, threshold: float = 0.5, tracks: list = None) -> None:
         """
         Попытка автоматически определить ориентацию для стартовой позиции.
-        Рассматриваем текущий board_state_raw как одну из двух ориентаций:
-        - identity (как есть)
-        - rot180 (поворот на 180 градусов)
-
-        Если совпадение с канонической стартовой позицией достигает порога,
-        строим index_map для выбранной ориентации.
+        Использует bbox белых фигур для определения, где белые ближе к краю.
+        Поддерживает 4 ориентации: identity, rot90, rot180, rot270
+        (камера может быть со стороны белых, черных, справа или слева).
         """
         canonical = self._get_canonical_start_board()
 
-        # Кандидатные ориентации: identity и rot180
-        candidates = []
+        # Определяем ориентацию по bbox белых фигур
+        # Если tracks доступны, используем их для определения где белые ближе к краю
+        orientation_from_bbox = False
+        if tracks:
+            white_pieces_coords = []  # [(center_x, center_y), ...]
+            h, w = None, None
+            
+            # Получаем размеры warped изображения из mapping_data
+            if self.mapping_data and 'square_corners' in self.mapping_data:
+                square_corners = np.array(self.mapping_data['square_corners'])
+                h = int(square_corners[:, :, 1].max())
+                w = int(square_corners[:, :, 0].max())
+            
+            for track in tracks:
+                class_name = track.get('class_name', '')
+                # Белые фигуры: white-pawn, white-rook, white-bishop, white-knight, white-king, white-queen
+                if class_name.startswith('white-'):
+                    x1, y1, x2, y2 = track['bbox']
+                    # Используем центр bbox
+                    center_x = (x1 + x2) / 2.0
+                    center_y = (y1 + y2) / 2.0
+                    white_pieces_coords.append((center_x, center_y))
+            
+            if white_pieces_coords and h and w:
+                # Средние координаты белых фигур
+                avg_white_x = np.mean([c[0] for c in white_pieces_coords])
+                avg_white_y = np.mean([c[1] for c in white_pieces_coords])
+                
+                # Середина изображения
+                mid_x = w / 2.0
+                mid_y = h / 2.0
+                
+                # Определяем квадрант где больше белых фигур
+                # Квадранты:
+                #   Верхний левый (Y < mid_y, X < mid_x)  → rot90
+                #   Верхний правый (Y < mid_y, X > mid_x) → rot180
+                #   Нижний левый (Y > mid_y, X < mid_x)   → identity
+                #   Нижний правый (Y > mid_y, X > mid_x)  → rot270
+                
+                if avg_white_y < mid_y:  # Верхняя половина
+                    if avg_white_x < mid_x:  # Левая половина
+                        best_orientation = 'rot90'   # Камера слева
+                    else:  # Правая половина
+                        best_orientation = 'rot180'  # Камера со стороны черных
+                else:  # Нижняя половина
+                    if avg_white_x < mid_x:  # Левая половина
+                        best_orientation = 'identity'  # Камера со стороны белых
+                    else:  # Правая половина
+                        best_orientation = 'rot270'    # Камера справа
+                
+                print(f"[ORIENTATION] Using bbox: {len(white_pieces_coords)} white pieces, avg (X, Y): ({avg_white_x:.1f}, {avg_white_y:.1f}), mid (X, Y): ({mid_x:.1f}, {mid_y:.1f}), selected: {best_orientation}", file=sys.stderr, flush=True)
+                
+                # Проверяем score для выбранной ориентации
+                state_oriented = self._apply_orientation(board_state_raw, best_orientation)
+                best_score = self._score_orientation(state_oriented, canonical)
+                orientation_from_bbox = True
+                print(f"[ORIENTATION] Selected {best_orientation} based on bbox, score: {best_score:.3f}", file=sys.stderr, flush=True)
+            else:
+                # Fallback: используем старую логику по board_state (только identity и rot180)
+                best_orientation = None
+                best_score = 0.0
+                candidates = [
+                    ('identity', board_state_raw),
+                    ('rot180', board_state_raw[::-1, ::-1])
+                ]
+                
+                for name, state_oriented in candidates:
+                    score = self._score_orientation(state_oriented, canonical)
+                    white_pieces_bottom = np.sum((state_oriented[4:8, :] >= 0) & (state_oriented[4:8, :] <= 5))
+                    white_pieces_top = np.sum((state_oriented[0:4, :] >= 0) & (state_oriented[0:4, :] <= 5))
+                    
+                    print(f"[ORIENTATION] {name} score: {score:.3f} (whites bottom [4-7]: {white_pieces_bottom}, top [0-3]: {white_pieces_top})", file=sys.stderr, flush=True)
+                    
+                    if white_pieces_bottom > white_pieces_top:
+                        if score > best_score:
+                            best_score = score
+                            best_orientation = name
+                    elif white_pieces_bottom == white_pieces_top:
+                        if score > best_score:
+                            best_score = score
+                            best_orientation = name
+        else:
+            # Fallback: используем старую логику по board_state (только identity и rot180)
+            best_orientation = None
+            best_score = 0.0
+            candidates = [
+                ('identity', board_state_raw),
+                ('rot180', board_state_raw[::-1, ::-1])
+            ]
+            
+            for name, state_oriented in candidates:
+                score = self._score_orientation(state_oriented, canonical)
+                white_pieces_bottom = np.sum((state_oriented[4:8, :] >= 0) & (state_oriented[4:8, :] <= 5))
+                white_pieces_top = np.sum((state_oriented[0:4, :] >= 0) & (state_oriented[0:4, :] <= 5))
+                
+                print(f"[ORIENTATION] {name} score: {score:.3f} (whites bottom [4-7]: {white_pieces_bottom}, top [0-3]: {white_pieces_top})", file=sys.stderr, flush=True)
+                
+                if white_pieces_bottom > white_pieces_top:
+                    if score > best_score:
+                        best_score = score
+                        best_orientation = name
+                elif white_pieces_bottom == white_pieces_top:
+                    if score > best_score:
+                        best_score = score
+                        best_orientation = name
 
-        # identity
-        candidates.append(('identity', board_state_raw))
+        print(f"[ORIENTATION] Best: {best_orientation}, score: {best_score:.3f}, threshold: {threshold}, from_bbox: {orientation_from_bbox}", file=sys.stderr, flush=True)
 
-        # rot180: переворачиваем по обоим осям
-        candidates.append(('rot180', board_state_raw[::-1, ::-1]))
-
-        best_orientation = None
-        best_score = 0.0
-
-        for name, state_oriented in candidates:
-            score = self._score_orientation(state_oriented, canonical)
-            print(f"[ORIENTATION] {name} score: {score:.3f}", file=sys.stderr, flush=True)
-            if score > best_score:
-                best_score = score
-                best_orientation = name
-
-        print(f"[ORIENTATION] Best: {best_orientation}, score: {best_score:.3f}, threshold: {threshold}", file=sys.stderr, flush=True)
-
-        if best_orientation is None or best_score < threshold:
+        # Если ориентация выбрана по bbox, применяем её независимо от score
+        # (bbox более надежный индикатор чем score для стартовой позиции)
+        if best_orientation is None:
+            print(f"[ORIENTATION] Auto-orientation failed: no orientation selected", file=sys.stderr, flush=True)
+            return
+        
+        if not orientation_from_bbox and best_score < threshold:
             # Автоматическую ориентацию определить не удалось —
             # оставляем index_map = None, позже можно будет добавить
             # ручное задание a1.
             print(f"[ORIENTATION] Auto-orientation failed (score {best_score:.3f} < {threshold})", file=sys.stderr, flush=True)
             return
+        
+        if orientation_from_bbox:
+            print(f"[ORIENTATION] Applying {best_orientation} based on bbox (ignoring threshold)", file=sys.stderr, flush=True)
 
         # Строим index_map для найденной ориентации:
         # index_map[i_oriented, j_oriented] = (i_raw, j_raw)
@@ -672,13 +796,23 @@ class StreamProcessor:
             for i in range(8):
                 for j in range(8):
                     index_map[i, j] = (i, j)
-        elif best_orientation == 'rot180':
+        elif best_orientation == 'rot90':
+            # Поворот на 90° по часовой: (i, j) → (j, 7-i)
             for i in range(8):
                 for j in range(8):
-                    # Ориентированная клетка (i,j) соответствует сырой (7-i, 7-j)
+                    index_map[i, j] = (j, 7 - i)
+        elif best_orientation == 'rot180':
+            # Поворот на 180°: (i, j) → (7-i, 7-j)
+            for i in range(8):
+                for j in range(8):
                     index_map[i, j] = (7 - i, 7 - j)
+        elif best_orientation == 'rot270':
+            # Поворот на 270° по часовой (90° против): (i, j) → (7-j, i)
+            for i in range(8):
+                for j in range(8):
+                    index_map[i, j] = (7 - j, i)
         else:
-            # На всякий случай, если появятся другие ориентации
+            print(f"[ORIENTATION] Unknown orientation: {best_orientation}", file=sys.stderr, flush=True)
             return
 
         self.index_map = index_map

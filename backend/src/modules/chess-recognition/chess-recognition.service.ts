@@ -387,8 +387,14 @@ export class ChessRecognitionService {
         ) {
           this.logger.log(`🐍 [PYTHON] ${line.trim()}`);
         } else if (line.includes('[DETECTION]')) {
-          // Детекции логируем как debug, чтобы не спамить
-          this.logger.debug(`🐍 [PYTHON] ${line.trim()}`);
+          // Детекции логируем как log каждый кадр
+          this.logger.log(`🐍 [PYTHON] ${line.trim()}`);
+        } else if (line.includes('[FRAME]')) {
+          // Логирование обработки кадров
+          this.logger.log(`🐍 [PYTHON] ${line.trim()}`);
+        } else if (line.includes('[STDIN]')) {
+          // Логирование чтения из stdin
+          this.logger.log(`🐍 [PYTHON] ${line.trim()}`);
         } else if (
           line.includes('[STABILIZATION]') ||
           line.includes('[MOVE-DEBUG]') ||
@@ -466,35 +472,46 @@ export class ChessRecognitionService {
     const pythonProcess = this.activeProcesses.get(gameToken);
     if (!pythonProcess) {
       // Процесс не существует - это нормально, если он был остановлен
+      this.logger.warn(
+        `⚠️ [SENDFRAME] No Python process found for token ${gameToken}`,
+      );
       return;
     }
 
     // Проверяем, что процесс еще жив и stdin доступен
     if (!pythonProcess.stdin || pythonProcess.killed) {
       // Процесс уже закрыт - удаляем из Map и выходим
+      this.logger.warn(
+        `⚠️ [SENDFRAME] Python process ${gameToken} is dead or stdin unavailable`,
+      );
       this.activeProcesses.delete(gameToken);
       return;
     }
 
     try {
       // Отправка бинарных данных: длина (4 байта) + данные
+      // ВАЖНО: отправляем атомарно - объединяем длину и данные в один буфер
       const lengthBuffer = Buffer.allocUnsafe(4);
       lengthBuffer.writeUInt32BE(frameData.length, 0);
 
-      // Отправка длины и данных с обработкой ошибок
-      const writeLength = pythonProcess.stdin.write(lengthBuffer);
-      if (!writeLength) {
-        // Буфер переполнен, но это не критично
+      // Объединяем длину и данные в один буфер для атомарной отправки
+      const combinedBuffer = Buffer.concat([lengthBuffer, frameData]);
+
+      // Отправляем объединенный буфер
+      const written = pythonProcess.stdin.write(combinedBuffer);
+      if (!written) {
+        // Буфер переполнен - ждем drain
+        this.logger.debug(
+          `📤 [SENDFRAME] Buffer full, waiting for drain for token ${gameToken}`,
+        );
         pythonProcess.stdin.once('drain', () => {
-          pythonProcess.stdin?.write(frameData);
+          // Данные отправлены
         });
-      } else {
-        pythonProcess.stdin.write(frameData);
       }
     } catch (error) {
       // Ошибка записи (например, EOF) - процесс закрыт
-      this.logger.debug(
-        `Failed to write frame to process ${gameToken}: ${error.message}`,
+      this.logger.warn(
+        `❌ [SENDFRAME] Failed to write frame to process ${gameToken}: ${error.message}`,
       );
       this.activeProcesses.delete(gameToken);
     }

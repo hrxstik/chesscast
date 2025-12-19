@@ -439,12 +439,16 @@ def _detect_board_corners_resnet(image: np.ndarray,
         # Собираем в порядке TL, TR, BR, BL
         ordered_corners = np.stack([top[0], top[1], bottom[1], bottom[0]], axis=0)
         
-        # Коррекция точки 0 (TL): сдвигаем на 2% влево из-за смещения в датасете
+        # Коррекция точки 0 (TL): сдвигаем на 2% влево и на 2% вниз из-за смещения в датасете
         board_width = abs(ordered_corners[1][0] - ordered_corners[0][0])  # Ширина доски по X между TL и TR
+        board_height = abs(ordered_corners[3][1] - ordered_corners[0][1])  # Высота доски по Y между TL и BL
         correction_x = board_width * 0.02  # 2% от ширины доски
+        correction_y = board_height * 0.02  # 2% от высоты доски
         new_x = ordered_corners[0][0] - correction_x
-        # Ограничиваем координату в пределах изображения
+        new_y = ordered_corners[0][1] + correction_y  # Вниз = увеличение Y
+        # Ограничиваем координаты в пределах изображения
         ordered_corners[0][0] = max(0, new_x)  # Не меньше 0
+        ordered_corners[0][1] = max(0, new_y)  # Не меньше 0
         
         # Визуализация уже выполнена выше при определении области доски
         # Здесь только возвращаем результат
@@ -863,6 +867,40 @@ def map_chessboard(image: np.ndarray,
                     if j < SQUARE_COUNT:
                         pt_next = square_corners[i, j + 1].astype(int)
                         cv2.line(warped_with_grid, tuple(pt), tuple(pt_next), (0, 255, 0), 1)
+            
+            # Подписи всех квадратов (a1, a2, ..., h8) закомментированы
+            # columns = list("abcdefgh")
+            # rows = list("12345678")
+            # for i in range(SQUARE_COUNT):
+            #     for j in range(SQUARE_COUNT):
+            #         # Координаты углов квадрата
+            #         pt1 = square_corners[i, j].astype(int)
+            #         pt2 = square_corners[i, j + 1].astype(int)
+            #         pt3 = square_corners[i + 1, j + 1].astype(int)
+            #         pt4 = square_corners[i + 1, j].astype(int)
+            #         
+            #         # Центр квадрата
+            #         center_x = (pt1[0] + pt3[0]) // 2
+            #         center_y = (pt1[1] + pt3[1]) // 2
+            #         
+            #         # Название квадрата (a1, b1, ..., h8)
+            #         # i=7 это нижний ряд (белые), i=0 это верхний ряд (черные)
+            #         # j=0 это колонка a, j=7 это колонка h
+            #         square_name = columns[j] + rows[7 - i]  # 7-i потому что i=7 это ряд 1, i=0 это ряд 8
+            #         
+            #         # Рисуем текст с фоном для лучшей читаемости
+            #         text_size = cv2.getTextSize(square_name, cv2.FONT_HERSHEY_SIMPLEX, 0.4, 1)[0]
+            #         text_x = center_x - text_size[0] // 2
+            #         text_y = center_y + text_size[1] // 2
+            #         
+            #         # Фон для текста
+            #         cv2.rectangle(warped_with_grid, 
+            #                     (text_x - 3, text_y - text_size[1] - 3),
+            #                     (text_x + text_size[0] + 3, text_y + 3),
+            #                     (0, 0, 0), -1)
+            #         # Текст
+            #         cv2.putText(warped_with_grid, square_name, (text_x, text_y),
+            #                   cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 255, 255), 1)
             
             # Сохраняем результат калибровки
             calibration_result_path = mappings_dir / f'{game_token}_calibration_result.jpg'

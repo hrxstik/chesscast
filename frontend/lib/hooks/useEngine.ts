@@ -137,15 +137,7 @@ export function useEngine(initialFen?: string): UseEngineReturn {
       engineRef.current?.stop();
       setBestLine('');
 
-      // Логируем изменение позиции (периодически)
-      if (oldFen !== newFen) {
-        console.log(
-          `🔄 [BOARD] Position updated: ${oldFen.substring(0, 30)}... -> ${newFen.substring(
-            0,
-            30,
-          )}...`,
-        );
-      }
+      // Логирование изменения позиции убрано для уменьшения спама
     } catch (error) {
       // Игнорируем некорректные FEN, но логируем для отладки
       console.warn('⚠️ Failed to set position from FEN:', fen.substring(0, 50), error);
