@@ -58,9 +58,68 @@ export const ChessVideoStreamWebRTC: React.FC<ChessVideoStreamProps> = ({
   const [manualCalibrationSending, setManualCalibrationSending] = useState(false);
   const calibrationCanvasRef = useRef<HTMLCanvasElement | null>(null);
 
+  // Визуальные логи для отладки на iPhone
+  const [showLogs, setShowLogs] = useState(false);
+  const [logs, setLogs] = useState<
+    Array<{ time: string; message: string; type: 'log' | 'error' | 'warn' }>
+  >([]);
+  const logsRef = useRef<Array<{ time: string; message: string; type: 'log' | 'error' | 'warn' }>>(
+    [],
+  );
+
   useEffect(() => {
     a1SettingRef.current = a1Setting;
   }, [a1Setting]);
+
+  // Перехватываем console.log для отображения на экране
+  useEffect(() => {
+    const originalLog = console.log;
+    const originalError = console.error;
+    const originalWarn = console.warn;
+
+    const addLog = (message: string, type: 'log' | 'error' | 'warn' = 'log') => {
+      const time = new Date().toLocaleTimeString();
+      const logEntry = { time, message, type };
+      logsRef.current = [...logsRef.current.slice(-49), logEntry]; // Храним последние 50 логов
+      setLogs([...logsRef.current]);
+    };
+
+    console.log = (...args: any[]) => {
+      originalLog.apply(console, args);
+      addLog(
+        args
+          .map((arg) => (typeof arg === 'object' ? JSON.stringify(arg, null, 2) : String(arg)))
+          .join(' '),
+        'log',
+      );
+    };
+
+    console.error = (...args: any[]) => {
+      originalError.apply(console, args);
+      addLog(
+        args
+          .map((arg) => (typeof arg === 'object' ? JSON.stringify(arg, null, 2) : String(arg)))
+          .join(' '),
+        'error',
+      );
+    };
+
+    console.warn = (...args: any[]) => {
+      originalWarn.apply(console, args);
+      addLog(
+        args
+          .map((arg) => (typeof arg === 'object' ? JSON.stringify(arg, null, 2) : String(arg)))
+          .join(' '),
+        'warn',
+      );
+    };
+
+    return () => {
+      console.log = originalLog;
+      console.error = originalError;
+      console.warn = originalWarn;
+    };
+  }, []);
 
   // Функция для преобразования координат клика через perspective_matrix
   const transformPointToWarped = useCallback(
@@ -559,31 +618,10 @@ export const ChessVideoStreamWebRTC: React.FC<ChessVideoStreamProps> = ({
       return;
     }
 
-    // iPhone всегда возвращает 1600x1200 (ландшафт), но модели нужен 1200x1600 (портрет)
-    // Поворачиваем только для WebSocket (Python модель), Mediasoup получает оригинал
-    const isLandscape = video.videoWidth > video.videoHeight;
-    const needsRotation = isLandscape && video.videoWidth === 1600 && video.videoHeight === 1200;
-
-    if (needsRotation) {
-      // Поворачиваем 1600x1200 -> 1200x1600 для модели
-      canvas.width = 1200;
-      canvas.height = 1600;
-      ctx.save();
-      ctx.translate(canvas.width / 2, canvas.height / 2);
-      ctx.rotate(Math.PI / 2);
-      ctx.drawImage(
-        video,
-        -video.videoHeight / 2,
-        -video.videoWidth / 2,
-        video.videoHeight,
-        video.videoWidth,
-      );
-      ctx.restore();
-    } else {
-      canvas.width = video.videoWidth;
-      canvas.height = video.videoHeight;
-      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-    }
+    // Отправляем кадр как есть, без поворотов - полагаемся на constraints
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
     console.log(
       `📤 [STREAMER] Sending canvas: ${canvas.width}x${canvas.height} (from ${video.videoWidth}x${video.videoHeight})`,
@@ -1471,17 +1509,27 @@ export const ChessVideoStreamWebRTC: React.FC<ChessVideoStreamProps> = ({
         protocol: window.location.protocol,
       });
 
-      // iPhone всегда возвращает 1600x1200 (ландшафт), независимо от ориентации экрана
-      // Поэтому просто запрашиваем поток без constraints и используем как есть
-      // Для модели Python будем поворачивать кадры на бэкенде если нужно
       const stream = await navigator.mediaDevices.getUserMedia({
         video: {
           facingMode: 'environment',
+          width: { ideal: 1280 },
+          height: { ideal: 960 },
+          aspectRatio: { ideal: 3 / 4 },
         },
         audio: false,
       });
 
       const videoTrack = stream.getVideoTracks()[0];
+
+      // Получаем capabilities для просмотра всех поддерживаемых разрешений
+      const capabilities = videoTrack.getCapabilities();
+      console.log('📹 [CAMERA] Поддерживаемые capabilities:', {
+        width: capabilities.width,
+        height: capabilities.height,
+        aspectRatio: capabilities.aspectRatio,
+        facingMode: capabilities.facingMode,
+        frameRate: capabilities.frameRate,
+      });
 
       // Логируем реальное разрешение
       const settings = videoTrack.getSettings();
@@ -2426,6 +2474,47 @@ export const ChessVideoStreamWebRTC: React.FC<ChessVideoStreamProps> = ({
         <div
           className="relative bg-black rounded-lg overflow-hidden"
           style={{ minHeight: '400px' }}>
+          {/* Кнопка показа логов */}
+          <button
+            onClick={() => setShowLogs(!showLogs)}
+            className="absolute top-2 right-2 z-50 bg-blue-600 text-white px-3 py-1 rounded text-sm font-mono"
+            style={{ fontSize: '10px' }}>
+            {showLogs ? '📋 Скрыть' : '📋 Логи'}
+          </button>
+
+          {/* Панель логов */}
+          {showLogs && (
+            <div
+              className="absolute top-10 right-2 z-50 bg-black bg-opacity-90 text-white p-2 rounded max-h-96 overflow-y-auto"
+              style={{ width: '300px', fontSize: '10px', fontFamily: 'monospace' }}>
+              <div className="flex justify-between items-center mb-2">
+                <span className="font-bold">Логи ({logs.length})</span>
+                <button
+                  onClick={() => {
+                    logsRef.current = [];
+                    setLogs([]);
+                  }}
+                  className="text-red-400 text-xs">
+                  Очистить
+                </button>
+              </div>
+              <div className="space-y-1">
+                {logs.map((log, idx) => (
+                  <div
+                    key={idx}
+                    className={`text-xs break-words ${
+                      log.type === 'error'
+                        ? 'text-red-400'
+                        : log.type === 'warn'
+                        ? 'text-yellow-400'
+                        : 'text-gray-300'
+                    }`}>
+                    <span className="text-gray-500">[{log.time}]</span> {log.message}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
           <video
             ref={videoRef}
             autoPlay
