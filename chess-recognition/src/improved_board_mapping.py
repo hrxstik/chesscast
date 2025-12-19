@@ -8,10 +8,18 @@ import os
 import sys
 from pathlib import Path
 from typing import Tuple, List, Optional, Dict
-from scipy.cluster.hierarchy import linkage, fcluster
-from scipy.spatial.distance import pdist
 from datetime import datetime
 from model.yolo11_detector import YOLO11Detector
+
+# Импорты для ResNet модели
+try:
+    import torch
+    import torch.nn as nn
+    from torchvision import models, transforms
+    from PIL import Image
+    TORCH_AVAILABLE = True
+except ImportError:
+    TORCH_AVAILABLE = False
 
 # Параметры маппинга
 OUTPUT_IMAGE_SIZE = (640, 640)
@@ -69,325 +77,6 @@ def perspective_transform(image: np.ndarray, corners: np.ndarray, output_size: T
     return warped, M
 
 
-def detect_board_boundaries(image: np.ndarray, 
-                           min_area_ratio: float = MIN_BOARD_AREA_RATIO,
-                           max_area_ratio: float = MAX_BOARD_AREA_RATIO) -> Optional[np.ndarray]:
-    """
-    Улучшенное определение границ доски
-    
-    Args:
-        image: Входное изображение
-        min_area_ratio: Минимальная площадь доски относительно изображения
-        max_area_ratio: Максимальная площадь доски относительно изображения
-    
-    Returns:
-        Массив из 4 углов доски (4, 2) или None
-    """
-    h, w = image.shape[:2]
-    total_area = h * w
-    min_area = total_area * min_area_ratio
-    max_area = total_area * max_area_ratio
-    
-    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY) if len(image.shape) == 3 else image
-    
-    adaptive_thresh = cv2.adaptiveThreshold(
-        gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
-        cv2.THRESH_BINARY, ADAPTIVE_THRESH_BLOCK_SIZE, ADAPTIVE_THRESH_C
-    )
-    
-    thresh_inv = cv2.bitwise_not(adaptive_thresh)
-    kernel = np.ones((3, 3), np.uint8)
-    thresh_morph = cv2.morphologyEx(thresh_inv, cv2.MORPH_CLOSE, kernel, iterations=2)
-    thresh_morph = cv2.morphologyEx(thresh_morph, cv2.MORPH_OPEN, kernel, iterations=1)
-    
-    contours, _ = cv2.findContours(thresh_morph, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    valid_contours = [c for c in contours if min_area <= cv2.contourArea(c) <= max_area]
-    
-    if not valid_contours:
-        return detect_board_by_lines(image, min_area, max_area)
-    
-    valid_contours = sorted(valid_contours, key=cv2.contourArea, reverse=True)
-    
-    for contour in valid_contours[:5]:
-        peri = cv2.arcLength(contour, True)
-        approx = cv2.approxPolyDP(contour, 0.02 * peri, True)
-        
-        if len(approx) == 4:
-            area = cv2.contourArea(approx)
-            if min_area <= area <= max_area:
-                corners = approx.reshape(4, 2)
-                width = max(calculate_distance(corners[0], corners[1]), 
-                           calculate_distance(corners[2], corners[3]))
-                height = max(calculate_distance(corners[0], corners[3]), 
-                            calculate_distance(corners[1], corners[2]))
-                aspect_ratio = max(width, height) / min(width, height)
-                
-                if 0.7 <= aspect_ratio <= 1.3:
-                    return corners.astype(np.float32)
-    
-    return detect_board_by_lines(image, min_area, max_area)
-
-
-def detect_board_by_lines(image: np.ndarray, min_area: float, max_area: float) -> Optional[np.ndarray]:
-    """Определение границ доски через поиск линий"""
-    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY) if len(image.shape) == 3 else image
-    blurred = cv2.GaussianBlur(gray, (5, 5), 0)
-    edges = cv2.Canny(blurred, CANNY_LOW_THRESHOLD, CANNY_HIGH_THRESHOLD)
-    kernel = np.ones((3, 3), np.uint8)
-    edges = cv2.dilate(edges, kernel, iterations=2)
-    edges = cv2.morphologyEx(edges, cv2.MORPH_CLOSE, kernel, iterations=3)
-    
-    lines = cv2.HoughLinesP(edges, 1, np.pi/180, threshold=100, 
-                            minLineLength=min(image.shape[:2])//4, 
-                            maxLineGap=50)
-    
-    if lines is None or len(lines) < 4:
-        return None
-    
-    h_lines = []
-    v_lines = []
-    
-    for line in lines:
-        x1, y1, x2, y2 = line[0]
-        angle = np.arctan2(y2 - y1, x2 - x1) * 180 / np.pi
-        
-        if abs(angle) < 45 or abs(angle) > 135:
-            h_lines.append((x1, y1, x2, y2))
-        else:
-            v_lines.append((x1, y1, x2, y2))
-    
-    if len(h_lines) < 2 or len(v_lines) < 2:
-        return None
-    
-    all_points = []
-    for line in h_lines + v_lines:
-        all_points.append((line[0], line[1]))
-        all_points.append((line[2], line[3]))
-    
-    all_points = np.array(all_points)
-    hull = cv2.convexHull(all_points)
-    
-    if len(hull) < 4:
-        return None
-    
-    peri = cv2.arcLength(hull, True)
-    approx = cv2.approxPolyDP(hull, 0.02 * peri, True)
-    
-    if len(approx) == 4:
-        area = cv2.contourArea(approx)
-        if min_area <= area <= max_area:
-            return approx.reshape(4, 2).astype(np.float32)
-    
-    return None
-
-
-def cluster_lines(lines: List[Tuple[float, float]], target_count: int) -> List[Tuple[float, float]]:
-    """
-    Улучшенная кластеризация линий с использованием адаптивного порога.
-    """
-    if len(lines) <= target_count:
-        return lines
-    
-    if not lines:
-        return []
-    
-    # Сортируем линии по rho
-    lines = sorted(lines, key=lambda x: x[0])
-    
-    # Адаптивный порог кластеризации на основе диапазона значений
-    if len(lines) > 1:
-        rho_range = lines[-1][0] - lines[0][0]
-        cluster_threshold = max(rho_range / (target_count * 2), 10)  # Адаптивный порог
-    else:
-        cluster_threshold = 10
-    
-    clusters = []
-    current_cluster = [lines[0]]
-    
-    for line in lines[1:]:
-        # Проверяем, близка ли линия к текущему кластеру
-        if abs(line[0] - current_cluster[-1][0]) < cluster_threshold:
-            current_cluster.append(line)
-        else:
-            # Завершаем текущий кластер
-            avg_rho = np.mean([l[0] for l in current_cluster])
-            avg_theta = np.mean([l[1] for l in current_cluster])
-            clusters.append((avg_rho, avg_theta))
-            current_cluster = [line]
-    
-    # Добавляем последний кластер
-    if current_cluster:
-        avg_rho = np.mean([l[0] for l in current_cluster])
-        avg_theta = np.mean([l[1] for l in current_cluster])
-        clusters.append((avg_rho, avg_theta))
-    
-    # Если кластеров больше, чем нужно, выбираем равномерно распределенные
-    if len(clusters) > target_count:
-        # Используем более умный выбор - берем кластеры, которые равномерно распределены
-        indices = np.linspace(0, len(clusters) - 1, target_count, dtype=int)
-        clusters = [clusters[i] for i in indices]
-    elif len(clusters) < target_count:
-        # Если кластеров меньше, чем нужно, это проблема - возвращаем None будет обработано выше
-        pass
-    
-    return clusters
-
-
-def cluster_intersection_points(points: np.ndarray, grid_size: int) -> np.ndarray:
-    """Кластеризация точек пересечения"""
-    if len(points) <= grid_size ** 2:
-        return points
-    
-    distances = pdist(points)
-    linkage_matrix = linkage(distances, method='ward')
-    cluster_labels = fcluster(linkage_matrix, grid_size ** 2, criterion='maxclust')
-    
-    clustered_points = []
-    for i in range(1, grid_size ** 2 + 1):
-        cluster_points = points[cluster_labels == i]
-        if len(cluster_points) > 0:
-            centroid = np.mean(cluster_points, axis=0)
-            clustered_points.append(centroid)
-    
-    return np.array(clustered_points)
-
-
-def sort_points_to_matrix(points: np.ndarray, grid_size: int) -> np.ndarray:
-    """Сортировка точек в матрицу"""
-    y_sorted = points[np.argsort(points[:, 1])]
-    matrix = []
-    for i in range(grid_size):
-        row_start = i * grid_size
-        row_end = (i + 1) * grid_size
-        row_points = y_sorted[row_start:row_end]
-        row_points = row_points[np.argsort(row_points[:, 0])]
-        matrix.append(row_points)
-    return np.array(matrix)
-
-
-def detect_square_corners(warped_image: np.ndarray, square_count: int = SQUARE_COUNT) -> Optional[np.ndarray]:
-    """
-    Определение углов клеток доски через детекцию линий.
-    Использует несколько методов для повышения надежности.
-    Работает даже когда на доске есть фигуры.
-    """
-    gray = cv2.cvtColor(warped_image, cv2.COLOR_BGR2GRAY) if len(warped_image.shape) == 3 else warped_image
-    h, w = gray.shape
-    
-    # Метод 1: Адаптивная пороговая обработка для выделения клеток
-    # Это помогает выделить границы клеток даже при наличии фигур
-    adaptive_thresh = cv2.adaptiveThreshold(
-        gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
-        cv2.THRESH_BINARY, 11, 2
-    )
-    
-    # Инвертируем для лучшей детекции линий
-    adaptive_thresh = cv2.bitwise_not(adaptive_thresh)
-    
-    # Метод 2: Морфологические операции для выделения линий
-    kernel_h = np.ones((1, int(w * 0.1)), np.uint8)  # Горизонтальный kernel для горизонтальных линий
-    kernel_v = np.ones((int(h * 0.1), 1), np.uint8)  # Вертикальный kernel для вертикальных линий
-    
-    # Выделяем горизонтальные линии
-    horizontal_lines = cv2.morphologyEx(adaptive_thresh, cv2.MORPH_OPEN, kernel_h, iterations=2)
-    horizontal_lines = cv2.dilate(horizontal_lines, kernel_h, iterations=1)
-    
-    # Выделяем вертикальные линии
-    vertical_lines = cv2.morphologyEx(adaptive_thresh, cv2.MORPH_OPEN, kernel_v, iterations=2)
-    vertical_lines = cv2.dilate(vertical_lines, kernel_v, iterations=1)
-    
-    # Объединяем линии
-    lines_image = cv2.bitwise_or(horizontal_lines, vertical_lines)
-    
-    # Метод 3: Canny для дополнительной детекции краев
-    blurred = cv2.GaussianBlur(gray, (5, 5), 0)
-    edges = cv2.Canny(blurred, 30, 100)
-    
-    # Объединяем результаты
-    combined = cv2.bitwise_or(lines_image, edges)
-    
-    all_h_lines = []
-    all_v_lines = []
-    
-    # Используем HoughLinesP для более точной детекции
-    min_line_length = int(min(h, w) * 0.15)
-    max_line_gap = int(min(h, w) * 0.05)
-    threshold = int(min(h, w) * 0.2)
-    
-    lines_p = cv2.HoughLinesP(combined, 1, np.pi/180, threshold=threshold,
-                               minLineLength=min_line_length, maxLineGap=max_line_gap)
-    
-    if lines_p is not None:
-        for line in lines_p:
-            x1, y1, x2, y2 = line[0]
-            dx = abs(x2 - x1)
-            dy = abs(y2 - y1)
-            
-            # Определяем направление линии
-            if dx < dy * 0.5:  # Вертикальная линия
-                x_center = (x1 + x2) / 2
-                all_v_lines.append((x_center, np.pi/2))
-            elif dy < dx * 0.5:  # Горизонтальная линия
-                y_center = (y1 + y2) / 2
-                all_h_lines.append((y_center, 0))
-    
-    # Также пробуем классический HoughLines на объединенном изображении
-    lines = cv2.HoughLines(combined, 1, np.pi/180, threshold=threshold)
-    if lines is not None:
-    for rho, theta in lines[:, 0]:
-            # Нормализуем theta
-            if theta > np.pi/2:
-                theta -= np.pi
-            if abs(theta) < np.pi/6:  # Горизонтальная (около 0)
-                all_h_lines.append((rho, theta))
-            elif abs(theta) > np.pi/3:  # Вертикальная (около pi/2)
-                all_v_lines.append((rho, np.pi/2))
-    
-    if len(all_h_lines) < square_count + 1 or len(all_v_lines) < square_count + 1:
-        return None
-    
-    # Кластеризуем линии
-    h_lines = cluster_lines(all_h_lines, square_count + 1)
-    v_lines = cluster_lines(all_v_lines, square_count + 1)
-    
-    if len(h_lines) < square_count + 1 or len(v_lines) < square_count + 1:
-        return None
-    
-    # Вычисляем пересечения
-    intersections = []
-    for h_rho, h_theta in h_lines:
-        for v_rho, v_theta in v_lines:
-            # Преобразуем в нормальную форму линии
-            if abs(h_theta) < 0.1:  # Горизонтальная: y = h_rho
-                y = h_rho
-                x = v_rho
-            elif abs(v_theta - np.pi/2) < 0.1:  # Вертикальная: x = v_rho
-                x = v_rho
-                y = h_rho
-            else:
-                # Общий случай через решение системы
-            A = np.array([
-                [np.cos(h_theta), np.sin(h_theta)],
-                [np.cos(v_theta), np.sin(v_theta)]
-            ])
-            b = np.array([h_rho, v_rho])
-            try:
-                point = np.linalg.solve(A, b)
-                    x, y = point[0], point[1]
-            except np.linalg.LinAlgError:
-                continue
-            
-            if 0 <= x < w and 0 <= y < h:
-                intersections.append([x, y])
-    
-    if len(intersections) < (square_count + 1) ** 2:
-        return None
-    
-    intersections = np.array(intersections, dtype=np.float32)
-    clustered = cluster_intersection_points(intersections, square_count + 1)
-    matrix = sort_points_to_matrix(clustered, square_count + 1)
-    
-    return matrix
 
 
 def is_board_empty(warped_image: np.ndarray, square_corners: np.ndarray, 
@@ -434,6 +123,387 @@ def _default_model_path() -> str:
     project_root = Path(__file__).resolve().parent.parent
     model_path = project_root / 'bestmerged.pt'
     return str(model_path)
+
+
+def _default_corner_model_path() -> str:
+    """
+    Определение пути к модели детекции углов ResNet по умолчанию.
+    Приоритет: модель с zoom out аугментацией (_zoomed), затем обычная.
+    """
+    project_root = Path(__file__).resolve().parent.parent
+    # Ищем модель в возможных местах (приоритет модели с zoom out аугментацией)
+    possible_paths = [
+        project_root / 'models_resnet' / 'best_resnet34_board_corners.pt',  # Старая модель
+        project_root / 'best_resnet34_board_corners.pt',
+        project_root / 'models_resnet' / 'best_resnet18_board_corners.pt',
+        project_root / 'best_resnet18_board_corners.pt',
+    ]
+    for path in possible_paths:
+        if path.exists():
+            return str(path)
+    # Возвращаем путь по умолчанию (даже если файла нет, для понятной ошибки)
+    return str(possible_paths[0])
+
+
+class CornerRegressor(nn.Module):
+    """Модель ResNet для регрессии углов доски (8 координат)"""
+    def __init__(self, model_name: str = 'resnet34', pretrained: bool = False):
+        super().__init__()
+        self.model_name = model_name
+        
+        if model_name == 'resnet18':
+            self.backbone = models.resnet18(weights=None)
+        elif model_name == 'resnet34':
+            self.backbone = models.resnet34(weights=None)
+        elif model_name == 'resnet50':
+            self.backbone = models.resnet50(weights=None)
+        else:
+            raise ValueError(f"Неизвестная ResNet модель: {model_name}")
+        
+        in_features = self.backbone.fc.in_features
+        self.backbone.fc = nn.Sequential(
+            nn.Linear(in_features, 512),
+            nn.ReLU(),
+            nn.Dropout(0.2),
+            nn.Linear(512, 8)
+        )
+    
+    def forward(self, x):
+        output = self.backbone(x)
+        return torch.sigmoid(output)
+
+
+def _detect_board_corners_resnet(image: np.ndarray, 
+                                  model_path: Optional[str] = None,
+                                  img_size: int = 640,
+                                  device: str = 'cpu',
+                                  yolo_model_path: Optional[str] = None,
+                                  use_crop: bool = False,
+                                  debug_image_out: Optional[np.ndarray] = None) -> Optional[np.ndarray]:
+    """
+    Детекция углов доски через модель ResNet.
+    
+    Args:
+        image: Входное изображение (BGR, как от OpenCV)
+        model_path: Путь к файлу модели ResNet (.pt). Если None, используется путь по умолчанию.
+        img_size: Размер входного изображения для модели
+        device: Устройство для вычислений ('cpu' или 'cuda')
+        yolo_model_path: Путь к модели YOLO для предварительной детекции области доски
+        use_crop: Использовать ли предварительный кроп области доски через YOLO
+    
+    Returns:
+        Массив из 4 углов доски (4, 2) в координатах исходного изображения или None
+    """
+    if not TORCH_AVAILABLE:
+        print("[RESNET] PyTorch not available, cannot use ResNet detection", file=sys.stderr, flush=True)
+        return None
+    
+    if model_path is None:
+        model_path = _default_corner_model_path()
+
+    print(f"[RESNET] Corner model path: {model_path}", file=sys.stderr, flush=True)
+    
+    if not Path(model_path).exists():
+        print(f"[RESNET] Model not found: {model_path}", file=sys.stderr, flush=True)
+        return None
+    
+    # Сохраняем исходный размер ДО кропа для правильного преобразования координат
+    h_orig_full, w_orig_full = image.shape[:2]
+    crop_x_offset = 0
+    crop_y_offset = 0
+    crop_bbox = None  # Для визуализации области поиска (с margin)
+    board_bbox_raw = None  # Для визуализации чистой области доски (без margin)
+    was_cropped = False
+    
+    # ВСЕГДА создаем debug изображение для визуализации (если не передано, создаем копию)
+    if debug_image_out is None:
+        debug_image_out = image.copy()
+    
+    # Логируем порог кропа
+    crop_threshold_ratio = 0.8  # 80% порог
+    print(f"[RESNET] Crop threshold: {crop_threshold_ratio*100:.0f}% of frame width ({w_orig_full}px = {int(w_orig_full * crop_threshold_ratio)}px)", file=sys.stderr, flush=True)
+    
+    # ВСЕГДА ищем фигуры через YOLO (YOLO возвращает ТОЛЬКО фигуры, не область доски!)
+    board_bbox = None
+    pieces_info = []
+    
+    if yolo_model_path:
+        try:
+            print(f"[RESNET] Searching pieces via YOLO, model: {yolo_model_path}", file=sys.stderr, flush=True)
+            # Используем высокий порог уверенности (0.7) чтобы исключить ложные срабатывания
+            result = _detect_board_from_pieces(image, model_path=yolo_model_path, 
+                                               conf_threshold=0.7, min_pieces=4, min_span_ratio=0.2,
+                                               return_pieces_info=True)
+            
+            # YOLO возвращает только фигуры (pieces_info), область доски мы строим сами!
+            # Функция _detect_board_from_pieces возвращает (board_bbox, pieces_info) или (None, pieces_info)
+            # где board_bbox - это область доски через PCA (мы её игнорируем, строим сами из фигур)
+            if result is not None:
+                if isinstance(result, tuple):
+                    board_bbox_from_pca, pieces_info = result  # Первый элемент (board_bbox через PCA) игнорируем
+                    print(f"[RESNET] YOLO returned {len(pieces_info)} pieces (ignoring PCA board_bbox, building our own)", file=sys.stderr, flush=True)
+                else:
+                    # Если вернулся не tuple, значит что-то не так
+                    pieces_info = []
+                    print(f"[RESNET] YOLO returned unexpected format, ignoring", file=sys.stderr, flush=True)
+            else:
+                print(f"[RESNET] YOLO returned None - no pieces found", file=sys.stderr, flush=True)
+            
+            # ВСЕГДА визуализируем фигуры на debug изображении (оранжевый цвет)
+            if pieces_info:
+                print(f"[RESNET] DRAWING {len(pieces_info)} PIECES ON IMAGE!", file=sys.stderr, flush=True)
+                for i, piece in enumerate(pieces_info):
+                    x1, y1, x2, y2 = piece['bbox']
+                    conf = piece['confidence']
+                    # Рисуем bbox фигуры (оранжевый цвет, толстая рамка)
+                    cv2.rectangle(debug_image_out, (int(x1), int(y1)), (int(x2), int(y2)), (0, 165, 255), 3)
+                    # Показываем уверенность
+                    cv2.putText(debug_image_out, f'{conf:.2f}', (int(x1), int(y1) - 5), 
+                               cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 165, 255), 1)
+                    # Рисуем центр фигуры
+                    cx, cy = int(piece['center'][0]), int(piece['center'][1])
+                    cv2.circle(debug_image_out, (cx, cy), 3, (0, 165, 255), -1)
+            else:
+                print(f"[RESNET] ERROR: pieces_info is EMPTY! Pieces will NOT be drawn!", file=sys.stderr, flush=True)
+            
+            # ВСЕГДА строим область доски из фигур (с margin для большей области!)
+            if pieces_info:
+                print(f"[RESNET] Building board area from {len(pieces_info)} pieces...", file=sys.stderr, flush=True)
+                # Вычисляем bounding box всех фигур
+                x_min_raw = int(min(piece['bbox'][0] for piece in pieces_info))
+                y_min_raw = int(min(piece['bbox'][1] for piece in pieces_info))
+                x_max_raw = int(max(piece['bbox'][2] for piece in pieces_info))
+                y_max_raw = int(max(piece['bbox'][3] for piece in pieces_info))
+                
+                # Добавляем margin 10% от ширины области доски чтобы область доски была больше фигур
+                board_width_temp = x_max_raw - x_min_raw
+                board_height_temp = y_max_raw - y_min_raw
+                margin_x = int(board_width_temp * 0.1)  # 10% от ширины области доски
+                margin_y = int(board_width_temp * 0.1)  # 10% от ширины области доски (используем ширину для обеих сторон)
+                x_min_raw = max(0, x_min_raw - margin_x)
+                y_min_raw = max(0, y_min_raw - margin_y)
+                x_max_raw = min(w_orig_full, x_max_raw + margin_x)
+                y_max_raw = min(h_orig_full, y_max_raw + margin_y)
+                
+                print(f"[RESNET] Board area from pieces: ({x_min_raw}, {y_min_raw}) - ({x_max_raw}, {y_max_raw})", file=sys.stderr, flush=True)
+                
+                # Сохраняем область доски для визуализации
+                board_bbox_raw = (x_min_raw, y_min_raw, x_max_raw, y_max_raw)
+                
+                # ВСЕГДА рисуем синюю рамку области доски
+                print(f"[RESNET] DRAWING BOARD AREA: ({x_min_raw}, {y_min_raw}) - ({x_max_raw}, {y_max_raw})", file=sys.stderr, flush=True)
+                cv2.rectangle(debug_image_out, (x_min_raw, y_min_raw), (x_max_raw, y_max_raw), (255, 0, 0), 5)
+                cv2.putText(debug_image_out, 'Board Area', (x_min_raw, y_min_raw - 10), 
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 0, 0), 3)
+                
+                # Вычисляем ширину области доски
+                board_width = x_max_raw - x_min_raw
+                board_height = y_max_raw - y_min_raw
+                board_width_ratio = board_width / w_orig_full
+                
+                print(f"[RESNET] Board width: {board_width}px ({board_width_ratio*100:.1f}% of frame width, crop threshold: {crop_threshold_ratio*100:.0f}%)", file=sys.stderr, flush=True)
+                
+                # Если доска маленькая (< 80% ширины кадра), кропаем добавляя сверху/снизу для 3:4
+                if board_width_ratio < crop_threshold_ratio:
+                    print(f"[RESNET] Board is small ({board_width_ratio*100:.1f}% < {crop_threshold_ratio*100:.0f}% threshold), applying crop with 3:4 aspect ratio...", file=sys.stderr, flush=True)
+                    
+                    target_aspect = 3 / 4  # Портретное соотношение (width/height = 0.75)
+                    
+                    # Берем ширину области доски как основу для кропа
+                    crop_width = board_width
+                    # Вычисляем нужную высоту для соотношения 3:4
+                    crop_height = int(crop_width / target_aspect)
+                    
+                    # Вычисляем сколько нужно добавить сверху/снизу
+                    height_to_add = crop_height - board_height
+                    top_padding = height_to_add // 2
+                    bottom_padding = height_to_add - top_padding
+                    
+                    # Вычисляем координаты кропа: берем область доски и добавляем сверху/снизу
+                    x_min = x_min_raw
+                    x_max = x_max_raw
+                    y_min = max(0, y_min_raw - top_padding)
+                    y_max = min(h_orig_full, y_max_raw + bottom_padding)
+                    
+                    # Если не хватает места сверху, добавляем снизу
+                    if y_min_raw - top_padding < 0:
+                        extra_bottom = abs(y_min_raw - top_padding)
+                        y_min = 0
+                        y_max = min(h_orig_full, y_max_raw + bottom_padding + extra_bottom)
+                    
+                    # Если не хватает места снизу, добавляем сверху
+                    if y_max_raw + bottom_padding > h_orig_full:
+                        extra_top = (y_max_raw + bottom_padding) - h_orig_full
+                        y_max = h_orig_full
+                        y_min = max(0, y_min_raw - top_padding - extra_top)
+                    
+                    # Кропаем изображение с правильным соотношением сторон 3:4
+                    cropped_image = image[y_min:y_max, x_min:x_max]
+                    crop_x_offset = x_min
+                    crop_y_offset = y_min
+                    
+                    final_crop_width = x_max - x_min
+                    final_crop_height = y_max - y_min
+                    final_aspect = final_crop_width / final_crop_height if final_crop_height > 0 else 0
+                    print(f"[RESNET] Crop area: ({x_min}, {y_min}) - ({x_max}, {y_max}), crop size: {final_crop_width}x{final_crop_height}, aspect: {final_aspect:.3f} (target: {target_aspect:.3f})", file=sys.stderr, flush=True)
+                    
+                    # Сохраняем bbox для визуализации (фиолетовый цвет)
+                    crop_bbox = (x_min, y_min, x_max, y_max)
+                    
+                    # ВСЕГДА рисуем фиолетовую рамку кропа (толстая яркая рамка, БЕЗ заливки!)
+                    print(f"[RESNET] DRAWING PURPLE CROP RECTANGLE: ({x_min}, {y_min}) - ({x_max}, {y_max})", file=sys.stderr, flush=True)
+                    # Рисуем толстую яркую рамку
+                    cv2.rectangle(debug_image_out, (x_min, y_min), (x_max, y_max), (255, 0, 255), 5)
+                    cv2.putText(debug_image_out, 'Crop Area (3:4)', (x_min, y_max + 30), 
+                               cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 0, 255), 3)
+                    
+                    # Используем кропнутое изображение для ResNet
+                    image = cropped_image
+                    was_cropped = True
+                else:
+                    print(f"[RESNET] Board is large ({board_width_ratio*100:.1f}% >= {crop_threshold_ratio*100:.0f}% threshold), using full image without crop", file=sys.stderr, flush=True)
+                    # Рисуем фиолетовую рамку на полном изображении, чтобы показать что используется полное изображение
+                    print(f"[RESNET] DRAWING PURPLE CROP RECTANGLE ON FULL IMAGE: (0, 0) - ({w_orig_full}, {h_orig_full})", file=sys.stderr, flush=True)
+                    cv2.rectangle(debug_image_out, (0, 0), (w_orig_full, h_orig_full), (255, 0, 255), 5)
+                    cv2.putText(debug_image_out, 'Full Image (No Crop)', (10, h_orig_full - 20), 
+                               cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 0, 255), 3)
+            else:
+                print("[RESNET] No pieces found, using full image", file=sys.stderr, flush=True)
+                # Если фигур нет, рисуем рамку кропа на полном изображении
+                print(f"[RESNET] DRAWING PURPLE CROP RECTANGLE ON FULL IMAGE: (0, 0) - ({w_orig_full}, {h_orig_full})", file=sys.stderr, flush=True)
+                cv2.rectangle(debug_image_out, (0, 0), (w_orig_full, h_orig_full), (255, 0, 255), 5)
+                cv2.putText(debug_image_out, 'Full Image (No Pieces)', (10, h_orig_full - 20), 
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 0, 255), 3)
+        except Exception as e:
+            print(f"[RESNET] ERROR searching board area via YOLO: {e}", file=sys.stderr, flush=True)
+            import traceback
+            traceback.print_exc()
+            print(f"[RESNET] Using full image due to YOLO error", file=sys.stderr, flush=True)
+    else:
+        print(f"[RESNET] yolo_model_path is None, YOLO not called!", file=sys.stderr, flush=True)
+    
+    try:
+        # Определяем имя модели из пути
+        model_name = 'resnet34'  # по умолчанию
+        if 'resnet18' in model_path.lower():
+            model_name = 'resnet18'
+        elif 'resnet50' in model_path.lower():
+            model_name = 'resnet50'
+        
+        # Загружаем модель
+        model = CornerRegressor(model_name=model_name, pretrained=False)
+        model.load_state_dict(torch.load(model_path, map_location=device))
+        model.to(device)
+        model.eval()
+        
+        # Сохраняем размер изображения для ResNet (может быть кропнутым)
+        h_resnet, w_resnet = image.shape[:2]
+        
+        # Модель ResNet требует фиксированный размер входа (640x640) из-за полносвязных слоев
+        # Поэтому всегда ресайзим до 640x640, но для кропнутого изображения используем качественный upscale
+        model_input_size = img_size  # Всегда 640x640 для совместимости с моделью
+        
+        if was_cropped:
+            max_dim = max(h_resnet, w_resnet)
+            if max_dim < 640:
+                print(f"[RESNET] Кропнутое изображение {w_resnet}x{h_resnet} меньше 640, увеличиваем до {model_input_size}x{model_input_size} (upscale сохраняет детали)", file=sys.stderr, flush=True)
+            else:
+                print(f"[RESNET] Кропнутое изображение {w_resnet}x{h_resnet} больше 640, уменьшаем до {model_input_size}x{model_input_size} (но детали уже сохранены в кропе)", file=sys.stderr, flush=True)
+        else:
+            print(f"[RESNET] Используем стандартный размер входного изображения: {model_input_size}x{model_input_size}", file=sys.stderr, flush=True)
+        
+        # Преобразуем изображение для модели
+        # Для кропнутого изображения используем качественный ресайз через OpenCV перед PIL
+        if was_cropped:
+            # Используем cv2.INTER_LANCZOS4 для качественного ресайза (лучше чем стандартный PIL)
+            # Это особенно важно при upscale маленького кропнутого изображения
+            interpolation = cv2.INTER_LANCZOS4 if max(h_resnet, w_resnet) < 640 else cv2.INTER_AREA
+            image_resized = cv2.resize(image, (model_input_size, model_input_size), interpolation=interpolation)
+            img_rgb = cv2.cvtColor(image_resized, cv2.COLOR_BGR2RGB)
+            img_pil = Image.fromarray(img_rgb)
+            print(f"[RESNET] Использован качественный ресайз через OpenCV (interpolation: {interpolation})", file=sys.stderr, flush=True)
+        else:
+            # Для полного изображения используем стандартный PIL ресайз
+            img_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+            img_pil = Image.fromarray(img_rgb)
+        
+        # Трансформации: если уже ресайзили через OpenCV, то только нормализация
+        if was_cropped:
+            transform = transforms.Compose([
+                transforms.ToTensor(),
+                transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+            ])
+        else:
+            transform = transforms.Compose([
+                transforms.Resize((model_input_size, model_input_size)),  # Стандартный ресайз через PIL
+                transforms.ToTensor(),
+                transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+            ])
+        
+        img_tensor = transform(img_pil).unsqueeze(0).to(device)
+        
+        # Предсказание
+        with torch.no_grad():
+            coords_normalized = model(img_tensor).cpu().numpy().reshape(-1)  # 8 чисел [0, 1]
+        
+        # Логируем нормализованные координаты для отладки
+        print(f"[RESNET] Normalized coordinates from model: {coords_normalized}", file=sys.stderr, flush=True)
+        print(f"[RESNET] Image size for ResNet: {w_resnet}x{h_resnet}", file=sys.stderr, flush=True)
+        if was_cropped:
+            print(f"[RESNET] Смещение кропа: ({crop_x_offset}, {crop_y_offset})", file=sys.stderr, flush=True)
+        
+        # Преобразуем нормализованные координаты в пиксели
+        # Координаты нормализованы относительно размера изображения, которое мы подали в ResNet
+        coords = coords_normalized.copy()
+        coords[0::2] *= w_resnet  # x координаты умножаем на ширину изображения для ResNet
+        coords[1::2] *= h_resnet  # y координаты умножаем на высоту изображения для ResNet
+        
+        # Преобразуем в массив углов (4, 2) - координаты в кропнутом изображении
+        corners = coords.reshape(4, 2).astype(np.float32)
+        
+        # Если использовали кроп, преобразуем координаты обратно к исходному изображению
+        if was_cropped:
+            # Координаты в кропнутом изображении -> координаты в исходном изображении
+            corners[:, 0] += crop_x_offset  # добавляем смещение по X
+            corners[:, 1] += crop_y_offset  # добавляем смещение по Y
+            print(f"[RESNET] Координаты преобразованы обратно к исходному изображению {w_orig_full}x{h_orig_full}", file=sys.stderr, flush=True)
+        
+        print(f"[RESNET] Координаты в пикселях (до сортировки): {corners.tolist()}", file=sys.stderr, flush=True)
+        
+        # Применяем канонический порядок (TL, TR, BR, BL)
+        points = corners.copy()
+        # Сортируем по Y (меньший Y = выше)
+        idx_by_y = np.argsort(points[:, 1])
+        top = points[idx_by_y[:2]]
+        bottom = points[idx_by_y[2:]]
+        
+        # Внутри top/bottom сортируем по X
+        top = top[np.argsort(top[:, 0])]
+        bottom = bottom[np.argsort(bottom[:, 0])]
+        
+        # Собираем в порядке TL, TR, BR, BL
+        ordered_corners = np.stack([top[0], top[1], bottom[1], bottom[0]], axis=0)
+        
+        # Коррекция точки 0 (TL): сдвигаем на 2% влево из-за смещения в датасете
+        board_width = abs(ordered_corners[1][0] - ordered_corners[0][0])  # Ширина доски по X между TL и TR
+        correction_x = board_width * 0.02  # 2% от ширины доски
+        new_x = ordered_corners[0][0] - correction_x
+        # Ограничиваем координату в пределах изображения
+        ordered_corners[0][0] = max(0, new_x)  # Не меньше 0
+        print(f"[RESNET] Applied correction to corner 0: shifted left by {correction_x:.1f}px (2% of board width {board_width:.1f}px), new X: {ordered_corners[0][0]:.1f}", file=sys.stderr, flush=True)
+        
+        print(f"[RESNET] Detection successful, corners: {ordered_corners.tolist()}", file=sys.stderr, flush=True)
+        
+        # Визуализация уже выполнена выше при определении области доски
+        # Здесь только возвращаем результат
+        
+        return ordered_corners.astype(np.float32)
+        
+    except Exception as e:
+        print(f"[RESNET] Ошибка при детекции: {e}", file=sys.stderr, flush=True)
+        import traceback
+        traceback.print_exc()
+        return None
 
 
 def _generate_uniform_square_grid(warped_image: np.ndarray,
@@ -537,13 +607,7 @@ def _generate_smart_square_grid(warped_image: np.ndarray,
     """
     h, w = warped_image.shape[:2]
     
-    # Сначала пытаемся найти реальные границы клеток через детекцию линий (если не пропущено)
-    if not skip_line_detection:
-        detected_grid = detect_square_corners(warped_image, square_count)
-        if detected_grid is not None:
-            return detected_grid
-    
-    # Если не получилось найти линии (или пропущено), используем умное деление с учетом полей
+    # Используем умное деление с учетом полей (детекция линий удалена)
     if border_ratio is None:
         # Автоматически определяем размер полей
         border_x, border_y = _detect_border_size(warped_image)
@@ -571,334 +635,12 @@ def _generate_smart_square_grid(warped_image: np.ndarray,
     return grid
 
 
-def _detect_board_from_contours(image: np.ndarray,
-                                min_area_ratio: float = 0.15,
-                                max_area_ratio: float = 0.85) -> Optional[np.ndarray]:
-    """
-    Определение границ доски через детекцию контуров (для пустой доски).
-    
-    Ищет большой прямоугольный контур, который может быть доской.
-    Работает лучше всего на пустой доске с хорошим контрастом.
-    
-    Args:
-        image: Исходное изображение доски
-        min_area_ratio: Минимальная доля площади контура от площади изображения
-        max_area_ratio: Максимальная доля площади контура от площади изображения
-    
-    Returns:
-        Массив углов доски (4, 2) или None, если контур не найден
-    """
-    h, w = image.shape[:2]
-    image_area = h * w
-    min_area = image_area * min_area_ratio
-    max_area = image_area * max_area_ratio
-    
-    # Преобразуем в grayscale
-    if len(image.shape) == 3:
-        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    else:
-        gray = image.copy()
-    
-    # Применяем размытие для уменьшения шума
-    blurred = cv2.GaussianBlur(gray, (5, 5), 0)
-    
-    # Адаптивная пороговая обработка для выделения доски
-    thresh = cv2.adaptiveThreshold(
-        blurred, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
-        cv2.THRESH_BINARY, 11, 2
-    )
-    
-    # Также пробуем Canny edge detection
-    edges = cv2.Canny(blurred, 50, 150)
-    
-    # Объединяем результаты - используем оба метода
-    # Пробуем сначала adaptive threshold, если не найдем - используем edges
-    contours_thresh, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    contours_edges, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    
-    # Объединяем контуры из обоих методов
-    contours = list(contours_thresh) + list(contours_edges)
-    
-    if not contours:
-        print("[CONTOURS] No contours found", file=sys.stderr, flush=True)
-        return None
-    
-    # Ищем контур, который похож на прямоугольник и имеет подходящий размер
-    best_contour = None
-    best_score = 0.0
-    
-    for contour in contours:
-        area = cv2.contourArea(contour)
-        
-        # Проверяем размер
-        if area < min_area or area > max_area:
-            continue
-        
-        # Аппроксимируем контур полигоном
-        epsilon = 0.02 * cv2.arcLength(contour, True)
-        approx = cv2.approxPolyDP(contour, epsilon, True)
-        
-        # Ищем контур с 4 углами (прямоугольник)
-        if len(approx) == 4:
-            # Вычисляем "прямоугольность" - насколько контур похож на прямоугольник
-            rect = cv2.minAreaRect(contour)
-            box = cv2.boxPoints(rect)
-            box_area = cv2.contourArea(box)
-            
-            # Отношение площади контура к площади минимального прямоугольника
-            # Для идеального прямоугольника это будет близко к 1.0
-            rect_score = area / (box_area + 1e-5)
-            
-            # Комбинированный score: прямоугольность + размер
-            score = rect_score * (area / image_area)
-            
-            if score > best_score:
-                best_score = score
-                best_contour = approx
-    
-    # Понижаем порог для более мягкой детекции
-    if best_contour is None or best_score < 0.01:
-        print(f"[CONTOURS] No suitable rectangular contour found (best_score={best_score:.3f}), trying fallback", file=sys.stderr, flush=True)
-        # Пробуем найти хотя бы самый большой контур с 4 углами, даже если score низкий
-        if best_contour is None:
-            # Ищем любой контур с 4 углами, сортируем по площади
-            candidate_contours = []
-            for contour in contours:
-                area = cv2.contourArea(contour)
-                if area < min_area * 0.3 or area > max_area * 2.0:
-                    continue
-                epsilon = 0.05 * cv2.arcLength(contour, True)  # Более мягкая аппроксимация
-                approx = cv2.approxPolyDP(contour, epsilon, True)
-                if len(approx) == 4:
-                    candidate_contours.append((area, approx))
-            
-            if candidate_contours:
-                # Берем самый большой контур
-                candidate_contours.sort(reverse=True, key=lambda x: x[0])
-                best_contour = candidate_contours[0][1]
-                print(f"[CONTOURS] Using fallback contour with area={candidate_contours[0][0]:.0f}", file=sys.stderr, flush=True)
-        
-        if best_contour is None:
-            return None
-    
-    # Преобразуем контур в массив углов
-    corners = best_contour.reshape(4, 2).astype(np.float32)
-    
-    # Сортируем углы в порядке: TL, TR, BR, BL
-    # Находим центр
-    center = corners.mean(axis=0)
-    
-    # Определяем, какой угол где
-    sums = corners.sum(axis=1)
-    diffs = np.diff(corners, axis=1).flatten()
-    
-    top_left_idx = np.argmin(sums)
-    bottom_right_idx = np.argmax(sums)
-    
-    # Остальные два угла
-    other_indices = [i for i in range(4) if i != top_left_idx and i != bottom_right_idx]
-    if diffs[other_indices[0]] < diffs[other_indices[1]]:
-        top_right_idx = other_indices[0]
-        bottom_left_idx = other_indices[1]
-    else:
-        top_right_idx = other_indices[1]
-        bottom_left_idx = other_indices[0]
-    
-    # Упорядочиваем углы: TL, TR, BR, BL
-    ordered_corners = np.array([
-        corners[top_left_idx],
-        corners[top_right_idx],
-        corners[bottom_right_idx],
-        corners[bottom_left_idx]
-    ], dtype=np.float32)
-    
-    print(f"[CONTOURS] Found board contour with score={best_score:.3f}", file=sys.stderr, flush=True)
-    return ordered_corners
-
-
-def _detect_board_edges_by_lines(image: np.ndarray) -> Optional[Tuple[np.ndarray, np.ndarray]]:
-    """
-    Поиск направляющих линий (грани доски) для уточнения перспективы.
-    
-    Ищет длинные горизонтальные и вертикальные линии, которые могут быть гранями доски.
-    
-    Returns:
-        Tuple[horizontal_lines, vertical_lines] или None
-        Каждая линия представлена как (rho, theta) для HoughLines
-    """
-    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY) if len(image.shape) == 3 else image
-    h, w = gray.shape
-    
-    # Размытие для уменьшения шума
-    blurred = cv2.GaussianBlur(gray, (5, 5), 0)
-    
-    # Canny edge detection
-    edges = cv2.Canny(blurred, 50, 150)
-    
-    # Морфологические операции для соединения разрывов в линиях
-    kernel = np.ones((3, 3), np.uint8)
-    edges = cv2.dilate(edges, kernel, iterations=2)
-    edges = cv2.morphologyEx(edges, cv2.MORPH_CLOSE, kernel, iterations=3)
-    
-    # HoughLines для поиска длинных линий
-    min_line_length = int(min(h, w) * 0.3)  # Минимум 30% от размера изображения
-    threshold = int(min(h, w) * 0.15)
-    
-    lines = cv2.HoughLines(edges, 1, np.pi/180, threshold=threshold)
-    
-    if lines is None or len(lines) == 0:
-        return None
-    
-    horizontal_lines = []
-    vertical_lines = []
-    
-    for line in lines:
-        rho, theta = line[0]
-        
-        # Нормализуем theta
-        if theta > np.pi/2:
-            theta -= np.pi
-        
-        # Классифицируем линии
-        if abs(theta) < np.pi/12:  # Горизонтальная (около 0, ±15 градусов)
-            horizontal_lines.append((rho, theta))
-        elif abs(theta - np.pi/2) < np.pi/12 or abs(theta + np.pi/2) < np.pi/12:  # Вертикальная (около ±90 градусов)
-            vertical_lines.append((rho, np.pi/2))
-    
-    if len(horizontal_lines) < 2 or len(vertical_lines) < 2:
-        return None
-    
-    # Кластеризуем линии, чтобы найти основные направления
-    h_clustered = cluster_lines(horizontal_lines, 2)  # Нужны 2 линии (верх и низ)
-    v_clustered = cluster_lines(vertical_lines, 2)  # Нужны 2 линии (лево и право)
-    
-    if len(h_clustered) < 2 or len(v_clustered) < 2:
-        return None
-    
-    return (np.array(h_clustered), np.array(v_clustered))
-
-
-def _refine_board_corners_with_lines(image: np.ndarray, 
-                                     initial_corners: np.ndarray,
-                                     lines_result: Optional[Tuple[np.ndarray, np.ndarray]]) -> np.ndarray:
-    """
-    Уточнение углов доски с использованием направляющих линий.
-    
-    Комбинирует детекцию по фигурам с детекцией по линиям для более точного определения границ.
-    Использует консервативный подход - только слегка корректирует углы, если линии найдены.
-    
-    Args:
-        image: Исходное изображение
-        initial_corners: Углы, определенные по фигурам (4, 2)
-        lines_result: Результат поиска линий (horizontal_lines, vertical_lines) или None
-    
-    Returns:
-        Уточненные углы доски (4, 2)
-    """
-    if lines_result is None:
-        return initial_corners
-    
-    h_lines, v_lines = lines_result
-    h, w = image.shape[:2]
-    
-    # Вычисляем пересечения линий для определения границ
-    def line_intersection(line1, line2):
-        """Находит пересечение двух линий в нормальной форме (rho, theta)"""
-        rho1, theta1 = line1
-        rho2, theta2 = line2
-        
-        # Преобразуем в декартовы координаты
-        # x*cos(theta) + y*sin(theta) = rho
-        A = np.array([
-            [np.cos(theta1), np.sin(theta1)],
-            [np.cos(theta2), np.sin(theta2)]
-        ])
-        b = np.array([rho1, rho2])
-        
-        try:
-            point = np.linalg.solve(A, b)
-            # Проверяем, что точка внутри изображения
-            if 0 <= point[0] < w and 0 <= point[1] < h:
-                return point
-            return None
-        except np.linalg.LinAlgError:
-            return None
-    
-    # Находим крайние линии по их положению в пространстве изображения
-    # Для горизонтальных линий: находим верхнюю и нижнюю по y-координате пересечения с краями
-    # Для вертикальных линий: находим левую и правую по x-координате пересечения с краями
-    
-    h_y_positions = []
-    for line in h_lines:
-        rho, theta = line
-        # Находим y-координату в центре изображения (x = w/2)
-        # x*cos(theta) + y*sin(theta) = rho
-        # y = (rho - x*cos(theta)) / sin(theta)
-        if abs(np.sin(theta)) > 0.1:  # Избегаем деления на ноль
-            y_center = (rho - (w/2) * np.cos(theta)) / np.sin(theta)
-            h_y_positions.append((y_center, line))
-    
-    v_x_positions = []
-    for line in v_lines:
-        rho, theta = line
-        # Находим x-координату в центре изображения (y = h/2)
-        # x*cos(theta) + y*sin(theta) = rho
-        # x = (rho - y*sin(theta)) / cos(theta)
-        if abs(np.cos(theta)) > 0.1:  # Избегаем деления на ноль
-            x_center = (rho - (h/2) * np.sin(theta)) / np.cos(theta)
-            v_x_positions.append((x_center, line))
-    
-    if len(h_y_positions) < 2 or len(v_x_positions) < 2:
-        # Недостаточно линий - используем начальные углы
-        return initial_corners
-    
-    # Сортируем по позиции и берем крайние
-    h_y_positions.sort(key=lambda x: x[0])
-    v_x_positions.sort(key=lambda x: x[0])
-    
-    h_top_line = h_y_positions[0][1]  # Верхняя (минимальный y)
-    h_bottom_line = h_y_positions[-1][1]  # Нижняя (максимальный y)
-    v_left_line = v_x_positions[0][1]  # Левая (минимальный x)
-    v_right_line = v_x_positions[-1][1]  # Правая (максимальный x)
-    
-    # Находим 4 угла через пересечения крайних линий
-    tl = line_intersection(h_top_line, v_left_line)
-    tr = line_intersection(h_top_line, v_right_line)
-    br = line_intersection(h_bottom_line, v_right_line)
-    bl = line_intersection(h_bottom_line, v_left_line)
-    
-    if all(p is not None for p in [tl, tr, br, bl]):
-        # Все пересечения найдены - используем их, но консервативно
-        refined_corners = np.array([tl, tr, br, bl], dtype=np.float32)
-        
-        # Проверяем, что уточненные углы не слишком далеко от начальных
-        # Если расстояние больше 20% от размера изображения - не используем уточнение
-        max_distance = 0.2 * max(h, w)
-        max_diff = 0.0
-        for i in range(4):
-            diff = np.linalg.norm(refined_corners[i] - initial_corners[i])
-            max_diff = max(max_diff, diff)
-        
-        if max_diff > max_distance:
-            # Уточнение слишком большое - используем начальные углы
-            print(f"[MAPPING] Line refinement too large (max_diff={max_diff:.1f} > {max_distance:.1f}), using piece-based corners", file=sys.stderr, flush=True)
-            return initial_corners
-        
-        # Комбинируем с начальными углами (консервативно: 30% веса для линий, 70% для фигур)
-        combined = 0.3 * refined_corners + 0.7 * initial_corners
-        print(f"[MAPPING] Refined corners with lines (max_diff={max_diff:.1f})", file=sys.stderr, flush=True)
-        return combined.astype(np.float32)
-    else:
-        # Не все пересечения найдены - используем начальные углы
-        print("[MAPPING] Not all line intersections found, using piece-based corners", file=sys.stderr, flush=True)
-        return initial_corners
-
-
 def _detect_board_from_pieces(image: np.ndarray,
                               model_path: Optional[str] = None,
                               conf_threshold: float = 0.5,
                               min_pieces: int = 8,
-                              min_span_ratio: float = 0.3) -> Optional[np.ndarray]:
+                              min_span_ratio: float = 0.3,
+                              return_pieces_info: bool = False) -> Optional[np.ndarray]:
     """
     Определение границ доски по детекциям фигур с помощью YOLO.
     
@@ -911,22 +653,62 @@ def _detect_board_from_pieces(image: np.ndarray,
     if model_path is None:
         model_path = _default_model_path()
     
+    print(f"[BOARD_DETECT] Calling YOLO detector, model: {model_path}, confidence threshold: {conf_threshold}", file=sys.stderr, flush=True)
+    
     # Детектим фигуры
     detector = YOLO11Detector(model_path, conf_threshold=conf_threshold)
     detections = detector.predict(image)
     
-    # Собираем центры фигур
+    print(f"[BOARD_DETECT] YOLO returned {len(detections)} detections", file=sys.stderr, flush=True)
+    
+    # Выводим все детекции YOLO
+    if len(detections) > 0:
+        print(f"[BOARD_DETECT] YOLO detections:", file=sys.stderr, flush=True)
+        for idx, (class_name, bbox, conf, class_id) in enumerate(detections):
+            x1, y1, x2, y2 = bbox
+            print(f"[BOARD_DETECT]   [{idx}] {class_name} (conf={conf:.3f}, class_id={class_id}), bbox=({x1:.1f}, {y1:.1f}, {x2:.1f}, {y2:.1f})", file=sys.stderr, flush=True)
+    else:
+        print(f"[BOARD_DETECT] YOLO found no pieces!", file=sys.stderr, flush=True)
+    
+    # Собираем центры фигур с фильтрацией по уверенности
     centers = []
-    for _, bbox, conf, _ in detections:
+    pieces_info = []  # Сохраняем информацию о фигурах для визуализации
+    filtered_count = 0
+    for class_name, bbox, conf, class_id in detections:
+        # Дополнительная проверка уверенности (на случай если detector.predict не фильтрует)
         if conf < conf_threshold:
+            filtered_count += 1
             continue
         x1, y1, x2, y2 = bbox
         cx = (x1 + x2) / 2.0
         cy = (y1 + y2) / 2.0
         centers.append([cx, cy])
+        if return_pieces_info:
+            pieces_info.append({
+                'bbox': (int(x1), int(y1), int(x2), int(y2)),
+                'confidence': float(conf),
+                'center': (cx, cy)
+            })
+    
+    if filtered_count > 0:
+        print(f"[BOARD_DETECT] Filtered {filtered_count} detections with low confidence (< {conf_threshold})", file=sys.stderr, flush=True)
+    
+    print(f"[BOARD_DETECT] After filtering: {len(centers)} pieces remaining (minimum required: {min_pieces})", file=sys.stderr, flush=True)
     
     if len(centers) < min_pieces:
+        print(f"[BOARD_DETECT] Not enough pieces to detect board: {len(centers)} < {min_pieces}", file=sys.stderr, flush=True)
+        print(f"[BOARD_DETECT] RETURNING pieces_info with {len(pieces_info)} pieces for visualization", file=sys.stderr, flush=True)
+        if return_pieces_info:
+            return None, pieces_info
         return None
+    
+    print(f"[BOARD_DETECT] Using {len(centers)} pieces to detect board area", file=sys.stderr, flush=True)
+    # Выводим информацию о фигурах, которые используются
+    for idx, piece in enumerate(pieces_info if return_pieces_info else []):
+        bbox = piece['bbox']
+        conf = piece['confidence']
+        center = piece['center']
+        print(f"[BOARD_DETECT]   Piece [{idx}]: bbox={bbox}, conf={conf:.3f}, center=({center[0]:.1f}, {center[1]:.1f})", file=sys.stderr, flush=True)
     
     centers = np.array(centers, dtype=np.float32)
     mean = centers.mean(axis=0)
@@ -936,6 +718,10 @@ def _detect_board_from_pieces(image: np.ndarray,
     try:
         _, _, Vt = np.linalg.svd(X, full_matrices=False)
     except np.linalg.LinAlgError:
+        print("[BOARD_DETECT] SVD error during PCA", file=sys.stderr, flush=True)
+        print(f"[BOARD_DETECT] RETURNING pieces_info with {len(pieces_info)} pieces for visualization", file=sys.stderr, flush=True)
+        if return_pieces_info:
+            return None, pieces_info
         return None
     
     axis_x = Vt[0]  # основное направление
@@ -953,9 +739,51 @@ def _detect_board_from_pieces(image: np.ndarray,
     h, w = image.shape[:2]
     max_dim = max(h, w)
     
+    print(f"[BOARD_DETECT] Checking board area validity: s_span={s_span:.1f}, t_span={t_span:.1f}, min_span_required={min_span_ratio * max_dim:.1f}, max_dim={max_dim:.1f}", file=sys.stderr, flush=True)
+    
     # Если фигуры слишком скучены в центре, не рискуем строить доску
     if s_span < min_span_ratio * max_dim or t_span < min_span_ratio * max_dim:
+        print(f"[BOARD_DETECT] Pieces too clustered: s_span={s_span:.1f}, t_span={t_span:.1f}, min_span={min_span_ratio * max_dim:.1f}", file=sys.stderr, flush=True)
+        print(f"[BOARD_DETECT] RETURNING pieces_info with {len(pieces_info)} pieces for visualization", file=sys.stderr, flush=True)
+        if return_pieces_info:
+            return None, pieces_info
         return None
+    
+    # Дополнительная проверка: если область слишком большая (больше 50% кадра), вероятно ложные срабатывания
+    estimated_area_ratio = (s_span * t_span) / (w * h)
+    print(f"[BOARD_DETECT] Checking area size: estimated_area_ratio={estimated_area_ratio:.3f} (threshold: 0.5)", file=sys.stderr, flush=True)
+    if estimated_area_ratio > 0.5:
+        print(f"[BOARD_DETECT] Board area too large ({estimated_area_ratio*100:.1f}% of frame), likely false positives", file=sys.stderr, flush=True)
+        print(f"[BOARD_DETECT] RETURNING pieces_info with {len(pieces_info)} pieces for visualization", file=sys.stderr, flush=True)
+        if return_pieces_info:
+            return None, pieces_info
+        return None
+    
+    # Дополнительная проверка: если разброс фигур слишком большой относительно размера кадра
+    # (например, фигуры разбросаны по всей ширине/высоте кадра)
+    spread_threshold = 0.7 * max(w, h)
+    print(f"[BOARD_DETECT] Checking spread: s_span={s_span:.1f}, t_span={t_span:.1f}, threshold={spread_threshold:.1f}", file=sys.stderr, flush=True)
+    if s_span > 0.7 * max(w, h) or t_span > 0.7 * max(w, h):
+        print(f"[BOARD_DETECT] Pieces too spread out (s_span={s_span:.1f}, t_span={t_span:.1f}, max_dim={max(w, h):.1f}), likely false positives", file=sys.stderr, flush=True)
+        print(f"[BOARD_DETECT] RETURNING pieces_info with {len(pieces_info)} pieces for visualization", file=sys.stderr, flush=True)
+        if return_pieces_info:
+            return None, pieces_info
+        return None
+    
+    # Дополнительная проверка: если область доски выходит за разумные границы
+    # (например, если фигуры находятся слишком близко к краям кадра)
+    margin_threshold = 0.05  # 5% от размера кадра
+    margin_value = margin_threshold * max(w, h)
+    print(f"[BOARD_DETECT] Checking bounds: s_min={s_min:.1f}, s_max={s_max:.1f}, t_min={t_min:.1f}, t_max={t_max:.1f}, margin={margin_value:.1f}", file=sys.stderr, flush=True)
+    if (s_min < -margin_threshold * max(w, h) or s_max > max(w, h) * (1 + margin_threshold) or
+        t_min < -margin_threshold * max(w, h) or t_max > max(w, h) * (1 + margin_threshold)):
+        print(f"[BOARD_DETECT] Board area exceeds reasonable bounds, likely false positives", file=sys.stderr, flush=True)
+        print(f"[BOARD_DETECT] RETURNING pieces_info with {len(pieces_info)} pieces for visualization", file=sys.stderr, flush=True)
+        if return_pieces_info:
+            return None, pieces_info
+        return None
+    
+    print(f"[BOARD_DETECT] All checks passed! Computing board area...", file=sys.stderr, flush=True)
     
     # Адаптивный margin: чем меньше фигур, тем больше margin
     # Это помогает покрыть всю доску когда фигур мало
@@ -989,6 +817,13 @@ def _detect_board_from_pieces(image: np.ndarray,
     # Ограничиваем внутри изображения
     pts[:, 0] = np.clip(pts[:, 0], 0, w - 1)
     pts[:, 1] = np.clip(pts[:, 1], 0, h - 1)
+    
+    print(f"[BOARD_DETECT] Board area found, corners:", file=sys.stderr, flush=True)
+    for i, pt in enumerate(pts):
+        print(f"[BOARD_DETECT]   Corner {i}: ({pt[0]:.1f}, {pt[1]:.1f})", file=sys.stderr, flush=True)
+    
+    if return_pieces_info:
+        return pts, pieces_info
     
     return pts
 
@@ -1044,71 +879,37 @@ def map_chessboard(image: np.ndarray,
         #     except Exception as e:
         #         print(f"[MAPPING] Failed to count pieces: {e}", file=sys.stderr, flush=True)
         
-        print("[MAPPING] Piece-based detection disabled, using contour-based detection only", file=sys.stderr, flush=True)
+        # Шаг 1: Определение границ доски через ResNet модель
+        print("[MAPPING] Using ResNet model for board corner detection", file=sys.stderr, flush=True)
         
-        # Шаг 1: Определение границ доски - всегда используем контуры
-        board_corners = None
+        # Определяем устройство (GPU если доступно, иначе CPU)
+        device = 'cuda' if TORCH_AVAILABLE and torch.cuda.is_available() else 'cpu'
+        print(f"[MAPPING] Using device: {device}", file=sys.stderr, flush=True)
         
-        # ВРЕМЕННО ОТКЛЮЧЕНО: piece-based калибровка
-        # if pieces_count > 10:
-        #     # Сценарий 1: >10 фигур - используем детекцию по фигурам + линии для уточнения
-        #     print(f"[MAPPING] Board has {pieces_count} pieces (>10) - using piece-based detection + lines refinement", file=sys.stderr, flush=True)
-        #     board_corners = _detect_board_from_pieces(
-        #         image=image,
-        #         model_path=model_path,
-        #         conf_threshold=conf_threshold
-        #     )
-        #     
-        #     if board_corners is None:
-        #         result['error'] = (
-        #             f"Не удалось определить границы доски по {pieces_count} фигурам. "
-        #             "Пожалуйста, очистите доску и повторите попытку. "
-        #             "Для пустой доски будет использована детекция контуров и линий."
-        #         )
-        #         return result
-        #     
-        #     # Временно отключаем уточнение линиями для тестирования
-        #     # lines_result = _detect_board_edges_by_lines(image)
-        #     # if lines_result is not None:
-        #     #     print("[MAPPING] Found guiding lines, refining board corners", file=sys.stderr, flush=True)
-        #     #     board_corners = _refine_board_corners_with_lines(image, board_corners, lines_result)
-        #     # else:
-        #     #     print("[MAPPING] No guiding lines found, using piece-based corners only", file=sys.stderr, flush=True)
-        #     print("[MAPPING] Using piece-based corners only (line refinement disabled for testing)", file=sys.stderr, flush=True)
-            
-        # ВРЕМЕННО ОТКЛЮЧЕНО: piece-based калибровка для 1-10 фигур
-        # elif pieces_count > 0:
-        #     # Сценарий 2: 1-10 фигур - детекция по фигурам, потом пробуем линии
-        #     print(f"[MAPPING] Board has {pieces_count} pieces (1-10) - using piece-based detection, will try line detection", file=sys.stderr, flush=True)
-        #     board_corners = _detect_board_from_pieces(
-        #         image=image,
-        #         model_path=model_path,
-        #         conf_threshold=conf_threshold,
-        #         min_pieces=1,
-        #         min_span_ratio=0.2
-        #     )
-        #     
-        #     if board_corners is None:
-        #         result['error'] = (
-        #             f"Не удалось определить границы доски по {pieces_count} фигурам. "
-        #             "Пожалуйста, используйте ручную калибровку для точного определения границ доски."
-        #         )
-        #         return result
+        # Используем YOLO для предварительного кропа области доски (если модель доступна)
+        yolo_model_path = model_path if model_path else None
         
-        # Всегда используем детекцию контуров (piece-based отключена)
-        print("[MAPPING] Using contour-based detection (piece-based disabled)", file=sys.stderr, flush=True)
-        board_corners = _detect_board_from_contours(image)
+        # Создаем debug изображение для визуализации области поиска
+        # ВАЖНО: создаем копию ДО передачи, чтобы изменения сохранялись
+        debug_image = image.copy()
         
-        if board_corners is not None:
-            print("[MAPPING] Contour detection succeeded, will use line detection for grid", file=sys.stderr, flush=True)
-        else:
-            # Контуры не найдены - требуем ручную калибровку
+        # Передаем debug_image по ссылке - все изменения будут видны в оригинале
+        board_corners = _detect_board_corners_resnet(image, model_path=None, device=device, 
+                                                     yolo_model_path=yolo_model_path, use_crop=True,
+                                                     debug_image_out=debug_image)
+        
+        # После вызова debug_image содержит все нарисованные рамки из _detect_board_corners_resnet
+        
+        if board_corners is None:
+            # ResNet не смог определить углы - требуем ручную калибровку
             result['error'] = (
-                "Не удалось автоматически определить границы доски по контурам. "
+                "Не удалось автоматически определить границы доски через модель ResNet. "
                 "Пожалуйста, используйте ручную калибровку границ доски. "
-                "После калибровки будет использована детекция линий для точного разделения на клетки."
+                "Вы можете вызвать map_chessboard_manual с указанными углами."
             )
             return result
+        
+        print("[MAPPING] ResNet detection succeeded", file=sys.stderr, flush=True)
         
         result['board_corners'] = board_corners.tolist()
         
@@ -1117,20 +918,25 @@ def map_chessboard(image: np.ndarray,
         print(f"[MAPPING] Board corners: {board_corners.tolist()}, image size: {w}x{h}", file=sys.stderr, flush=True)
         
         # Сохраняем исходное изображение с нарисованными границами для отладки
+        # debug_image уже содержит визуализацию области поиска из функции детекции:
+        # - Синяя рамка области доски (Board Area) - ВСЕГДА если найдена
+        # - Фиолетовая рамка кропа (если был применен кроп) - ВСЕГДА если кроп применен
+        # - Оранжевые фигуры, участвующие в определении области доски - ВСЕГДА если найдены
+        # ВСЕГДА добавляем найденные углы доски и рамку по ним (зеленый цвет)
         try:
-            debug_image = image.copy()
+            # Рисуем углы доски (зеленые точки)
             for i, corner in enumerate(board_corners):
                 pt = tuple(corner.astype(int))
-                cv2.circle(debug_image, pt, 10, (0, 255, 0), -1)
-                cv2.putText(debug_image, str(i), (pt[0] + 15, pt[1]), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
-            # Рисуем линии между углами
+                cv2.circle(debug_image, pt, 15, (0, 255, 0), -1)
+                cv2.putText(debug_image, str(i), (pt[0] + 20, pt[1]), cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 255, 0), 3)
+            # Рисуем рамку по углам доски (зеленые линии, толстые и яркие)
             for i in range(4):
                 pt1 = tuple(board_corners[i].astype(int))
                 pt2 = tuple(board_corners[(i + 1) % 4].astype(int))
-                cv2.line(debug_image, pt1, pt2, (0, 255, 0), 3)
+                cv2.line(debug_image, pt1, pt2, (0, 255, 0), 5)
+            # Сохраняем изображение ПОСЛЕ всего рисования
             debug_path = mappings_dir / f'{game_token}_board_corners_debug.jpg'
             cv2.imwrite(str(debug_path), debug_image)
-            print(f"[MAPPING] Saved debug image with board corners to {debug_path}", file=sys.stderr, flush=True)
         except Exception as e:
             print(f"[MAPPING] Failed to save debug image: {e}", file=sys.stderr, flush=True)
         
@@ -1144,20 +950,9 @@ def map_chessboard(image: np.ndarray,
         
         print(f"[MAPPING] Warped image shape: {warped_image.shape}", file=sys.stderr, flush=True)
         
-        # Шаг 3: умная сетка клеток - всегда пробуем детекцию линий
-        print("[MAPPING] Attempting line detection for grid", file=sys.stderr, flush=True)
-        square_corners = detect_square_corners(warped_image, SQUARE_COUNT)
-        
-        if square_corners is not None:
-            print("[MAPPING] Line detection succeeded for grid", file=sys.stderr, flush=True)
-        else:
-            # Линии не найдены - просим ручную калибровку
-            print("[MAPPING] Line detection failed, manual calibration required", file=sys.stderr, flush=True)
-            result['error'] = (
-                "Не удалось автоматически определить границы клеток доски. "
-                "Пожалуйста, используйте ручную калибровку для точного разделения на клетки."
-            )
-            return result
+        # Шаг 3: Генерируем равномерную сетку клеток 8x8
+        print("[MAPPING] Generating uniform 8x8 grid", file=sys.stderr, flush=True)
+        square_corners = _generate_uniform_square_grid(warped_image, SQUARE_COUNT)
         
         result['square_corners'] = square_corners.tolist()
         result['is_empty'] = pieces_count == 0
@@ -1193,7 +988,7 @@ def map_chessboard(image: np.ndarray,
         with open(mapping_file, 'w', encoding='utf-8') as f:
             json.dump(result, f, indent=2, ensure_ascii=False)
         
-                return result
+            return result
         
     except Exception as e:
         result['error'] = str(e)

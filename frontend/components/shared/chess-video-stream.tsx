@@ -31,9 +31,7 @@ export const ChessVideoStream: React.FC<ChessVideoStreamProps> = ({ gameToken, m
   // Ручная калибровка (полигон из 4 точек в нормализованных координатах 0..1)
   const [manualMode, setManualMode] = useState(false);
   const [manualSubmitting, setManualSubmitting] = useState(false);
-  const [manualCorners, setManualCorners] = useState<
-    { x: number; y: number }[]
-  >([
+  const [manualCorners, setManualCorners] = useState<{ x: number; y: number }[]>([
     { x: 0.2, y: 0.2 },
     { x: 0.8, y: 0.2 },
     { x: 0.8, y: 0.8 },
@@ -54,15 +52,52 @@ export const ChessVideoStream: React.FC<ChessVideoStreamProps> = ({ gameToken, m
   // Инициализация камеры
   const startCamera = useCallback(async () => {
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: {
-          // Минимум 480p, максимум 720p
-          width: { min: 640, ideal: 854, max: 1280 },
-          height: { min: 480, ideal: 480, max: 720 },
-          aspectRatio: { ideal: 16 / 9 }, // Сохраняем пропорции
-          facingMode: 'environment', // Задняя камера на мобильных
-        },
-        audio: false,
+      // Пробуем запросить портретную ориентацию с разными подходами
+      // Проблема: некоторые браузеры игнорируют exact constraints или конфликтуют width/height с aspectRatio
+      let stream: MediaStream;
+      try {
+        // Подход 1: Только aspectRatio exact (без width/height exact чтобы избежать конфликтов)
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: {
+            width: { ideal: 1200, min: 800, max: 1920 },
+            height: { ideal: 1600, min: 1000, max: 2560 },
+            aspectRatio: { exact: 3 / 4 }, // Соотношение 3:4 (width/height = 0.75) - портретная ориентация
+            facingMode: 'environment',
+          },
+          audio: false,
+        });
+      } catch (aspectError) {
+        console.warn('⚠️ [CAMERA] AspectRatio exact failed, trying without exact:', aspectError);
+        try {
+          // Подход 2: Без exact, только ideal
+          stream = await navigator.mediaDevices.getUserMedia({
+            video: {
+              width: { ideal: 1200 },
+              height: { ideal: 1600 },
+              aspectRatio: 3 / 4, // Без exact
+              facingMode: 'environment',
+            },
+            audio: false,
+          });
+        } catch (idealError) {
+          console.warn('⚠️ [CAMERA] Ideal constraints failed, using minimal:', idealError);
+          // Подход 3: Минимальные constraints
+          stream = await navigator.mediaDevices.getUserMedia({
+            video: {
+              facingMode: 'environment',
+            },
+            audio: false,
+          });
+        }
+      }
+
+      // Логируем реальное разрешение
+      const videoTrack = stream.getVideoTracks()[0];
+      const settings = videoTrack.getSettings();
+      console.log('📹 [CAMERA] Получено разрешение:', {
+        width: settings.width,
+        height: settings.height,
+        aspectRatio: settings.aspectRatio,
       });
 
       if (videoRef.current) {
@@ -97,6 +132,8 @@ export const ChessVideoStream: React.FC<ChessVideoStreamProps> = ({ gameToken, m
 
     if (!ctx || video.videoWidth === 0 || video.videoHeight === 0) return;
 
+    // Камера уже запрашивается в портретной ориентации 3:4 (1200x1600)
+    // Используем изображение как есть, без поворота
     canvas.width = video.videoWidth;
     canvas.height = video.videoHeight;
     ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
@@ -106,11 +143,11 @@ export const ChessVideoStream: React.FC<ChessVideoStreamProps> = ({ gameToken, m
         if (!blob) return;
         blob.arrayBuffer().then((buffer) => {
           const frameUint8 = new Uint8Array(buffer);
-    socket.emit('frame', {
-      token: gameToken,
+          socket.emit('frame', {
+            token: gameToken,
             frame: frameUint8,
           });
-    });
+        });
       },
       'image/jpeg',
       0.8,
@@ -165,15 +202,12 @@ export const ChessVideoStream: React.FC<ChessVideoStreamProps> = ({ gameToken, m
       setCalibrationMessage(data?.message || 'Калибровка доски...');
     });
 
-    newSocket.on(
-      'calibration-completed',
-      (data: { message?: string; mappingData?: any }) => {
-        setCalibrationInProgress(false);
-        setCalibrationCompleted(true);
-        setCalibrationMessage(data?.message || 'Калибровка выполнена');
-        setShowManualHint(false);
-      },
-    );
+    newSocket.on('calibration-completed', (data: { message?: string; mappingData?: any }) => {
+      setCalibrationInProgress(false);
+      setCalibrationCompleted(true);
+      setCalibrationMessage(data?.message || 'Калибровка выполнена');
+      setShowManualHint(false);
+    });
 
     newSocket.on('frame-processed', (data: any) => {
       console.log('Frame processed:', data);
@@ -279,6 +313,7 @@ export const ChessVideoStream: React.FC<ChessVideoStreamProps> = ({ gameToken, m
     setManualSubmitting(true);
     setCalibrationMessage('Ручная калибровка...');
 
+    // УБРАЛИ ПОВОРОТЫ - отправляем как есть с камеры
     canvas.width = video.videoWidth;
     canvas.height = video.videoHeight;
     ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
@@ -324,8 +359,7 @@ export const ChessVideoStream: React.FC<ChessVideoStreamProps> = ({ gameToken, m
           className="relative bg-black rounded-lg overflow-hidden"
           onPointerMove={manualMode ? handlePointerMove : undefined}
           onPointerUp={manualMode ? handlePointerUp : undefined}
-          onPointerLeave={manualMode ? handlePointerUp : undefined}
-        >
+          onPointerLeave={manualMode ? handlePointerUp : undefined}>
           <video ref={videoRef} autoPlay playsInline muted className="w-full h-auto" />
           <canvas ref={canvasRef} className="hidden" />
 
@@ -352,9 +386,7 @@ export const ChessVideoStream: React.FC<ChessVideoStreamProps> = ({ gameToken, m
               <div className="absolute inset-0 pointer-events-none">
                 <svg className="w-full h-full">
                   <polygon
-                    points={manualCorners
-                      .map((c) => `${c.x * 100}%,${c.y * 100}%`)
-                      .join(' ')}
+                    points={manualCorners.map((c) => `${c.x * 100}%,${c.y * 100}%`).join(' ')}
                     fill="rgba(59,130,246,0.15)"
                     stroke="rgba(59,130,246,0.9)"
                     strokeWidth="2"
@@ -385,27 +417,22 @@ export const ChessVideoStream: React.FC<ChessVideoStreamProps> = ({ gameToken, m
         {cameraError && <p className="text-red-500 text-sm mt-2">{cameraError}</p>}
         {error && <p className="text-red-500 text-sm mt-2">{error}</p>}
         <div className="mt-2 flex flex-col gap-2">
-        {isStreaming && (
+          {isStreaming && (
             <Button onClick={stopStreaming} variant="destructive">
-            Остановить стрим
-          </Button>
-        )}
+              Остановить стрим
+            </Button>
+          )}
           {isStreaming && (
             <div className="flex flex-col sm:flex-row gap-2">
               <Button
                 type="button"
                 variant={manualMode ? 'default' : 'outline'}
                 className={showManualHint ? 'border-yellow-400 text-yellow-400' : ''}
-                onClick={() => setManualMode((prev) => !prev)}
-              >
+                onClick={() => setManualMode((prev) => !prev)}>
                 Проблемы с калибровкой? Нажми сюда
               </Button>
               {manualMode && (
-                <Button
-                  type="button"
-                  onClick={handleManualCalibrate}
-                  disabled={manualSubmitting}
-                >
+                <Button type="button" onClick={handleManualCalibrate} disabled={manualSubmitting}>
                   {manualSubmitting ? 'Отправка...' : 'Подтвердить калибровку'}
                 </Button>
               )}

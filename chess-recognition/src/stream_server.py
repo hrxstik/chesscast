@@ -89,6 +89,24 @@ def main():
                     print(json.dumps({'status': 'error', 'message': 'Failed to decode image'}), flush=True)
                     continue
                 
+                # Логируем размер изображения в терминал (периодически, чтобы не спамить)
+                if not hasattr(processor, '_last_size_log_time'):
+                    processor._last_size_log_time = 0
+                    processor._last_size = None
+                
+                import time
+                current_time = time.time()
+                h, w = frame.shape[:2]
+                current_size = f"{w}x{h}"
+                
+                # Логируем при первом кадре или если размер изменился, или раз в 5 секунд
+                if (processor._last_size != current_size or 
+                    current_time - processor._last_size_log_time > 5):
+                    print(f"[FRAME] Image size: {w}x{h}, data size: {len(frame_data)} bytes", 
+                          file=sys.stderr, flush=True)
+                    processor._last_size = current_size
+                    processor._last_size_log_time = current_time
+                
                 result = processor.process_frame(frame)
                 print(json.dumps(result), flush=True)
             except Exception as e:

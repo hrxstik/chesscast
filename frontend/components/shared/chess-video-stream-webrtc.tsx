@@ -265,6 +265,7 @@ export const ChessVideoStreamWebRTC: React.FC<ChessVideoStreamProps> = ({
         throw new Error('Cannot get canvas context');
       }
 
+      // УБРАЛИ ПОВОРОТЫ - отправляем как есть с камеры
       canvas.width = video.videoWidth;
       canvas.height = video.videoHeight;
       ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
@@ -428,7 +429,6 @@ export const ChessVideoStreamWebRTC: React.FC<ChessVideoStreamProps> = ({
     bestLine,
     possibleMate,
     chessboardOptions,
-    applyExternalMove,
     setPositionFromFen,
   } = useEngine();
 
@@ -543,12 +543,13 @@ export const ChessVideoStreamWebRTC: React.FC<ChessVideoStreamProps> = ({
       return;
     }
 
-    // Устанавливаем размеры canvas равными видео
+    // УБРАЛИ ВСЕ ПОВОРОТЫ - отправляем как есть с камеры
+    // Координаты модели будут адаптированы на бэкенде если нужно
     canvas.width = video.videoWidth;
     canvas.height = video.videoHeight;
-
-    // Рисуем кадр на canvas
     ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+    console.log(`📤 [STREAMER] Sending canvas AS-IS from camera: ${canvas.width}x${canvas.height}`);
 
     // Конвертируем в JPEG бинарные данные
     canvas.toBlob(
@@ -718,10 +719,21 @@ export const ChessVideoStreamWebRTC: React.FC<ChessVideoStreamProps> = ({
           throw new Error('No video track in stream');
         }
 
+        // Получаем настройки трека для логирования ориентации
+        const trackSettings = videoTrack.getSettings();
         console.log('📹 [STREAMER] Producing video track...', {
           trackId: videoTrack.id,
           trackEnabled: videoTrack.enabled,
           trackReadyState: videoTrack.readyState,
+          width: trackSettings.width,
+          height: trackSettings.height,
+          aspectRatio: trackSettings.aspectRatio,
+          orientation:
+            trackSettings.width && trackSettings.height
+              ? trackSettings.width > trackSettings.height
+                ? 'landscape'
+                : 'portrait'
+              : 'unknown',
         });
 
         const producer = await sendTransport.produce({ track: videoTrack });
@@ -731,6 +743,12 @@ export const ChessVideoStreamWebRTC: React.FC<ChessVideoStreamProps> = ({
           producerId: producer.id,
           kind: producer.kind,
           paused: producer.paused,
+          videoOrientation:
+            trackSettings.width && trackSettings.height
+              ? `${trackSettings.width}x${trackSettings.height} (${
+                  trackSettings.width > trackSettings.height ? 'landscape' : 'portrait'
+                })`
+              : 'unknown',
         });
         return producer;
       } catch (error) {
@@ -745,6 +763,8 @@ export const ChessVideoStreamWebRTC: React.FC<ChessVideoStreamProps> = ({
   const consumerCreatingRef = useRef(false);
   // Ref для throttling логирования детекций без фигур (логируем раз в 5 секунд)
   const lastDetectionLogRef = useRef<number>(0);
+  // Ref для throttling логирования обновлений board_state (логируем раз в 2 секунды)
+  const lastBoardStateLogRef = useRef<number>(0);
 
   // Создание consumer для зрителей
   const createConsumer = useCallback(
@@ -921,11 +941,11 @@ export const ChessVideoStreamWebRTC: React.FC<ChessVideoStreamProps> = ({
             console.log('👀 [VIEWER] Track state after 1 second:', {
               trackId: consumer.track.id,
               enabled: consumer.track.enabled,
-              readyState: consumer.track.readyState,
+              trackReadyState: consumer.track.readyState,
               muted: consumer.track.muted,
               videoWidth: videoRef.current?.videoWidth,
               videoHeight: videoRef.current?.videoHeight,
-              readyState: videoRef.current?.readyState,
+              videoReadyState: videoRef.current?.readyState,
             });
           }, 1000);
 
@@ -934,11 +954,11 @@ export const ChessVideoStreamWebRTC: React.FC<ChessVideoStreamProps> = ({
             console.log('👀 [VIEWER] Track state after 3 seconds:', {
               trackId: consumer.track.id,
               enabled: consumer.track.enabled,
-              readyState: consumer.track.readyState,
+              trackReadyState: consumer.track.readyState,
               muted: consumer.track.muted,
               videoWidth: videoRef.current?.videoWidth,
               videoHeight: videoRef.current?.videoHeight,
-              readyState: videoRef.current?.readyState,
+              videoReadyState: videoRef.current?.readyState,
             });
           }, 3000);
 
@@ -1010,18 +1030,58 @@ export const ChessVideoStreamWebRTC: React.FC<ChessVideoStreamProps> = ({
         isSecureContext: window.isSecureContext,
         protocol: window.location.protocol,
       });
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: {
-          // Минимум 480p, максимум 720p
-          width: { min: 640, ideal: 854, max: 1280 },
-          height: { min: 480, ideal: 480, max: 720 },
-          aspectRatio: { ideal: 16 / 9 }, // Сохраняем пропорции
-          facingMode: 'environment', // Задняя камера на мобильных
-        },
-        audio: false,
+      // Пробуем запросить портретную ориентацию с разными подходами
+      // Проблема: некоторые браузеры игнорируют exact constraints или конфликтуют width/height с aspectRatio
+      let stream: MediaStream;
+      try {
+        // Подход 1: Запрашиваем 1600x1200 (альбомная) - камера может поменять местами и дать 1200x1600 (портретная)
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: {
+            width: { ideal: 1600, min: 1200, max: 1920 },
+            height: { ideal: 1200, min: 800, max: 1600 },
+            aspectRatio: { exact: 4 / 3 }, // Соотношение 4:3 (width/height = 1.33) - альбомная ориентация
+            facingMode: 'environment',
+          },
+          audio: false,
+        });
+      } catch (aspectError) {
+        console.warn('⚠️ [CAMERA] AspectRatio exact failed, trying without exact:', aspectError);
+        try {
+          // Подход 2: Без exact, только ideal
+          stream = await navigator.mediaDevices.getUserMedia({
+            video: {
+              width: { ideal: 1600 },
+              height: { ideal: 1200 },
+              aspectRatio: 4 / 3, // Без exact
+              facingMode: 'environment',
+            },
+            audio: false,
+          });
+        } catch (idealError) {
+          console.warn('⚠️ [CAMERA] Ideal constraints failed, using minimal:', idealError);
+          // Подход 3: Минимальные constraints
+          stream = await navigator.mediaDevices.getUserMedia({
+            video: {
+              facingMode: 'environment',
+            },
+            audio: false,
+          });
+        }
+      }
+
+      // Логируем реальное разрешение
+      const videoTrack = stream.getVideoTracks()[0];
+      const settings = videoTrack.getSettings();
+      const actualWidth = settings.width || 0;
+      const actualHeight = settings.height || 0;
+      const actualAspectRatio = settings.aspectRatio || 0;
+      const isPortrait = actualHeight > actualWidth;
+
+      console.log('📹 [CAMERA] Camera returned:', {
+        width: actualWidth,
+        height: actualHeight,
+        aspectRatio: actualAspectRatio,
       });
-      console.log('Camera stream obtained:', stream);
-      console.log('Video tracks:', stream.getVideoTracks());
 
       if (videoRef.current) {
         const video = videoRef.current;
@@ -1108,9 +1168,12 @@ export const ChessVideoStreamWebRTC: React.FC<ChessVideoStreamProps> = ({
 
         // Обрабатываем события загрузки видео
         const handleLoadedMetadata = () => {
+          const videoWidth = video.videoWidth;
+          const videoHeight = video.videoHeight;
+
           console.log('✅ Video metadata loaded:', {
-            videoWidth: video.videoWidth,
-            videoHeight: video.videoHeight,
+            videoWidth,
+            videoHeight,
             srcObject: !!video.srcObject,
             readyState: video.readyState,
           });
@@ -1580,33 +1643,49 @@ export const ChessVideoStreamWebRTC: React.FC<ChessVideoStreamProps> = ({
         }
       }
 
-      // Обновляем доску по board_state, если он есть
+      // ВСЕГДА обновляем доску по board_state (даже если фигуры "скачут")
+      // board_state содержит актуальное состояние доски на каждый кадр
       if (data.board_state && Array.isArray(data.board_state)) {
         try {
           const fen = boardStateToFen(data.board_state);
           setPositionFromFen(fen);
+          // Логируем обновление доски (периодически, чтобы не спамить)
+          const now = Date.now();
+          if (now - lastBoardStateLogRef.current > 2000) {
+            // Считаем заполненные клетки
+            const filled = data.board_state.flat().filter((id: number) => id !== -1).length;
+            console.log(`🔄 [BOARD] Updated board state from backend: ${filled}/64 squares filled`);
+            lastBoardStateLogRef.current = now;
+          }
         } catch (error) {
           console.warn('⚠️ Failed to convert board_state to FEN:', error);
         }
       }
 
-      // Логируем только если есть ход или ошибка, чтобы не спамить консоль
+      // Если есть move, добавляем его в историю (но НЕ применяем через applyExternalMove,
+      // так как board_state уже содержит актуальную позицию после хода)
       if (data.move) {
         console.log('♟️ Move detected:', data.move, data.move_san);
-        // Для стримера начинаем применять ходы только после нажатия "Начать партию"
+        // Для стримера добавляем ходы в историю только после нажатия "Начать партию"
         if (!viewer && !gameStarted) {
+          // Для стримера: не добавляем в историю до старта партии
           return;
         }
-        // обновляем виртуальную доску и движок по ходу от бэкенда
-        applyExternalMove(data.move);
-        // добавляем ход в историю (ориентированный)
-        setMoves((prev) => [
-          ...prev,
-          {
-            san: data.move_san || data.move,
-            uci: data.move,
-          },
-        ]);
+        // Добавляем ход в историю (board_state уже обновлен выше)
+        setMoves((prev) => {
+          // Проверяем, нет ли уже такого хода (защита от дубликатов)
+          const lastMove = prev[prev.length - 1];
+          if (lastMove && lastMove.uci === data.move) {
+            return prev; // Ход уже в истории
+          }
+          return [
+            ...prev,
+            {
+              san: data.move_san || data.move,
+              uci: data.move,
+            },
+          ];
+        });
       } else if (data.status === 'error' || data.message?.includes('error')) {
         // Логируем только ошибки, не каждое сообщение "Mapping not found"
         console.warn('⚠️ Frame processing error:', data.message || data.status);
@@ -1767,6 +1846,7 @@ export const ChessVideoStreamWebRTC: React.FC<ChessVideoStreamProps> = ({
             hasStream,
             videoWidth: video.videoWidth,
             videoHeight: video.videoHeight,
+            orientation: video.videoHeight > video.videoWidth ? 'PORTRAIT' : 'LANDSCAPE',
             readyState: video.readyState,
             paused: video.paused,
             streamActive: videoStream?.active,
@@ -1896,16 +1976,17 @@ export const ChessVideoStreamWebRTC: React.FC<ChessVideoStreamProps> = ({
               backgroundColor: '#000',
               minHeight: '300px',
               cursor: a1SelectionMode || manualCalibrationMode ? 'crosshair' : 'default',
+              // УБРАЛИ CSS ПОВОРОТ - показываем как есть с камеры
             }}
             onClick={handleVideoClick}
             onLoadedMetadata={() => {
               console.log('✅ JSX onLoadedMetadata fired');
-              setHasVideoStream(true);
               if (videoRef.current) {
                 videoRef.current.play().catch((err) => {
                   console.error('Error playing in onLoadedMetadata:', err);
                 });
               }
+              setHasVideoStream(true);
             }}
             onCanPlay={() => {
               console.log('✅ JSX onCanPlay fired');

@@ -80,7 +80,29 @@ export class ChessRecognitionService {
         });
 
         pythonProcess.stderr.on('data', (data) => {
-          stderr += data.toString();
+          const lines = data.toString().split('\n');
+          for (const line of lines) {
+            if (line.trim()) {
+              // Логируем все сообщения из stderr для отладки калибровки
+              if (
+                line.includes('[RESNET]') ||
+                line.includes('[MAPPING]') ||
+                line.includes('[STARTUP]') ||
+                line.includes('[INIT]')
+              ) {
+                this.logger.log(`🐍 [CALIBRATION] ${line.trim()}`);
+              } else if (
+                line.includes('Error') ||
+                line.includes('Traceback') ||
+                line.includes('Exception')
+              ) {
+                this.logger.error(`🐍 [CALIBRATION] ${line.trim()}`);
+              } else {
+                this.logger.debug(`🐍 [CALIBRATION] ${line.trim()}`);
+              }
+              stderr += line + '\n';
+            }
+          }
         });
 
         pythonProcess.on('close', (code) => {
@@ -194,7 +216,29 @@ export class ChessRecognitionService {
         });
 
         pythonProcess.stderr.on('data', (data) => {
-          stderr += data.toString();
+          const lines = data.toString().split('\n');
+          for (const line of lines) {
+            if (line.trim()) {
+              // Логируем все сообщения из stderr для отладки ручной калибровки
+              if (
+                line.includes('[RESNET]') ||
+                line.includes('[MAPPING]') ||
+                line.includes('[STARTUP]') ||
+                line.includes('[INIT]')
+              ) {
+                this.logger.log(`🐍 [MANUAL-CALIBRATION] ${line.trim()}`);
+              } else if (
+                line.includes('Error') ||
+                line.includes('Traceback') ||
+                line.includes('Exception')
+              ) {
+                this.logger.error(`🐍 [MANUAL-CALIBRATION] ${line.trim()}`);
+              } else {
+                this.logger.debug(`🐍 [MANUAL-CALIBRATION] ${line.trim()}`);
+              }
+              stderr += line + '\n';
+            }
+          }
         });
 
         pythonProcess.on('close', (code) => {
@@ -288,12 +332,12 @@ export class ChessRecognitionService {
     const pythonProcess = spawn(
       'python',
       [
-      pythonScript,
-      '--token',
-      gameToken,
-      '--model',
-      modelPath,
-      '--mappings-dir',
+        pythonScript,
+        '--token',
+        gameToken,
+        '--model',
+        modelPath,
+        '--mappings-dir',
         absoluteMappingsDir,
       ],
       {
@@ -357,8 +401,8 @@ export class ChessRecognitionService {
           line.includes('pkg_resources is deprecated') ||
           line.includes('Warning:') ||
           (line.trim().startsWith('C:\\') && line.includes('UserWarning'))
-      ) {
-        // Это предупреждение, логируем как debug, но не как ошибку
+        ) {
+          // Это предупреждение, логируем как debug, но не как ошибку
           this.logger.debug(`Python warning: ${line.trim()}`);
         } else if (
           line.includes('Traceback') ||
@@ -405,7 +449,7 @@ export class ChessRecognitionService {
     pythonProcess.on('close', (code) => {
       // Удаляем из Map только если процесс еще там (может быть уже удален в stopStreamProcessing)
       if (this.activeProcesses.has(gameToken)) {
-      this.activeProcesses.delete(gameToken);
+        this.activeProcesses.delete(gameToken);
         this.logger.log(
           `Stream processing stopped for token ${gameToken} (process closed with code ${code})`,
         );
@@ -433,16 +477,16 @@ export class ChessRecognitionService {
     }
 
     try {
-    // Отправка бинарных данных: длина (4 байта) + данные
-    const lengthBuffer = Buffer.allocUnsafe(4);
-    lengthBuffer.writeUInt32BE(frameData.length, 0);
+      // Отправка бинарных данных: длина (4 байта) + данные
+      const lengthBuffer = Buffer.allocUnsafe(4);
+      lengthBuffer.writeUInt32BE(frameData.length, 0);
 
       // Отправка длины и данных с обработкой ошибок
       const writeLength = pythonProcess.stdin.write(lengthBuffer);
       if (!writeLength) {
         // Буфер переполнен, но это не критично
         pythonProcess.stdin.once('drain', () => {
-    pythonProcess.stdin?.write(frameData);
+          pythonProcess.stdin?.write(frameData);
         });
       } else {
         pythonProcess.stdin.write(frameData);

@@ -383,10 +383,10 @@ class StreamProcessor:
             if filled_count == 0:
                 print("[INIT] Board is empty - ready for testing", file=sys.stderr, flush=True)
         else:
-        self.previous_board_state = current_board_state.copy()
+            self.previous_board_state = current_board_state.copy()
 
         if not self.initialized:
-        self.initialized = True
+            self.initialized = True
             filled_count = np.sum(current_board_state != -1)
             print(f"✅ [INIT] Stream processor initialized for token {self.game_token}, {filled_count}/64 squares filled", file=sys.stderr, flush=True)
         

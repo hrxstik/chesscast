@@ -12,6 +12,7 @@ import { Logger } from '@nestjs/common';
 import { join } from 'path';
 import { ChessRecognitionService } from './chess-recognition.service';
 import { MediasoupService } from './mediasoup.service';
+import sharp from 'sharp';
 
 @WebSocketGateway({
   cors: {
@@ -322,10 +323,10 @@ export class ChessRecognitionGateway
         this.logger.log(
           `📹 [STREAMER] Starting stream processing for token ${token} in handleProduce`,
         );
-      this.chessRecognitionService.startStreamProcessing(
-        token,
-        defaultModelPath,
-        (result) => {
+        this.chessRecognitionService.startStreamProcessing(
+          token,
+          defaultModelPath,
+          (result) => {
             // Логирование информации о детекциях
             if (result?.detections_info) {
               const detInfo = result.detections_info;
@@ -346,7 +347,7 @@ export class ChessRecognitionGateway
             }
 
             // Отправляем результат стримеру
-          client.emit('frame-processed', result);
+            client.emit('frame-processed', result);
 
             // И, дополнительно, всем зрителям в комнате
             const roomId = `stream:${token}`;
@@ -357,11 +358,11 @@ export class ChessRecognitionGateway
                 `♟️ Move detected for token ${token}: ${result.move} (${result.move_san || 'SAN?'})`,
               );
             }
-        },
-        (error) => {
-          client.emit('error', { message: error.message });
-        },
-      );
+          },
+          (error) => {
+            client.emit('error', { message: error.message });
+          },
+        );
       } else {
         if (this.chessRecognitionService.hasActiveProcess(token)) {
           this.logger.log(
@@ -496,13 +497,50 @@ export class ChessRecognitionGateway
       return;
     }
 
-    // Логирование получения кадров убрано - слишком много спама
-
     try {
       // Конвертируем в Buffer если нужно
       const frameBuffer = Buffer.isBuffer(frame)
         ? frame
         : Buffer.from(frame as Uint8Array | number[]);
+
+      // Логируем размер кадра и изображения периодически (раз в 5 секунд или при изменении размера)
+      const lastLogKey = `frame_log_${token}`;
+      const lastLog = (this as any)[lastLogKey] || {
+        time: 0,
+        size: 0,
+        imageSize: null,
+      };
+      const now = Date.now();
+
+      if (now - lastLog.time > 5000 || lastLog.size !== frameBuffer.length) {
+        // Декодируем изображение чтобы узнать реальные размеры
+        try {
+          const metadata = await sharp(frameBuffer).metadata();
+          const imageWidth = metadata.width || 0;
+          const imageHeight = metadata.height || 0;
+          const currentImageSize = `${imageWidth}x${imageHeight}`;
+
+          this.logger.log(
+            `📹 [FRAME] Token ${token}: data=${frameBuffer.length} bytes, image=${imageWidth}x${imageHeight}`,
+          );
+
+          (this as any)[lastLogKey] = {
+            time: now,
+            size: frameBuffer.length,
+            imageSize: currentImageSize,
+          };
+        } catch (error) {
+          // Если не удалось декодировать, просто логируем размер данных
+          this.logger.log(
+            `📹 [FRAME] Token ${token}: data=${frameBuffer.length} bytes (failed to decode image: ${error.message})`,
+          );
+          (this as any)[lastLogKey] = {
+            time: now,
+            size: frameBuffer.length,
+            imageSize: null,
+          };
+        }
+      }
 
       // Интервальная калибровка: сохраняем последний кадр пока маппинг не создан
       // Это позволяет пользователю двигать камеру и использовать последний кадр для калибровки
@@ -512,14 +550,14 @@ export class ChessRecognitionGateway
 
         // Уведомляем пользователя только один раз
         if (!this.calibrationAttempted.get(token)) {
-        this.calibrationAttempted.set(token, true);
-        this.logger.log(
+          this.calibrationAttempted.set(token, true);
+          this.logger.log(
             `No mapping found for token ${token}, starting automatic calibration...`,
-        );
-        client.emit('calibration-started', {
+          );
+          client.emit('calibration-started', {
             message:
               'Определение доски... Пожалуйста, подождите. Вы можете двигать камеру - будет использован последний кадр.',
-        });
+          });
 
           // Запускаем периодическую автоматическую калибровку (каждые 5 секунд)
           this.startAutoCalibration(token, client);
@@ -656,8 +694,8 @@ export class ChessRecognitionGateway
                   .join(', ');
                 this.logger.log(
                   `🔍 [DETECTION] Token ${token}: Found ${detInfo.total_detections} pieces (${classesStr})`,
-              );
-            } else {
+                );
+              } else {
                 this.logger.debug(
                   `🔍 [DETECTION] Token ${token}: No pieces detected${detInfo.message ? ` - ${detInfo.message}` : ''}`,
                 );
@@ -674,7 +712,7 @@ export class ChessRecognitionGateway
             if (result?.move) {
               this.logger.log(
                 `♟️ Move detected for token ${token}: ${result.move} (${result.move_san || 'SAN?'})`,
-            );
+              );
             }
           },
           (error) => {
@@ -685,7 +723,7 @@ export class ChessRecognitionGateway
 
       // Отправка бинарного кадра в процесс обработки
       try {
-      this.chessRecognitionService.sendFrame(token, frameBuffer);
+        this.chessRecognitionService.sendFrame(token, frameBuffer);
       } catch (error) {
         // Игнорируем ошибку, если процесс еще не готов (кадры будут отправлены позже)
         // Логирование убрано - слишком много спама
