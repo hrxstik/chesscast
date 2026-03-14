@@ -3,9 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
-    "dev:network": "next dev -H 0.0.0.0",
-    "dev:https": "node server.js",
+    "dev": "npx tsx scripts/http-dev.ts",
+    "dev:next": "next dev",
+    "dev:https": "npx tsx scripts/https-dev.ts",
     "build": "next build",
     "start": "next start",
     "start:network": "next start -H 0.0.0.0",
@@ -38,6 +38,8 @@
     "zustand": "^5.0.8"
   },
   "devDependencies": {
+    "dotenv": "^16.4.5",
+    "tsx": "^4.19.2",
     "@eslint/eslintrc": "^3",
     "@tailwindcss/postcss": "^4.1.14",
     "@types/node": "^20",

@@ -9,6 +9,7 @@ import { toast } from 'react-hot-toast';
 import { FormInput } from './form-input';
 import { Button } from '@/components/ui/button';
 import { GoogleButton } from '../google-button';
+import { getApiUrl } from '@/lib/utils';
 
 interface Props {
   onClose?: () => void;
@@ -26,7 +27,7 @@ export const RegisterForm: React.FC<Props> = ({ onClose }) => {
   const onSubmit = async (data: RegisterFormValues) => {
     try {
       //TODO
-      const res = await fetch(`${process.env.NEXT_PUBLIC_NEST_API_URL}/auth/register`, {
+      const res = await fetch(`${getApiUrl()}/auth/register`, {
         method: 'POST',
         body: JSON.stringify(data),
       });
@@ -49,7 +50,7 @@ export const RegisterForm: React.FC<Props> = ({ onClose }) => {
   };
 
   React.useEffect(() => {
-    console.log(process.env.NEXT_PUBLIC_NEST_API_URL);
+    console.log(getApiUrl());
   }, []);
 
   return (

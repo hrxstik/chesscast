@@ -4,6 +4,7 @@ import React, { useRef, useEffect, useState, useCallback } from 'react';
 import { io, Socket } from 'socket.io-client';
 import { Chessboard } from 'react-chessboard';
 import { useEngine } from '@/lib/hooks/useEngine';
+import { getWsUrl } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { MovesList } from '@/components/shared';
 import * as mediasoupClient from 'mediasoup-client';
@@ -1722,24 +1723,7 @@ export const ChessVideoStreamWebRTC: React.FC<ChessVideoStreamProps> = ({
 
   // Подключение к WebSocket
   const connectWebSocket = useCallback(() => {
-    // URL для WebSocket
-    // Если задана переменная окружения, используем её
-    // Иначе определяем автоматически на основе текущего хоста
-    let wsUrl = process.env.NEXT_PUBLIC_WS_URL;
-
-    if (!wsUrl && typeof window !== 'undefined') {
-      // Автоматически определяем URL на основе текущего хоста
-      const host = window.location.hostname;
-      // Для WebSocket используем ws:// для HTTP и wss:// для HTTPS
-      const protocol = window.location.protocol === 'https:' ? 'https:' : 'http:';
-      // Предполагаем, что бэкенд на порту 5000
-      wsUrl = `${protocol}//${host}:5000`;
-    }
-
-    // Fallback на localhost если ничего не определено
-    if (!wsUrl) {
-      wsUrl = 'http://localhost:5000';
-    }
+    const wsUrl = getWsUrl();
 
     // Конвертируем http:// в ws:// и https:// в wss:// для Socket.IO
     // Socket.IO должен делать это автоматически, но иногда нужно явно указать
@@ -2532,8 +2516,8 @@ export const ChessVideoStreamWebRTC: React.FC<ChessVideoStreamProps> = ({
                       log.type === 'error'
                         ? 'text-red-400'
                         : log.type === 'warn'
-                        ? 'text-yellow-400'
-                        : 'text-gray-300'
+                          ? 'text-yellow-400'
+                          : 'text-gray-300'
                     }`}>
                     <span className="text-gray-500">[{log.time}]</span> {log.message}
                   </div>

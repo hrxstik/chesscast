@@ -19,8 +19,8 @@ import sharp from 'sharp';
     origin: '*',
     credentials: true,
   },
-  namespace: '/chess-stream',
-  transports: ['websocket', 'polling'], // Поддержка WebSocket и polling для совместимости
+  namespace: '/ws/chess-stream',
+  transports: ['websocket', 'polling'],
 })
 export class ChessRecognitionGateway
   implements OnGatewayConnection, OnGatewayDisconnect

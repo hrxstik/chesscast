@@ -2,7 +2,7 @@ import { NestFactory } from '@nestjs/core';
 import { AppModule } from './modules/app/app.module';
 import { ValidationPipe } from '@nestjs/common';
 import { readFileSync } from 'fs';
-import { join } from 'path';
+import { networkInterfaces } from 'os';
 
 async function bootstrap() {
   const useHttps = process.env.USE_HTTPS === 'true';
@@ -12,26 +12,22 @@ async function bootstrap() {
   let app;
   if (useHttps) {
     // HTTPS режим
-    const certPath =
-      process.env.SSL_CERT_PATH ||
-      join(__dirname, '..', '..', '..', 'localhost+1.pem');
-    const keyPath =
-      process.env.SSL_KEY_PATH ||
-      join(__dirname, '..', '..', '..', 'localhost+1-key.pem');
+    const certPath = process.env.SSL_CERT_PATH;
+    const keyPath = process.env.SSL_KEY_PATH;
 
     try {
       const httpsOptions = {
-        key: readFileSync(keyPath),
-        cert: readFileSync(certPath),
+        key: readFileSync(keyPath ?? ''),
+        cert: readFileSync(certPath ?? ''),
       };
       app = await NestFactory.create(AppModule, { httpsOptions });
-      console.log(`✅ HTTPS сертификаты загружены`);
+      console.log(`✅ HTTPS certs loaded`);
     } catch (error) {
-      console.error('❌ Ошибка загрузки HTTPS сертификатов:', error.message);
+      console.error('❌ HTTPS certs error:', error.message);
+      console.error('Certs must be in the root project directory');
       console.error(
-        'Сертификаты должны быть в корне проекта (localhost+1.pem и localhost+1-key.pem)',
+        'Or specify paths through SSL_CERT_PATH and SSL_KEY_PATH environment variables',
       );
-      console.error('Или укажите пути через SSL_CERT_PATH и SSL_KEY_PATH');
       process.exit(1);
     }
   } else {
@@ -41,16 +37,33 @@ async function bootstrap() {
 
   app.setGlobalPrefix('api');
   app.useGlobalPipes(new ValidationPipe());
-  app.enableCors(); // Включение CORS для WebSocket
+  app.enableCors();
 
   await app.listen(port, hostname);
 
   const protocol = useHttps ? 'https' : 'http';
   const displayHost = hostname === '0.0.0.0' ? 'localhost' : hostname;
-  console.log(`Application is running on: ${protocol}://${hostname}:${port}`);
-  console.log(`Local access: ${protocol}://${displayHost}:${port}`);
+  console.log(
+    `Application is running on: ${protocol}://${displayHost}:${port}`,
+  );
+
   if (hostname === '0.0.0.0') {
-    console.log(`Network: ${protocol}://192.168.1.143:${port}`);
+    const nets = networkInterfaces();
+    const skipVirtual =
+      /WSL|vEthernet|Docker|Hyper-V|VirtualBox|VMware|Loopback/i;
+    for (const name of Object.keys(nets || {})) {
+      if (skipVirtual.test(name)) continue;
+      for (const net of nets[name] || []) {
+        if (
+          net.family === 'IPv4' &&
+          !net.internal &&
+          net.address.startsWith('192.168.')
+        ) {
+          console.log(`Network: ${protocol}://${net.address}:${port}`);
+          return;
+        }
+      }
+    }
   }
 }
 bootstrap();
