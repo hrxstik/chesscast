@@ -44,9 +44,9 @@ app.prepare().then(() => {
     .listen({ port, host: hostname }, () => {
       console.log('');
       console.log(`  Local:   https://${hostname === '0.0.0.0' ? 'localhost' : hostname}:${port}`);
-      const lanIp = getLanIp();
-      if (lanIp) {
-        console.log(`  Network: https://${lanIp}:${port}`);
+      if (hostname === '0.0.0.0') {
+        const lanIp = getLanIp();
+        if (lanIp) console.log('  Network: http://' + lanIp + ':' + port);
       }
       console.log('');
     })
