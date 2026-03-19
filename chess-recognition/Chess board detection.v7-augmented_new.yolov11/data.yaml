@@ -1,0 +1,13 @@
+train: ../train/images
+val: ../valid/images
+test: ../test/images
+
+nc: 1
+names: ['Chess-Board']
+
+roboflow:
+  workspace: hrxstik
+  project: chess-board-detection-jubsn
+  version: 7
+  license: CC BY 4.0
+  url: https://universe.roboflow.com/hrxstik/chess-board-detection-jubsn/dataset/7
