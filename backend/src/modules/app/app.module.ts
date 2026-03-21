@@ -11,6 +11,7 @@ import { PricingModule } from '../pricing/pricing.module';
 import { ChessRecognitionModule } from '../chess-recognition/chess-recognition.module';
 import { GameModule } from '../game/game.module';
 import { JwtModule } from '@nestjs/jwt';
+import { ElasticsearchModule } from '../elasticsearch/elasticsearch.module';
 
 @Module({
   imports: [
@@ -43,6 +44,7 @@ import { JwtModule } from '@nestjs/jwt';
     PricingModule,
     ChessRecognitionModule,
     GameModule,
+    ElasticsearchModule,
     JwtModule.register({
       global: true,
       secret: process.env.JWT_SECRET_KEY,
