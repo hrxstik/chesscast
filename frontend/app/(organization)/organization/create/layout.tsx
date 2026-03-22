@@ -1,14 +1,5 @@
-import React from 'react';
+import type { ReactNode } from 'react';
 
-type Props = {
-  children: React.ReactNode;
-};
-
-export default function CreateOrganizationLayout({ children }: { children: React.ReactNode }) {
-  return (
-    <div>
-      CreateOrganizationLayout
-      {children}
-    </div>
-  );
+export default function CreateOrganizationLayout({ children }: { children: ReactNode }) {
+  return <>{children}</>;
 }

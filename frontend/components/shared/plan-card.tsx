@@ -1,5 +1,9 @@
 import Link from 'next/link';
 import React from 'react';
+import { Card, CardContent, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { Check } from 'lucide-react';
+import { cn } from '@/lib/utils';
 
 interface Props {
   className?: string;
@@ -9,34 +13,37 @@ interface Props {
   features: string[];
 }
 
-export const PlanCard: React.FC<Props> = ({ title, price, description, features, className }) => {
+export const PlanCard: React.FC<Props> = ({
+  title,
+  price,
+  description,
+  features,
+  className,
+}) => {
   return (
-    <div key={title} className={className}>
-      <h2 className="text-2xl font-bold mb-2 dark:text-primary text-primary ">{title}</h2>
-      <p className="text-xl font-semibold mb-4 dark:text-primary text-primary ">{price}</p>
-      <p className="mb-6 dark:text-primary text-primary">{description}</p>
-      <ul className="mb-8 space-y-2 flex-grow dark:text-primary text-primary ">
-        {features.map((feature) => (
-          <li key={feature} className="flex items-center dark:text-primary text-primary ">
-            <svg
-              className="h-6 w-6 text-green-500 mr-2 flex-shrink-0"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              viewBox="0 0 24 24"
-              xmlns="http://www.w3.org/2000/svg">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-            </svg>
-            {feature}
-          </li>
-        ))}
-      </ul>
-      <Link
-        href="/login"
-        className="mt-auto bg-blue-600 hover:bg-blue-700 text-white px-6 py-3 rounded-lg font-semibold transition"
-        aria-label={`Купить подписку ${title}`}>
-        Купить
-      </Link>
-    </div>
+    <Card className={cn('flex flex-col', className)}>
+      <CardHeader>
+        <CardTitle className="text-2xl">{title}</CardTitle>
+        <p className="text-3xl font-bold tracking-tight">{price}</p>
+        <p className="text-sm text-muted-foreground">{description}</p>
+      </CardHeader>
+      <CardContent className="flex-1">
+        <ul className="space-y-3">
+          {features.map((feature) => (
+            <li key={feature} className="flex gap-2 text-sm">
+              <Check className="mt-0.5 size-4 shrink-0 text-primary" aria-hidden />
+              {feature}
+            </li>
+          ))}
+        </ul>
+      </CardContent>
+      <CardFooter>
+        <Button asChild className="w-full">
+          <Link href="/login" aria-label={`Оформить ${title}`}>
+            Оформить
+          </Link>
+        </Button>
+      </CardFooter>
+    </Card>
   );
 };

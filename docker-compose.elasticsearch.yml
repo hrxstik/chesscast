@@ -1,21 +1,41 @@
+# Elasticsearch 8: HTTPS + встроенный суперпользователь.
+#
+# ЛОГИН (всегда так в официальном образе):  elastic
+# ПАРОЛЬ: переменная окружения ELASTIC_PASSWORD (не храни прод-пароль в git).
+#
+# Как задать пароль:
+#   • Вариант A: файл .env в том же каталоге, откуда запускаешь docker compose
+#     (часто корень репозитория). Строка: ELASTIC_PASSWORD=твой_сложный_пароль
+#   • Вариант B: перед командой в терминале (Windows PowerShell):
+#       $env:ELASTIC_PASSWORD="твой_пароль"
+#       docker compose -f docker-compose.elasticsearch.yml up -d
+#
+# Если ELASTIC_PASSWORD не задан — подставится значение по умолчанию для дев (см. ниже).
+#
+# Проверка: curl -k -u elastic:ТВОЙ_ПАРОЛЬ https://localhost:9200
+
 services:
   elasticsearch:
     image: docker.elastic.co/elasticsearch/elasticsearch:8.14.3
     container_name: chesscast-elasticsearch
     environment:
       - discovery.type=single-node
-      - xpack.security.enabled=false
+      - ELASTIC_PASSWORD=${ELASTIC_PASSWORD:-chesscast_es_dev}
       - ES_JAVA_OPTS=-Xms1g -Xmx1g
     ports:
       - "9200:9200"
     volumes:
       - elasticsearch_data:/usr/share/elasticsearch/data
     healthcheck:
-      test: ["CMD-SHELL", "curl -fsS http://localhost:9200 >/dev/null || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 30
+      test:
+        [
+          "CMD-SHELL",
+          "curl -fsSk -u elastic:$${ELASTIC_PASSWORD} https://127.0.0.1:9200/_cluster/health?wait_for_status=yellow&timeout=5s || exit 1",
+        ]
+      interval: 15s
+      timeout: 10s
+      retries: 25
+      start_period: 90s
 
 volumes:
   elasticsearch_data:
-

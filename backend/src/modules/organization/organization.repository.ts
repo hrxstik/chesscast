@@ -23,4 +23,13 @@ export class OrganizationRepository {
       data: { deletedAt: new Date() },
     });
   }
+
+  async isUserMember(userId: number, organizationId: number): Promise<boolean> {
+    const row = await this.prisma.userOrganization.findUnique({
+      where: {
+        userId_organizationId: { userId, organizationId },
+      },
+    });
+    return !!row;
+  }
 }

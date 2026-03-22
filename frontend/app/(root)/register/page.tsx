@@ -1,12 +1,15 @@
 import { RegisterForm } from '@/components/shared/form/register-form';
-import React from 'react';
+import { RedirectIfAuthed } from '@/components/layout/redirect-if-authed';
+import React, { Suspense } from 'react';
 
-type Props = {};
-
-export default function RegisterPage({}: Props) {
+export default function RegisterPage() {
   return (
-    <div className="min-h-[90vh] flex items-center justify-center py-16">
-      <RegisterForm />
-    </div>
+    <RedirectIfAuthed>
+      <div className="flex flex-1 flex-col justify-center px-4 py-10 md:py-16">
+        <Suspense fallback={<div className="text-muted-foreground">Загрузка…</div>}>
+          <RegisterForm />
+        </Suspense>
+      </div>
+    </RedirectIfAuthed>
   );
 }

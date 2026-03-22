@@ -1,15 +1,17 @@
 import { create } from 'zustand';
-import { SubscriptionType } from './pricing';
+import { persist } from 'zustand/middleware';
+import type { SubscriptionType } from './pricing';
 
-interface User {
+export interface User {
   id: number;
   name: string;
   email: string;
-  avatar: string;
-  subscription: SubscriptionType;
-  verified: boolean;
-  createdAt: string;
-  subscriptionEnd: string;
+  avatar?: string;
+  subscription?: SubscriptionType;
+  verified?: boolean;
+  createdAt?: string;
+  subscriptionEnd?: string;
+  platformRole?: 'USER' | 'SUPERADMIN';
 }
 
 interface UserStore {
@@ -18,8 +20,16 @@ interface UserStore {
   clearUser: () => void;
 }
 
-export const useUserStore = create<UserStore>((set) => ({
-  user: null,
-  setUser: (user) => set({ user }),
-  clearUser: () => set({ user: null }),
-}));
+export const useUserStore = create<UserStore>()(
+  persist(
+    (set) => ({
+      user: null,
+      setUser: (user) => set({ user }),
+      clearUser: () => set({ user: null }),
+    }),
+    {
+      name: 'chesscast-user',
+      partialize: (state) => ({ user: state.user }),
+    },
+  ),
+);

@@ -1,10 +1,23 @@
-import React from 'react';
+import React, { Suspense } from 'react';
+import Header from '@/components/shared/header';
+import { DashboardAuthGate } from '@/components/layout/dashboard-auth-gate';
+import { DashboardShell } from '@/components/layout/dashboard-shell';
 
 interface Props {
   children: React.ReactNode;
-  className?: string;
+  modal: React.ReactNode;
 }
 
-export default function DashboardLayout({ children, className }: Props) {
-  return <div className={className}>{children}</div>;
+export default function DashboardLayout({ children, modal }: Props) {
+  return (
+    <main className="min-h-screen bg-background">
+      <Suspense fallback={null}>
+        <Header />
+      </Suspense>
+      <DashboardAuthGate>
+        <DashboardShell>{children}</DashboardShell>
+      </DashboardAuthGate>
+      {modal}
+    </main>
+  );
 }

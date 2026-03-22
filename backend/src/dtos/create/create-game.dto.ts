@@ -1,10 +1,14 @@
-import { IsEnum, IsOptional, IsString, IsInt } from 'class-validator';
+import { IsEnum, IsOptional, IsInt } from 'class-validator';
 import { Type } from 'class-transformer';
-import { GameMode } from '@prisma/client';
+import { GameMode, GameVisibility } from '@prisma/client';
 
 export class CreateGameDto {
   @IsEnum(GameMode)
   mode: GameMode;
+
+  @IsOptional()
+  @IsEnum(GameVisibility)
+  visibility?: GameVisibility;
 
   @IsOptional()
   @IsInt()

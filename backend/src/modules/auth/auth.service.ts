@@ -38,7 +38,11 @@ export class AuthService {
       throw new UnauthorizedException('Неверный email или пароль');
     }
 
-    const payload = { sub: user.id, email: user.email };
+    const payload = {
+      sub: user.id,
+      email: user.email,
+      platformRole: user.platformRole,
+    };
 
     return {
       access_token: await this.jwtService.signAsync(payload),
@@ -46,6 +50,7 @@ export class AuthService {
         id: user.id,
         name: user.name,
         email: user.email,
+        platformRole: user.platformRole,
       },
     };
   }
@@ -72,10 +77,21 @@ export class AuthService {
         },
       });
 
-      return this.generateJwt({
+      const access_token = await this.jwtService.signAsync({
         sub: newUser.id,
         email: newUser.email,
+        platformRole: newUser.platformRole,
       });
+
+      return {
+        access_token,
+        user: {
+          id: newUser.id,
+          name: newUser.name,
+          email: newUser.email,
+          platformRole: newUser.platformRole,
+        },
+      };
     } catch {
       throw new InternalServerErrorException();
     }
@@ -107,7 +123,11 @@ export class AuthService {
       });
     }
 
-    const payload = { sub: user.id, email: user.email };
+    const payload = {
+      sub: user.id,
+      email: user.email,
+      platformRole: user.platformRole,
+    };
     const access_token = this.jwtService.sign(payload);
 
     return {
@@ -117,6 +137,7 @@ export class AuthService {
         name: user.name,
         email: user.email,
         avatar: user.avatar,
+        platformRole: user.platformRole,
       },
     };
   }

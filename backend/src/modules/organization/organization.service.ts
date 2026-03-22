@@ -40,4 +40,8 @@ export class OrganizationService {
       inviteCode: await generateCode(6),
     });
   }
+
+  async isUserMember(userId: number, organizationId: number): Promise<boolean> {
+    return this.organizationRepository.isUserMember(userId, organizationId);
+  }
 }

@@ -41,6 +41,9 @@
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
   --radius-xl: calc(var(--radius) + 4px);
+  /* Кастомные брейкпоинты (min-width): laptop ≈1440px, desktop ≈1920px */
+  --breakpoint-laptop: 90rem;
+  --breakpoint-desktop: 120rem;
 }
 
 :root {

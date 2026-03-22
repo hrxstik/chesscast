@@ -2,6 +2,19 @@ import { Injectable } from '@nestjs/common';
 import { Game, Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 
+const gameWithAccessInclude = {
+  organization: true,
+  users: {
+    include: {
+      user: true,
+    },
+  },
+} as const;
+
+export type GameWithAccess = Prisma.GameGetPayload<{
+  include: typeof gameWithAccessInclude;
+}>;
+
 @Injectable()
 export class GameRepository {
   constructor(private readonly prisma: PrismaService) {}
@@ -20,14 +33,32 @@ export class GameRepository {
     });
   }
 
-  async findByToken(token: string): Promise<Game | null> {
+  async findByToken(token: string): Promise<GameWithAccess | null> {
     return this.prisma.game.findUnique({
       where: { token },
-      include: {
-        organization: true,
+      include: gameWithAccessInclude,
+    });
+  }
+
+  /** Публичная сессия без паролей и лишних полей пользователя */
+  async findSessionPublicByToken(token: string) {
+    return this.prisma.game.findFirst({
+      where: { token, deletedAt: null },
+      select: {
+        id: true,
+        token: true,
+        mode: true,
+        result: true,
+        status: true,
+        visibility: true,
+        initialPosition: true,
+        moves: true,
+        createdAt: true,
+        organization: { select: { id: true, name: true } },
         users: {
-          include: {
-            user: true,
+          select: {
+            color: true,
+            user: { select: { id: true, name: true, avatar: true } },
           },
         },
       },
@@ -52,6 +83,33 @@ export class GameRepository {
         createdAt: 'desc',
       },
       skip,
+      take,
+      include: {
+        organization: true,
+        users: {
+          include: {
+            user: true,
+          },
+        },
+      },
+    });
+  }
+
+  /** Cursor = id of last item from previous page (exclusive). Ordered by id desc. */
+  async findManyByUserIdCursor(
+    userId: number,
+    take: number,
+    cursorId?: number,
+  ): Promise<Game[]> {
+    return this.prisma.game.findMany({
+      where: {
+        users: {
+          some: { userId },
+        },
+        deletedAt: null,
+        ...(cursorId != null ? { id: { lt: cursorId } } : {}),
+      },
+      orderBy: { id: 'desc' },
       take,
       include: {
         organization: true,

@@ -6,7 +6,19 @@ import { Loader } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 const buttonVariants = cva(
-  "hover:cursor-pointer inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm font-medium transition-all disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg:not([class*='size-'])]:size-4 shrink-0 [&_svg]:shrink-0 outline-none focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px] aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40 aria-invalid:border-destructive",
+  [
+    'hover:cursor-pointer inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md font-medium transition-all',
+    'disabled:pointer-events-none disabled:opacity-50',
+    '[&_svg]:pointer-events-none [&_svg:not([class*=\'size-\'])]:size-4 shrink-0 [&_svg]:shrink-0',
+    'outline-none focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px]',
+    'aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40 aria-invalid:border-destructive',
+    /* Адаптив размера кнопки (без пропа size): max-md → md → lg → laptop → desktop */
+    'min-h-9 px-4 py-2 text-sm has-[>svg]:px-3',
+    'md:min-h-10 md:px-5 md:text-base md:has-[>svg]:px-4',
+    'lg:min-h-10 lg:px-5',
+    'laptop:min-h-11 laptop:px-6 laptop:text-base',
+    'desktop:min-h-12 desktop:px-8',
+  ].join(' '),
   {
     variants: {
       variant: {
@@ -19,16 +31,9 @@ const buttonVariants = cva(
         ghost: 'hover:bg-accent hover:text-accent-foreground dark:hover:bg-accent/50',
         link: 'text-primary underline-offset-4 hover:underline',
       },
-      size: {
-        default: 'h-9 px-4 py-2 has-[>svg]:px-3',
-        sm: 'h-8 rounded-md gap-1.5 px-3 has-[>svg]:px-2.5',
-        lg: 'h-10 rounded-md px-6 has-[>svg]:px-4',
-        icon: 'size-9',
-      },
     },
     defaultVariants: {
       variant: 'default',
-      size: 'default',
     },
   },
 );
@@ -41,15 +46,15 @@ export interface ButtonProps
 }
 
 const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
-  ({ className, variant, size, asChild = false, children, disabled, loading, ...props }, ref) => {
+  ({ className, variant, asChild = false, children, disabled, loading, ...props }, ref) => {
     const Comp = asChild ? Slot : 'button';
     return (
       <Comp
         disabled={disabled || loading}
-        className={cn(buttonVariants({ variant, size, className }))}
+        className={cn(buttonVariants({ variant, className }))}
         ref={ref}
         {...props}>
-        {!loading ? children : <Loader className="w-5 h-5 animate-spin" />}
+        {!loading ? children : <Loader className="h-5 w-5 animate-spin" />}
       </Comp>
     );
   },

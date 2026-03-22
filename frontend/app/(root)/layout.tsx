@@ -1,4 +1,3 @@
-import { Container } from '@/components/shared/container';
 import Footer from '@/components/shared/footer';
 import Header from '@/components/shared/header';
 import type { Metadata } from 'next';
@@ -14,11 +13,11 @@ export default function HomeLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <main className="min-h-screen bg-gray-100 dark:bg-background">
+    <main className="flex min-h-screen flex-col bg-gray-100 dark:bg-background">
       <Suspense>
         <Header />
       </Suspense>
-      <Container>{children}</Container>
+      <div className="flex flex-1 flex-col">{children}</div>
       <Suspense>
         <Footer />
       </Suspense>

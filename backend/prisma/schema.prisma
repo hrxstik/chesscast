@@ -11,13 +11,19 @@ model User {
   id                 Int       @id @default(autoincrement())
   name               String    @unique
   email              String    @unique
-  password           String
+  password           String?
   avatar             String    @default("default.png")
 
   subscription       Subscription @default(FREE)
 
+  platformRole       PlatformRole @default(USER)
+  blocked            Boolean   @default(false)
+
   userGames          UserGame[]
   userOrganizations  UserOrganization[]
+  gamesCreated       Game[]    @relation("GameCreator")
+  payments           Payment[]
+  billingEventsActed BillingEvent[] @relation("BillingEventActor")
 
   verified           DateTime?
   provider           String?
@@ -48,9 +54,12 @@ model Organization {
   description String
   avatar    String    @default("default.png")
 
+  blocked   Boolean   @default(false)
+
   games     Game[]    
   events    OrganizationEvent[]  @default([ORGANIZATION_CREATED])
   users     UserOrganization[]
+  payments  Payment[]
 
   inviteCode String    @unique
 
@@ -70,6 +79,10 @@ model Game {
   token     String  @unique
   organization Organization? @relation(fields: [organizationId], references: [id])
   organizationId Int?
+
+  visibility GameVisibility @default(PRIVATE)
+  creator   User?   @relation("GameCreator", fields: [creatorId], references: [id])
+  creatorId Int?
 
   initialPosition String @default("startpos")
   moves     String[]   @default([])
@@ -120,6 +133,16 @@ enum Role {
   ADMIN
 }
 
+enum PlatformRole {
+  USER
+  SUPERADMIN
+}
+
+enum GameVisibility {
+  PRIVATE
+  PUBLIC
+}
+
 enum GameResult {
   WHITE_WIN
   WHITE_LOSE
@@ -151,4 +174,53 @@ enum OrganizationEvent {
   ORGANIZATION_DELETED
   PLAYER_JOINED
   PLAYER_LEFT
+}
+
+enum PaymentStatus {
+  PENDING
+  SUCCEEDED
+  CANCELLED
+  REFUNDED
+}
+
+enum PaymentPurpose {
+  SUBSCRIPTION_PERSONAL
+  SUBSCRIPTION_ORG
+  OTHER
+}
+
+enum BillingEventType {
+  INVOICE_PAID
+  REFUND
+  CHARGEBACK
+  MANUAL_ADJUSTMENT
+}
+
+model Payment {
+  id                Int            @id @default(autoincrement())
+  userId            Int?
+  user              User?          @relation(fields: [userId], references: [id])
+  organizationId    Int?
+  organization      Organization?  @relation(fields: [organizationId], references: [id])
+  yookassaPaymentId String?        @unique
+  amount            Decimal        @db.Decimal(12, 2)
+  currency          String         @default("RUB")
+  status            PaymentStatus
+  purpose           PaymentPurpose
+  metadata          Json?
+  createdAt         DateTime       @default(now())
+  billingEvents     BillingEvent[]
+}
+
+model BillingEvent {
+  id          Int              @id @default(autoincrement())
+  type        BillingEventType
+  amount      Decimal?         @db.Decimal(12, 2)
+  currency    String?          @default("RUB")
+  paymentId   Int?
+  payment     Payment?         @relation(fields: [paymentId], references: [id])
+  actorUserId Int?
+  actor       User?            @relation("BillingEventActor", fields: [actorUserId], references: [id])
+  metadata    Json?
+  createdAt   DateTime         @default(now())
 }

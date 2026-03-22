@@ -12,6 +12,7 @@ import { ChessRecognitionModule } from '../chess-recognition/chess-recognition.m
 import { GameModule } from '../game/game.module';
 import { JwtModule } from '@nestjs/jwt';
 import { ElasticsearchModule } from '../elasticsearch/elasticsearch.module';
+import { AdminModule } from '../admin/admin.module';
 
 @Module({
   imports: [
@@ -45,6 +46,7 @@ import { ElasticsearchModule } from '../elasticsearch/elasticsearch.module';
     ChessRecognitionModule,
     GameModule,
     ElasticsearchModule,
+    AdminModule,
     JwtModule.register({
       global: true,
       secret: process.env.JWT_SECRET_KEY,
