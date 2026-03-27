@@ -8,124 +8,110 @@ datasource db {
 }
 
 model User {
-  id                 Int       @id @default(autoincrement())
-  name               String    @unique
-  email              String    @unique
-  password           String?
-  avatar             String    @default("default.png")
+  id           Int          @id @default(autoincrement())
+  name         String       @unique
+  email        String       @unique
+  password     String?
+  avatar       String       @default("default.png")
+  platformRole PlatformRole @default(USER)
+  blocked      Boolean      @default(false)
 
-  subscription       Subscription @default(FREE)
-
-  platformRole       PlatformRole @default(USER)
-  blocked            Boolean   @default(false)
-
+  subscriptions      Subscription[]
   userGames          UserGame[]
   userOrganizations  UserOrganization[]
-  gamesCreated       Game[]    @relation("GameCreator")
+  gamesCreated       Game[]             @relation("GameCreator")
   payments           Payment[]
-  billingEventsActed BillingEvent[] @relation("BillingEventActor")
+  billingEventsActed BillingEvent[]     @relation("BillingEventActor")
 
-  verified           DateTime?
-  provider           String?
-  providerId         String?
+  verified   DateTime?
+  provider   String?
+  providerId String?
 
-  verificationCode   VerificationCode?
-
-  subscriptionDate   DateTime     @default(now())
-  subscriptionEnd    DateTime    
-  createdAt          DateTime     @default(now())
-  updatedAt          DateTime     @updatedAt
-  deletedAt          DateTime?
+  verificationCodes VerificationCode[]
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
+  deletedAt         DateTime?
 }
 
 model VerificationCode {
-  id        Int       @id @default(autoincrement())
-  user       User     @relation(fields: [userId], references: [id])
-  userId     Int      @unique 
-  code       String
-  createdAt  DateTime @default(now())
+  id        Int      @id @default(autoincrement())
+  user      User     @relation(fields: [userId], references: [id])
+  userId    Int
+  code      String
+  createdAt DateTime @default(now())
 
   @@unique([userId, code])
 }
 
 model Organization {
-  id        Int       @id @default(autoincrement())
-  name      String    @unique
+  id          Int    @id @default(autoincrement())
+  name        String @unique
   description String
-  avatar    String    @default("default.png")
+  avatar      String @default("default.png")
 
-  blocked   Boolean   @default(false)
+  blocked Boolean @default(false)
 
-  games     Game[]    
-  events    OrganizationEvent[]  @default([ORGANIZATION_CREATED])
-  users     UserOrganization[]
-  payments  Payment[]
+  games Game[]
+  users UserOrganization[]
 
-  inviteCode String    @unique
+  inviteCode String @unique
 
-  createdAt DateTime   @default(now())
-  updatedAt DateTime   @updatedAt
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
   deletedAt DateTime?
 }
 
 model Game {
-  id        Int       @id @default(autoincrement())
-  
-  mode      GameMode
-  result    GameResult
-  status    GameStatus @default(PENDING)
-  users     UserGame[]
+  id Int @id @default(autoincrement())
 
-  token     String  @unique
-  organization Organization? @relation(fields: [organizationId], references: [id])
+  mode   GameMode
+  result GameResult
+  status GameStatus @default(PENDING)
+  users  UserGame[]
+
+  token          String        @unique
+  organization   Organization? @relation(fields: [organizationId], references: [id])
   organizationId Int?
 
   visibility GameVisibility @default(PRIVATE)
-  creator   User?   @relation("GameCreator", fields: [creatorId], references: [id])
-  creatorId Int?
+  creator    User?          @relation("GameCreator", fields: [creatorId], references: [id])
+  creatorId  Int?
 
-  initialPosition String @default("startpos")
-  moves     String[]   @default([])
+  initialPosition String   @default("startpos")
+  moves           String[] @default([])
 
-  createdAt DateTime   @default(now())
-  updatedAt DateTime   @updatedAt
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
   deletedAt DateTime?
 }
 
 model UserGame {
-  user      User   @relation(fields: [userId], references: [id])
-  userId    Int
+  user   User @relation(fields: [userId], references: [id])
+  userId Int
 
-  game      Game   @relation(fields: [gameId], references: [id])
-  gameId    Int
+  game   Game @relation(fields: [gameId], references: [id])
+  gameId Int
 
-  color      Color
+  color Color
 
   @@id([userId, gameId])
 }
 
 model UserOrganization {
-  user      User   @relation(fields: [userId], references: [id])
-  userId    Int
+  user   User @relation(fields: [userId], references: [id])
+  userId Int
 
-  organization      Organization   @relation(fields: [organizationId], references: [id])
-  organizationId    Int
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  organizationId Int
 
   role Role
 
-  @@unique([userId, organizationId])
+  @@id([userId, organizationId])
 }
 
 enum Color {
   WHITE
   BLACK
-}
-
-enum Subscription {
-  FREE
-  PREMIUM
-  CORPORATE
-  CORPORATE_PLUS
 }
 
 enum Role {
@@ -168,14 +154,6 @@ enum GameStatus {
   FINISHED
 }
 
-enum OrganizationEvent {
-  ORGANIZATION_CREATED
-  ORGANIZATION_UPDATED
-  ORGANIZATION_DELETED
-  PLAYER_JOINED
-  PLAYER_LEFT
-}
-
 enum PaymentStatus {
   PENDING
   SUCCEEDED
@@ -185,7 +163,6 @@ enum PaymentStatus {
 
 enum PaymentPurpose {
   SUBSCRIPTION_PERSONAL
-  SUBSCRIPTION_ORG
   OTHER
 }
 
@@ -196,13 +173,66 @@ enum BillingEventType {
   MANUAL_ADJUSTMENT
 }
 
+enum SubscriptionStatus {
+  ACTIVE
+  EXPIRED
+  CANCELED
+  PAUSED
+}
+
+enum StreamQualityLevel {
+  LOW
+  MEDIUM
+  HIGH
+}
+
+model Plan {
+  id                    Int                @id @default(autoincrement())
+  code                  String             @unique
+  title                 String
+  description           String             @default("")
+  features              String[]           @default([])
+  maxGamesPerPeriod     Int
+  maxOrganizations      Int
+  canCreateOrganization Boolean
+  canStream             Boolean
+  streamQualityLevel    StreamQualityLevel
+  priceMonthly          Decimal            @db.Decimal(12, 2)
+  currency              String             @default("RUB")
+  isActive              Boolean            @default(true)
+  createdAt             DateTime           @default(now())
+  updatedAt             DateTime           @updatedAt
+
+  subscriptions Subscription[]
+  payments      Payment[]
+}
+
+model Subscription {
+  id         Int                @id @default(autoincrement())
+  userId     Int
+  user       User               @relation(fields: [userId], references: [id])
+  planId     Int
+  plan       Plan               @relation(fields: [planId], references: [id])
+  status     SubscriptionStatus
+  startAt    DateTime
+  endAt      DateTime
+  autoRenew  Boolean            @default(false)
+  canceledAt DateTime?
+  createdAt  DateTime           @default(now())
+  updatedAt  DateTime           @updatedAt
+
+  payments Payment[]
+}
+
 model Payment {
   id                Int            @id @default(autoincrement())
-  userId            Int?
-  user              User?          @relation(fields: [userId], references: [id])
-  organizationId    Int?
-  organization      Organization?  @relation(fields: [organizationId], references: [id])
-  yookassaPaymentId String?        @unique
+  userId            Int
+  user              User           @relation(fields: [userId], references: [id])
+  subscriptionId    Int
+  subscription      Subscription   @relation(fields: [subscriptionId], references: [id])
+  planId            Int
+  plan              Plan           @relation(fields: [planId], references: [id])
+  providerPaymentId String?        @unique
   amount            Decimal        @db.Decimal(12, 2)
   currency          String         @default("RUB")
   status            PaymentStatus

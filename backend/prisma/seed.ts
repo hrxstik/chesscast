@@ -20,6 +20,8 @@ import {
   PaymentStatus,
   PaymentPurpose,
   BillingEventType,
+  SubscriptionStatus,
+  StreamQualityLevel,
 } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 
@@ -29,14 +31,17 @@ const DEV_PASSWORD = 'ChessCastDev123!';
 
 async function main() {
   const passwordHash = await bcrypt.hash(DEV_PASSWORD, 10);
+  const now = new Date();
   const farFuture = new Date('2099-12-31T23:59:59.000Z');
 
   await prisma.billingEvent.deleteMany();
   await prisma.payment.deleteMany();
+  await prisma.subscription.deleteMany();
   await prisma.userGame.deleteMany();
   await prisma.game.deleteMany();
   await prisma.userOrganization.deleteMany();
   await prisma.organization.deleteMany();
+  await prisma.plan.deleteMany();
   await prisma.user.deleteMany({
     where: {
       email: {
@@ -55,7 +60,6 @@ async function main() {
       email: 'superadmin@chesscast.local',
       password: passwordHash,
       platformRole: PlatformRole.SUPERADMIN,
-      subscriptionEnd: farFuture,
     },
   });
 
@@ -65,7 +69,6 @@ async function main() {
       email: 'player@chesscast.local',
       password: passwordHash,
       platformRole: PlatformRole.USER,
-      subscriptionEnd: farFuture,
     },
   });
 
@@ -75,7 +78,84 @@ async function main() {
       email: 'schooladmin@chesscast.local',
       password: passwordHash,
       platformRole: PlatformRole.USER,
-      subscriptionEnd: farFuture,
+    },
+  });
+
+  const freePlan = await prisma.plan.create({
+    data: {
+      code: 'FREE',
+      title: 'Базовый',
+      description: 'Для начинающих игроков',
+      features: ['Личные игры', 'Ограниченные лимиты', 'Без организаций'],
+      maxGamesPerPeriod: 30,
+      maxOrganizations: 0,
+      canCreateOrganization: false,
+      canStream: false,
+      streamQualityLevel: StreamQualityLevel.LOW,
+      priceMonthly: new Prisma.Decimal('0.00'),
+    },
+  });
+
+  const premiumPlan = await prisma.plan.create({
+    data: {
+      code: 'PREMIUM',
+      title: 'Премиум',
+      description: 'Для индивидуальных пользователей и тренеров',
+      features: ['Расширенный лимит игр', 'Доступ к стримингу', 'Более высокий приоритет'],
+      maxGamesPerPeriod: 300,
+      maxOrganizations: 1,
+      canCreateOrganization: true,
+      canStream: true,
+      streamQualityLevel: StreamQualityLevel.MEDIUM,
+      priceMonthly: new Prisma.Decimal('299.00'),
+    },
+  });
+
+  const corporatePlan = await prisma.plan.create({
+    data: {
+      code: 'CORPORATE',
+      title: 'Корпоративная',
+      description: 'Для шахматных школ и клубов',
+      features: ['Создание организаций', 'Большие лимиты', 'Приоритетная поддержка'],
+      maxGamesPerPeriod: 3000,
+      maxOrganizations: 3,
+      canCreateOrganization: true,
+      canStream: true,
+      streamQualityLevel: StreamQualityLevel.HIGH,
+      priceMonthly: new Prisma.Decimal('2999.00'),
+    },
+  });
+
+  const playerSubscription = await prisma.subscription.create({
+    data: {
+      userId: player.id,
+      planId: premiumPlan.id,
+      status: SubscriptionStatus.ACTIVE,
+      startAt: now,
+      endAt: farFuture,
+      autoRenew: true,
+    },
+  });
+
+  await prisma.subscription.create({
+    data: {
+      userId: schoolAdmin.id,
+      planId: corporatePlan.id,
+      status: SubscriptionStatus.ACTIVE,
+      startAt: now,
+      endAt: farFuture,
+      autoRenew: true,
+    },
+  });
+
+  await prisma.subscription.create({
+    data: {
+      userId: superadmin.id,
+      planId: freePlan.id,
+      status: SubscriptionStatus.ACTIVE,
+      startAt: now,
+      endAt: farFuture,
+      autoRenew: false,
     },
   });
 
@@ -125,11 +205,12 @@ async function main() {
   const payment = await prisma.payment.create({
     data: {
       userId: player.id,
-      organizationId: org.id,
+      subscriptionId: playerSubscription.id,
+      planId: premiumPlan.id,
       amount: new Prisma.Decimal('1490.00'),
       status: PaymentStatus.SUCCEEDED,
-      purpose: PaymentPurpose.SUBSCRIPTION_ORG,
-      yookassaPaymentId: `seed_${Date.now()}`,
+      purpose: PaymentPurpose.SUBSCRIPTION_PERSONAL,
+      providerPaymentId: `seed_${Date.now()}`,
       metadata: { demo: true },
     },
   });

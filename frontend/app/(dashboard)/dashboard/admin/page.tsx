@@ -2,6 +2,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { H2, Lead, Text } from '@/components/ui/typography';
 import { Shield, Building2, Users, Wallet, Ban } from 'lucide-react';
 import { AdminBillingPanel } from '@/components/dashboard/admin-billing-panel';
+import { AdminPlansPanel } from '@/components/dashboard/admin-plans-panel';
 
 export default function SuperAdminDashboardPage() {
   return (
@@ -63,6 +64,21 @@ export default function SuperAdminDashboardPage() {
           </CardContent>
         </Card>
       </div>
+
+      <Card className="border-border/80">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Wallet className="size-5 text-primary" />
+            Тарифы и лимиты
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <Text className="text-muted-foreground">
+            Управление планами через БД: создание, активация/деактивация, изменение лимитов.
+          </Text>
+          <AdminPlansPanel />
+        </CardContent>
+      </Card>
 
       <Card className="border-border/80">
         <CardHeader>

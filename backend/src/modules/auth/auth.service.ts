@@ -73,7 +73,6 @@ export class AuthService {
           name: dto.name,
           email: dto.email,
           password: hashedPassword,
-          subscriptionEnd: new Date(new Date().setFullYear(2099)),
         },
       });
 
@@ -117,7 +116,6 @@ export class AuthService {
           email,
           name: `${name.givenName} ${name.familyName}`,
           avatar: photos[0]?.value,
-          subscriptionEnd: new Date(new Date().setFullYear(2099)),
           password: null,
         },
       });
