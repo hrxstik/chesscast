@@ -1,10 +1,28 @@
+'use client';
+
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { H2, Lead, Text } from '@/components/ui/typography';
 import Link from 'next/link';
 import { Button } from '@/components/ui/button';
 import { ArrowRight, Gamepad2, Building2, User, Sparkles } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { getDashboardSummary, type DashboardSummaryResponse } from '@/lib/api/user';
+import { ApiError } from '@/lib/api/types';
 
 export default function DashboardPage() {
+  const [summary, setSummary] = useState<DashboardSummaryResponse | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        setSummary(await getDashboardSummary());
+      } catch (e) {
+        setError(e instanceof ApiError ? e.message : 'Не удалось загрузить сводку');
+      }
+    })();
+  }, []);
+
   return (
     <div className="space-y-10">
       <div className="rounded-2xl border border-border bg-gradient-to-br from-muted/50 via-background to-background p-6 md:p-8">
@@ -14,9 +32,14 @@ export default function DashboardPage() {
         </div>
         <H2 className="mt-4">Дашборд</H2>
         <Lead className="mt-2 max-w-2xl">
-          Обзор аккаунта: игры и организации. Ниже — быстрые действия и ссылки (данные подключим к
-          API).
+          Обзор аккаунта: игры, организации и статус подписки.
         </Lead>
+        <div className="mt-4 flex flex-wrap gap-3 text-sm text-muted-foreground">
+          <span>Игры: {summary?.gamesCount ?? '—'}</span>
+          <span>Организации: {summary?.organizationsCount ?? '—'}</span>
+          <span>Подписка: {summary?.subscription?.plan.title ?? 'нет'}</span>
+        </div>
+        {error ? <Text className="mt-2 text-sm text-destructive">{error}</Text> : null}
       </div>
 
       <div className="grid gap-4 md:grid-cols-2 laptop:grid-cols-3">

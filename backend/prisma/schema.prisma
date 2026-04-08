@@ -15,6 +15,7 @@ model User {
   avatar       String       @default("default.png")
   platformRole PlatformRole @default(USER)
   blocked      Boolean      @default(false)
+  blockedReason String?
 
   subscriptions      Subscription[]
   userGames          UserGame[]
@@ -22,6 +23,7 @@ model User {
   gamesCreated       Game[]             @relation("GameCreator")
   payments           Payment[]
   billingEventsActed BillingEvent[]     @relation("BillingEventActor")
+  organizationsOwned Organization[]     @relation("OrganizationOwner")
 
   verified   DateTime?
   provider   String?
@@ -50,6 +52,9 @@ model Organization {
   avatar      String @default("default.png")
 
   blocked Boolean @default(false)
+  blockedReason String?
+  ownerUserId Int
+  owner      User @relation("OrganizationOwner", fields: [ownerUserId], references: [id])
 
   games Game[]
   users UserOrganization[]

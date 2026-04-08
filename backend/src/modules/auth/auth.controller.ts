@@ -42,6 +42,12 @@ export class AuthController {
       maxAge: 7 * 24 * 60 * 60 * 1000,
     });
 
-    return res.redirect(`${process.env.NEXT_URL}/dashboard`);
+    const redirectUrl = new URL(`${process.env.NEXT_URL}/auth/google/success`);
+    redirectUrl.searchParams.set('token', loginResult.access_token);
+    redirectUrl.searchParams.set('id', String(loginResult.user.id));
+    redirectUrl.searchParams.set('name', loginResult.user.name);
+    redirectUrl.searchParams.set('email', loginResult.user.email);
+    redirectUrl.searchParams.set('platformRole', loginResult.user.platformRole ?? 'USER');
+    return res.redirect(redirectUrl.toString());
   }
 }

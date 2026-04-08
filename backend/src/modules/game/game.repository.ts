@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { Game, Prisma } from '@prisma/client';
+import { Game, GameMode, GameResult, GameStatus, Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 
 const gameWithAccessInclude = {
@@ -72,11 +72,7 @@ export class GameRepository {
   ): Promise<Game[]> {
     return this.prisma.game.findMany({
       where: {
-        users: {
-          some: {
-            userId,
-          },
-        },
+        OR: [{ creatorId: userId }, { users: { some: { userId } } }],
         deletedAt: null,
       },
       orderBy: {
@@ -100,15 +96,44 @@ export class GameRepository {
     userId: number,
     take: number,
     cursorId?: number,
+    filters?: {
+      status?: string;
+      mode?: string;
+      organizationId?: number;
+      result?: string;
+      token?: string;
+      from?: Date;
+      to?: Date;
+    },
   ): Promise<Game[]> {
+    const where: Prisma.GameWhereInput = {
+      OR: [{ creatorId: userId }, { users: { some: { userId } } }],
+      deletedAt: null,
+      ...(cursorId != null ? { id: { lt: cursorId } } : {}),
+    };
+    if (filters?.status && Object.values(GameStatus).includes(filters.status as GameStatus)) {
+      where.status = filters.status as GameStatus;
+    }
+    if (filters?.mode && Object.values(GameMode).includes(filters.mode as GameMode)) {
+      where.mode = filters.mode as GameMode;
+    }
+    if (filters?.organizationId != null) {
+      where.organizationId = filters.organizationId;
+    }
+    if (filters?.result && Object.values(GameResult).includes(filters.result as GameResult)) {
+      where.result = filters.result as GameResult;
+    }
+    if (filters?.token?.trim()) {
+      where.token = { contains: filters.token.trim(), mode: 'insensitive' };
+    }
+    if (filters?.from || filters?.to) {
+      where.createdAt = {
+        gte: filters.from,
+        lte: filters.to,
+      };
+    }
     return this.prisma.game.findMany({
-      where: {
-        users: {
-          some: { userId },
-        },
-        deletedAt: null,
-        ...(cursorId != null ? { id: { lt: cursorId } } : {}),
-      },
+      where,
       orderBy: { id: 'desc' },
       take,
       include: {

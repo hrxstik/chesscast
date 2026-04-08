@@ -10,12 +10,14 @@ import { RegisterUserDto } from 'src/dtos/auth/register-user.dto';
 import { User } from '@prisma/client';
 import { LoginUserDto } from 'src/dtos/auth/login-user.dto';
 import * as bcrypt from 'bcrypt';
+import { AppElasticsearchService } from '../elasticsearch/elasticsearch.service';
 
 @Injectable()
 export class AuthService {
   constructor(
     private jwtService: JwtService,
     private userRepository: UserRepository,
+    private elastic: AppElasticsearchService,
   ) {}
 
   generateJwt(payload) {
@@ -31,6 +33,12 @@ export class AuthService {
 
     if (!user) {
       throw new UnauthorizedException('Неверный email или пароль');
+    }
+    if (user.deletedAt) {
+      throw new UnauthorizedException('Аккаунт удален');
+    }
+    if (user.blocked) {
+      throw new UnauthorizedException('Аккаунт заблокирован');
     }
 
     const passwordMatches = await bcrypt.compare(dto.password, user.password);
@@ -75,6 +83,14 @@ export class AuthService {
           password: hashedPassword,
         },
       });
+      await this.elastic.indexUser({
+        id: newUser.id,
+        name: newUser.name,
+        email: newUser.email,
+        blocked: newUser.blocked,
+        blockedReason: newUser.blockedReason,
+        platformRole: newUser.platformRole,
+      });
 
       const access_token = await this.jwtService.signAsync({
         sub: newUser.id,
@@ -98,7 +114,7 @@ export class AuthService {
 
   async validateUserById(userId: number): Promise<User | null> {
     const user = await this.userRepository.findById(userId);
-    if (!user) return null;
+    if (!user || user.deletedAt || user.blocked) return null;
     return user;
   }
 
@@ -107,6 +123,9 @@ export class AuthService {
     const email = emails[0].value;
 
     let user = await this.userRepository.findByEmail(email);
+    if (user && (user.deletedAt || user.blocked)) {
+      throw new UnauthorizedException('Аккаунт недоступен');
+    }
 
     if (!user) {
       user = await this.userRepository.create({
@@ -118,6 +137,14 @@ export class AuthService {
           avatar: photos[0]?.value,
           password: null,
         },
+      });
+      await this.elastic.indexUser({
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        blocked: user.blocked,
+        blockedReason: user.blockedReason,
+        platformRole: user.platformRole,
       });
     }
 

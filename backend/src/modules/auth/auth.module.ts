@@ -5,9 +5,10 @@ import { VerificationCodeModule } from '../verification-code/verification-code.m
 import { UserModule } from '../user/user.module';
 import { PrismaModule } from '../prisma/prisma.module';
 import { GoogleStrategy } from 'src/strategies/google.strategy';
+import { ElasticsearchModule } from '../elasticsearch/elasticsearch.module';
 
 @Module({
-  imports: [VerificationCodeModule, UserModule, PrismaModule],
+  imports: [VerificationCodeModule, UserModule, PrismaModule, ElasticsearchModule],
   controllers: [AuthController],
   providers: [AuthService, GoogleStrategy],
 })

@@ -29,7 +29,7 @@ export class UploadService {
 
       await fs.writeFile(filepath, buffer);
 
-      const servingPath = `/uploads/${folder}/${filename}`
+      const servingPath = folder
         ? `/uploads/${folder}/${filename}`
         : `/uploads/${filename}`;
 

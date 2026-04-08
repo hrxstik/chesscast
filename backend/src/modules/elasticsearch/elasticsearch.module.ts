@@ -3,9 +3,11 @@ import { ElasticsearchModule as NestElasticsearchModule } from '@nestjs/elastics
 import { ConfigService } from '@nestjs/config';
 import { AppElasticsearchService } from './elasticsearch.service';
 import { ElasticsearchController } from './elasticsearch.controller';
+import { PrismaModule } from '../prisma/prisma.module';
 
 @Module({
   imports: [
+    PrismaModule,
     NestElasticsearchModule.registerAsync({
       inject: [ConfigService],
       useFactory: (configService: ConfigService) => {

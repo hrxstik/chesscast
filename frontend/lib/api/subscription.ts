@@ -1,0 +1,24 @@
+import { apiFetch } from './client';
+
+export type CurrentSubscriptionDto = {
+  id: number;
+  status: 'ACTIVE' | 'EXPIRED' | 'CANCELED' | 'PAUSED';
+  startAt: string;
+  endAt: string;
+  autoRenew: boolean;
+  plan: {
+    id: number;
+    code: string;
+    title: string;
+    description: string;
+    features: string[];
+  };
+};
+
+export async function fetchMyCurrentSubscription(): Promise<CurrentSubscriptionDto | null> {
+  return apiFetch<CurrentSubscriptionDto | null>('/subscription/me/current');
+}
+
+export async function fetchMySubscriptionHistory(): Promise<CurrentSubscriptionDto[]> {
+  return apiFetch<CurrentSubscriptionDto[]>('/subscription/me/history');
+}

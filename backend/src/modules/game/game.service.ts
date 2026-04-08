@@ -16,12 +16,14 @@ import { CreateGameDto } from 'src/dtos/create/create-game.dto';
 import { OrganizationService } from '../organization/organization.service';
 import { GameSessionPublicDto } from 'src/dtos/game/game-session-public.dto';
 import crypto from 'crypto';
+import { PrismaService } from '../prisma/prisma.service';
 
 @Injectable()
 export class GameService {
   constructor(
     private readonly gameRepository: GameRepository,
     private readonly organizationService: OrganizationService,
+    private readonly prisma: PrismaService,
   ) {}
 
   async getByToken(token: string, viewerUserId?: number): Promise<GameWithAccess> {
@@ -114,12 +116,32 @@ export class GameService {
     userId: number,
     limit: number,
     cursorId?: number,
+    filters?: {
+      status?: string;
+      mode?: string;
+      organizationId?: number;
+      result?: string;
+      token?: string;
+      from?: string;
+      to?: string;
+    },
   ): Promise<{ items: Game[]; nextCursor: number | null }> {
     const take = Math.min(Math.max(limit, 1), 50);
+    const from = filters?.from ? new Date(filters.from) : undefined;
+    const to = filters?.to ? new Date(filters.to) : undefined;
     const items = await this.gameRepository.findManyByUserIdCursor(
       userId,
       take + 1,
       cursorId,
+      {
+        status: filters?.status,
+        mode: filters?.mode,
+        organizationId: filters?.organizationId,
+        result: filters?.result,
+        token: filters?.token,
+        from: from && !Number.isNaN(from.getTime()) ? from : undefined,
+        to: to && !Number.isNaN(to.getTime()) ? to : undefined,
+      },
     );
     const hasMore = items.length > take;
     const page = hasMore ? items.slice(0, take) : items;
@@ -129,6 +151,29 @@ export class GameService {
   }
 
   async createGame(data: CreateGameDto, creatorId: number): Promise<Game> {
+    const activeSubscription =
+      await this.organizationService.getActiveSubscriptionWithPlan(creatorId);
+    if (!activeSubscription) {
+      throw new ForbiddenException('Нужна активная подписка для создания игры');
+    }
+    if (!activeSubscription.plan.canStream) {
+      throw new ForbiddenException('Текущий тариф не позволяет запускать стримы');
+    }
+
+    const periodStart = new Date();
+    periodStart.setDate(1);
+    periodStart.setHours(0, 0, 0, 0);
+    const gamesThisPeriod = await this.prisma.game.count({
+      where: {
+        creatorId,
+        deletedAt: null,
+        createdAt: { gte: periodStart },
+      },
+    });
+    if (gamesThisPeriod >= activeSubscription.plan.maxGamesPerPeriod) {
+      throw new ForbiddenException('Достигнут лимит игр для текущего тарифа');
+    }
+
     if (data.organizationId) {
       const orgExists = await this.organizationService.findById(
         data.organizationId,
@@ -136,6 +181,27 @@ export class GameService {
       if (!orgExists) {
         throw new NotFoundException(
           `Organization with id ${data.organizationId} not found`,
+        );
+      }
+
+      const member = await this.prisma.userOrganization.findUnique({
+        where: {
+          userId_organizationId: {
+            userId: creatorId,
+            organizationId: data.organizationId,
+          },
+        },
+      });
+      if (!member) {
+        throw new ForbiddenException('Создавать игру в организации может только её участник');
+      }
+
+      const activeOrg = await this.organizationService.isOrganizationActive(
+        data.organizationId,
+      );
+      if (!activeOrg) {
+        throw new ForbiddenException(
+          'Организация неактивна: у администратора нет активной подписки',
         );
       }
     }

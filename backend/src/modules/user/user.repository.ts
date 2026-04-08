@@ -37,4 +37,83 @@ export class UserRepository {
   async findByEmail(email: string) {
     return this.prisma.user.findUnique({ where: { email } });
   }
+
+  async findPublicProfileById(id: number) {
+    return this.prisma.user.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        name: true,
+        avatar: true,
+        createdAt: true,
+        userOrganizations: {
+          where: { organization: { deletedAt: null } },
+          select: {
+            role: true,
+            organization: {
+              select: { id: true, name: true, blocked: true, deletedAt: true },
+            },
+          },
+        },
+        userGames: {
+          where: { game: { deletedAt: null } },
+          take: 10,
+          orderBy: { game: { createdAt: 'desc' } },
+          select: {
+            color: true,
+            game: {
+              select: {
+                id: true,
+                token: true,
+                mode: true,
+                status: true,
+                result: true,
+                createdAt: true,
+                organization: { select: { id: true, name: true } },
+              },
+            },
+          },
+        },
+      },
+    });
+  }
+
+  async getDashboardSummary(userId: number) {
+    const [gamesCount, organizationsCount, currentSubscription] = await Promise.all([
+      this.prisma.game.count({
+        where: {
+          deletedAt: null,
+          OR: [{ creatorId: userId }, { users: { some: { userId } } }],
+        },
+      }),
+      this.prisma.userOrganization.count({
+        where: { userId, organization: { deletedAt: null } },
+      }),
+      this.prisma.subscription.findFirst({
+        where: {
+          userId,
+          status: 'ACTIVE',
+          endAt: { gt: new Date() },
+          plan: { isActive: true },
+        },
+        include: { plan: true },
+        orderBy: { endAt: 'desc' },
+      }),
+    ]);
+
+    return {
+      gamesCount,
+      organizationsCount,
+      subscription: currentSubscription
+        ? {
+            status: currentSubscription.status,
+            endAt: currentSubscription.endAt,
+            plan: {
+              code: currentSubscription.plan.code,
+              title: currentSubscription.plan.title,
+            },
+          }
+        : null,
+    };
+  }
 }

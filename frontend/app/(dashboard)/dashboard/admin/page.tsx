@@ -3,6 +3,7 @@ import { H2, Lead, Text } from '@/components/ui/typography';
 import { Shield, Building2, Users, Wallet, Ban } from 'lucide-react';
 import { AdminBillingPanel } from '@/components/dashboard/admin-billing-panel';
 import { AdminPlansPanel } from '@/components/dashboard/admin-plans-panel';
+import { AdminManagementPanel } from '@/components/dashboard/admin-management-panel';
 
 export default function SuperAdminDashboardPage() {
   return (
@@ -29,9 +30,9 @@ export default function SuperAdminDashboardPage() {
           </CardHeader>
           <CardContent className="space-y-3">
             <Text className="text-sm text-muted-foreground">
-              Таблица, поиск, блокировка / разблокировка. Детали — в выезжающем drawer.
+              Управление данными организаций и пользователей.
             </Text>
-            <div className="h-24 rounded-lg border border-dashed border-border bg-muted/20" />
+            <AdminManagementPanel />
           </CardContent>
         </Card>
 
@@ -44,7 +45,7 @@ export default function SuperAdminDashboardPage() {
           </CardHeader>
           <CardContent className="space-y-3">
             <Text className="text-sm text-muted-foreground">
-              Список пользователей, фильтр по подписке и статусу блокировки.
+              Раздел объединен в общий блок управления.
             </Text>
             <div className="h-24 rounded-lg border border-dashed border-border bg-muted/20" />
           </CardContent>
@@ -89,7 +90,7 @@ export default function SuperAdminDashboardPage() {
         </CardHeader>
         <CardContent className="space-y-4">
           <Text className="text-muted-foreground">
-            Данные из БД (Payment, BillingEvent). Фильтры по периоду и CSV — следующими шагами.
+            Данные из БД (Payment, BillingEvent) с живой лентой событий.
           </Text>
           <AdminBillingPanel />
         </CardContent>

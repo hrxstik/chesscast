@@ -46,6 +46,13 @@ export class GameController {
     @Req() req: Request & { user: RequestUser },
     @Query('cursor') cursor?: string,
     @Query('limit') limit?: string,
+    @Query('status') status?: string,
+    @Query('mode') mode?: string,
+    @Query('organizationId') organizationId?: string,
+    @Query('result') result?: string,
+    @Query('token') token?: string,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
   ) {
     const userId = req.user.id;
     const limitNum = limit ? parseInt(limit, 10) : 20;
@@ -56,7 +63,19 @@ export class GameController {
     if (cursorId !== undefined && Number.isNaN(cursorId)) {
       return { items: [], nextCursor: null };
     }
-    return this.gameService.getMyGamesCursor(userId, limitNum, cursorId);
+    const orgId =
+      organizationId !== undefined && organizationId !== ''
+        ? parseInt(organizationId, 10)
+        : undefined;
+    return this.gameService.getMyGamesCursor(userId, limitNum, cursorId, {
+      status,
+      mode,
+      organizationId: orgId != null && !Number.isNaN(orgId) ? orgId : undefined,
+      result,
+      token,
+      from,
+      to,
+    });
   }
 
   /** Публичное представление партии (игроки без чувствительных полей). До динамического :token. */

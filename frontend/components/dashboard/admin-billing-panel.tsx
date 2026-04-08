@@ -56,6 +56,28 @@ export function AdminBillingPanel() {
     return <Text className="text-sm text-destructive">{error}</Text>;
   }
 
+  function onExportCsv() {
+    const header = ['id', 'type', 'amount', 'currency', 'createdAt', 'paymentId'];
+    const body = events.map((e) => [
+      e.id,
+      e.type,
+      e.amount ?? '',
+      e.currency ?? '',
+      e.createdAt,
+      e.paymentId ?? '',
+    ]);
+    const csv = [header, ...body]
+      .map((row) => row.map((v) => `"${String(v).replaceAll('"', '""')}"`).join(','))
+      .join('\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `billing-events-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
   return (
     <div className="space-y-4">
       {summary ? (
@@ -103,8 +125,8 @@ export function AdminBillingPanel() {
         </ul>
       </div>
 
-      <Button type="button" variant="outline" className="h-8 text-xs" disabled>
-        Экспорт CSV — в следующей итерации
+      <Button type="button" variant="outline" className="h-8 text-xs" onClick={onExportCsv}>
+        Экспорт CSV
       </Button>
     </div>
   );

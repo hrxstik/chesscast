@@ -1,6 +1,6 @@
 'use client';
 
-import { useMyGamesInfinite } from '@/lib/hooks/use-my-games-infinite';
+import { useMyGamesInfiniteFiltered } from '@/lib/hooks/use-my-games-infinite';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -8,9 +8,17 @@ import Link from 'next/link';
 import { Loader2 } from 'lucide-react';
 import { useEffect, useRef } from 'react';
 
-export function MyGamesList() {
+export function MyGamesList(props: {
+  status?: string;
+  mode?: string;
+  organizationId?: number;
+  result?: string;
+  token?: string;
+  from?: string;
+  to?: string;
+}) {
   const { data, fetchNextPage, hasNextPage, isFetchingNextPage, status, error } =
-    useMyGamesInfinite(15);
+    useMyGamesInfiniteFiltered(15, props);
   const sentinelRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {

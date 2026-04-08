@@ -8,6 +8,7 @@ import { SquareChessboard } from '@/components/game/square-chessboard';
 import { ChessAnalysisShell } from '@/components/game/chess-analysis-shell';
 import { Button } from '@/components/ui/button';
 import { SkipBack, SkipForward, StepBack, StepForward } from 'lucide-react';
+import { fetchGameSessionPublic, type GameSessionPublic } from '@/lib/api/game-session';
 
 type Props = {
   params: Promise<{
@@ -17,6 +18,29 @@ type Props = {
 
 export default function GamePage({ params }: Props) {
   const { token } = React.use(params);
+  const [session, setSession] = React.useState<GameSessionPublic | null>(null);
+  const [statusText, setStatusText] = React.useState<string>('Загрузка партии...');
+
+  React.useEffect(() => {
+    let mounted = true;
+    (async () => {
+      const res = await fetchGameSessionPublic(token);
+      if (!mounted) return;
+      if (res.ok) {
+        setSession(res.data);
+        setStatusText('');
+        return;
+      }
+      if ('forbidden' in res) {
+        setStatusText('Нет доступа к партии');
+        return;
+      }
+      setStatusText('Партия не найдена');
+    })();
+    return () => {
+      mounted = false;
+    };
+  }, [token]);
 
   const {
     positionEvaluation,
@@ -42,9 +66,14 @@ export default function GamePage({ params }: Props) {
       }
       leftInfo={
         <>
-          <Text className="text-muted-foreground">
-            Режим, результат и участники подтянем с API. Пока заглушка под каркас из ТЗ.
-          </Text>
+          {session ? (
+            <Text className="text-muted-foreground">
+              {session.mode} · {session.status} · {session.result}
+              {session.organization ? ` · ${session.organization.name}` : ''}
+            </Text>
+          ) : (
+            <Text className="text-muted-foreground">{statusText}</Text>
+          )}
           <Text className="text-xs text-muted-foreground">
             Положительная оценка лучше для белых, отрицательная — для чёрных.
           </Text>
@@ -52,19 +81,33 @@ export default function GamePage({ params }: Props) {
       }
       whiteLabel={
         <>
-          Игрок 1<span className="text-muted-foreground"> · белые</span>
+          {session?.players.find((p) => p.color === 'WHITE')?.name ?? 'Игрок 1'}
+          <span className="text-muted-foreground"> · белые</span>
         </>
       }
       board={<SquareChessboard options={chessboardOptions} />}
       blackLabel={
         <>
-          Игрок 2<span className="text-muted-foreground"> · чёрные</span>
+          {session?.players.find((p) => p.color === 'BLACK')?.name ?? 'Игрок 2'}
+          <span className="text-muted-foreground"> · чёрные</span>
         </>
       }
       movesPanel={
-        <Text className="text-xs text-muted-foreground">
-          Нотация и перемотка появятся после связки с бекендом партии.
-        </Text>
+        session ? (
+          <div className="space-y-1">
+            {session.moves.length === 0 ? (
+              <Text className="text-xs text-muted-foreground">Ходов пока нет.</Text>
+            ) : (
+              session.moves.slice(-20).map((m, i) => (
+                <Text key={`${m}-${i}`} className="text-xs text-muted-foreground">
+                  {session.moves.length - session.moves.slice(-20).length + i + 1}. {m}
+                </Text>
+              ))
+            )}
+          </div>
+        ) : (
+          <Text className="text-xs text-muted-foreground">{statusText}</Text>
+        )
       }
       analysisPanel={
         <>

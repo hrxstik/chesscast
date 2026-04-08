@@ -164,6 +164,7 @@ async function main() {
       name: 'Демо-школа ChessCast',
       description: 'Сидированная организация для разработки UI и прав админа школы.',
       inviteCode: 'SEED-DEMO-SCHOOL',
+      ownerUserId: schoolAdmin.id,
     },
   });
 
