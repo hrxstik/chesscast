@@ -10,6 +10,7 @@ export type YkPaymentResource = {
   amount?: { value: string; currency: string };
   metadata?: Record<string, string>;
   confirmation?: { type: string; confirmation_url?: string };
+  payment_method?: { id: string; type?: string; saved?: boolean };
 };
 
 @Injectable()
@@ -32,6 +33,43 @@ export class YookassaApiService {
     returnUrl: string;
     description: string;
     metadata: Record<string, string>;
+    savePaymentMethod: boolean;
+  }): Promise<YkPaymentResource> {
+    const idempotenceKey = randomUUID();
+    const body: Record<string, unknown> = {
+      amount: { value: input.amountValue, currency: input.currency },
+      confirmation: { type: 'redirect', return_url: input.returnUrl },
+      capture: true,
+      description: input.description,
+      metadata: input.metadata,
+    };
+    if (input.savePaymentMethod) {
+      body.save_payment_method = true;
+    }
+    const res = await fetch(`${YK_API}/payments`, {
+      method: 'POST',
+      headers: {
+        Authorization: this.authHeader(),
+        'Idempotence-Key': idempotenceKey,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(body),
+    });
+    const text = await res.text();
+    if (!res.ok) {
+      this.logger.warn(`YooKassa create payment failed: ${res.status} ${text}`);
+      throw new Error(`YooKassa: ${res.status}`);
+    }
+    return JSON.parse(text) as YkPaymentResource;
+  }
+
+  /** Автосписание по сохранённому payment_method_id (без редиректа). */
+  async createPaymentWithSavedMethod(input: {
+    amountValue: string;
+    currency: string;
+    paymentMethodId: string;
+    description: string;
+    metadata: Record<string, string>;
   }): Promise<YkPaymentResource> {
     const idempotenceKey = randomUUID();
     const res = await fetch(`${YK_API}/payments`, {
@@ -43,7 +81,7 @@ export class YookassaApiService {
       },
       body: JSON.stringify({
         amount: { value: input.amountValue, currency: input.currency },
-        confirmation: { type: 'redirect', return_url: input.returnUrl },
+        payment_method_id: input.paymentMethodId,
         capture: true,
         description: input.description,
         metadata: input.metadata,
@@ -51,8 +89,8 @@ export class YookassaApiService {
     });
     const text = await res.text();
     if (!res.ok) {
-      this.logger.warn(`YooKassa create payment failed: ${res.status} ${text}`);
-      throw new Error(`YooKassa: ${res.status}`);
+      this.logger.warn(`YooKassa recurring payment failed: ${res.status} ${text}`);
+      throw new Error(`YooKassa recurring: ${res.status}`);
     }
     return JSON.parse(text) as YkPaymentResource;
   }

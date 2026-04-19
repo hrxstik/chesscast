@@ -25,6 +25,7 @@ export function CheckoutPlanButton({
   const token = useAuthStore((s) => s.accessToken);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [autoRenew, setAutoRenew] = useState(true);
 
   if (planCode === 'FREE') {
     const freeLabel = label === 'Оформить' ? 'Начать бесплатно' : label;
@@ -47,7 +48,7 @@ export function CheckoutPlanButton({
     try {
       const res = await apiFetch<{ confirmationUrl: string; paymentId: number }>(
         '/payments/yookassa/checkout',
-        { method: 'POST', body: { planId } },
+        { method: 'POST', body: { planId, autoRenew } },
       );
       window.location.href = res.confirmationUrl;
     } catch (e) {
@@ -58,7 +59,18 @@ export function CheckoutPlanButton({
   }
 
   return (
-    <div className="w-full space-y-2">
+    <div className="w-full space-y-3">
+      <label className="flex cursor-pointer items-start gap-2 text-left text-xs text-muted-foreground">
+        <input
+          type="checkbox"
+          className="mt-0.5 rounded border-input"
+          checked={autoRenew}
+          onChange={(e) => setAutoRenew(e.target.checked)}
+        />
+        <span>
+          Автопродление: сохранить способ оплаты в ЮKassa и продлевать подписку до отмены (можно снять галочку).
+        </span>
+      </label>
       {err ? <p className="text-xs text-destructive">{err}</p> : null}
       <Button
         type="button"

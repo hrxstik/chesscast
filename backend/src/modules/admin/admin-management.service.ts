@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { PlatformRole } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AppElasticsearchService } from '../elasticsearch/elasticsearch.service';
@@ -58,12 +58,19 @@ export class AdminManagementService {
     };
   }
 
-  async setUserBlocked(id: number, blocked: boolean, blockedReason?: string | null) {
+  async setUserBlocked(id: number, blocked: boolean, reason: string) {
+    const r = reason?.trim() ?? '';
+    if (r.length < 3) {
+      throw new BadRequestException('Укажите причину не короче 3 символов');
+    }
     const exists = await this.prisma.user.findUnique({ where: { id }, select: { id: true } });
     if (!exists) throw new NotFoundException('User not found');
     const updated = await this.prisma.user.update({
       where: { id },
-      data: { blocked, blockedReason: blocked ? blockedReason ?? null : null },
+      data: {
+        blocked,
+        blockedReason: blocked ? r : null,
+      },
       select: {
         id: true,
         name: true,
@@ -156,7 +163,11 @@ export class AdminManagementService {
     };
   }
 
-  async setOrganizationBlocked(id: number, blocked: boolean, blockedReason?: string | null) {
+  async setOrganizationBlocked(id: number, blocked: boolean, reason: string) {
+    const r = reason?.trim() ?? '';
+    if (r.length < 3) {
+      throw new BadRequestException('Укажите причину не короче 3 символов');
+    }
     const exists = await this.prisma.organization.findUnique({
       where: { id },
       select: { id: true },
@@ -164,7 +175,10 @@ export class AdminManagementService {
     if (!exists) throw new NotFoundException('Organization not found');
     const updated = await this.prisma.organization.update({
       where: { id },
-      data: { blocked, blockedReason: blocked ? blockedReason ?? null : null },
+      data: {
+        blocked,
+        blockedReason: blocked ? r : null,
+      },
       select: {
         id: true,
         name: true,
@@ -172,6 +186,7 @@ export class AdminManagementService {
         blocked: true,
         blockedReason: true,
         inviteCode: true,
+        joinPolicy: true,
       },
     });
     await this.elastic.indexOrganization({
@@ -181,6 +196,7 @@ export class AdminManagementService {
       blocked: updated.blocked,
       blockedReason: updated.blockedReason,
       inviteCode: updated.inviteCode,
+      joinPolicy: updated.joinPolicy,
     });
     return { id: updated.id, blocked: updated.blocked, blockedReason: updated.blockedReason };
   }

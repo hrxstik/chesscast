@@ -1,4 +1,5 @@
-import { IsOptional, IsString, MinLength } from 'class-validator';
+import { OrganizationJoinPolicy } from '@prisma/client';
+import { IsEnum, IsOptional, IsString, MinLength } from 'class-validator';
 
 export class UpdateOrganizationInfoDto {
   @IsOptional()
@@ -10,4 +11,8 @@ export class UpdateOrganizationInfoDto {
   @IsString()
   @MinLength(10)
   description?: string;
+
+  @IsOptional()
+  @IsEnum(OrganizationJoinPolicy)
+  joinPolicy?: OrganizationJoinPolicy;
 }

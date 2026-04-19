@@ -39,7 +39,12 @@ export function AdminManagementPanel() {
 
   async function onToggleUserBlocked(row: AdminUserRow) {
     try {
-      await setAdminUserBlocked(row.id, !row.blocked, !row.blocked ? blockReason : undefined);
+      const reason = blockReason.trim();
+      if (reason.length < 3) {
+        setError('Укажите причину не короче 3 символов');
+        return;
+      }
+      await setAdminUserBlocked(row.id, !row.blocked, reason);
       await load();
     } catch (e) {
       setError(e instanceof ApiError ? e.message : 'Не удалось обновить пользователя');
@@ -48,7 +53,12 @@ export function AdminManagementPanel() {
 
   async function onToggleOrgBlocked(row: AdminOrganizationRow) {
     try {
-      await setAdminOrganizationBlocked(row.id, !row.blocked, !row.blocked ? blockReason : undefined);
+      const reason = blockReason.trim();
+      if (reason.length < 3) {
+        setError('Укажите причину не короче 3 символов');
+        return;
+      }
+      await setAdminOrganizationBlocked(row.id, !row.blocked, reason);
       await load();
     } catch (e) {
       setError(e instanceof ApiError ? e.message : 'Не удалось обновить организацию');
@@ -71,7 +81,7 @@ export function AdminManagementPanel() {
         className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm"
         value={blockReason}
         onChange={(e) => setBlockReason(e.target.value)}
-        placeholder="Причина блокировки (опционально)"
+        placeholder="Причина модерации (обязательна, от 3 символов — для блокировки и разблокировки)"
       />
 
       <div className="rounded-lg border border-border">

@@ -1,10 +1,16 @@
 import {
+  BadRequestException,
   ForbiddenException,
   Injectable,
   NotFoundException,
   UnauthorizedException,
 } from '@nestjs/common';
-import { Organization, Role, SubscriptionStatus } from '@prisma/client';
+import {
+  Organization,
+  OrganizationJoinPolicy,
+  Role,
+  SubscriptionStatus,
+} from '@prisma/client';
 import { OrganizationRepository } from './organization.repository';
 import { CreateOrganizationDto } from 'src/dtos/create/create-organization.dto';
 import generateCode from 'utils/generate-code';
@@ -32,13 +38,15 @@ export class OrganizationService {
               where: { userId_organizationId: { userId, organizationId: row.id } },
               select: { role: true },
             });
+            const jp = (row as { joinPolicy?: string }).joinPolicy ?? 'INVITE_ONLY';
             return {
               id: row.id,
               name: row.name,
               description: row.description,
               blocked: row.blocked,
               blockedReason: row.blockedReason,
-              inviteCode: row.inviteCode,
+              inviteCode: member ? row.inviteCode : undefined,
+              joinPolicy: jp,
               isMember: !!member,
               role: member?.role ?? null,
               isActive: await this.isOrganizationActive(row.id),
@@ -66,6 +74,7 @@ export class OrganizationService {
         blocked: true,
         blockedReason: true,
         inviteCode: true,
+        joinPolicy: true,
       },
     });
     return Promise.all(
@@ -76,6 +85,8 @@ export class OrganizationService {
         });
         return {
           ...row,
+          inviteCode: member ? row.inviteCode : undefined,
+          joinPolicy: row.joinPolicy,
           isMember: !!member,
           role: member?.role ?? null,
           isActive: await this.isOrganizationActive(row.id),
@@ -92,6 +103,55 @@ export class OrganizationService {
     return organization;
   }
 
+  /** Карточка для неучастников: при INVITE_ONLY — минимум полей; при OPEN — описание без кода. */
+  async getOrganizationVisible(id: number, viewerUserId?: number) {
+    const organization = await this.organizationRepository.findById(id);
+    if (!organization || organization.deletedAt) {
+      throw new NotFoundException(`Organization with id ${id} not found`);
+    }
+    const member =
+      viewerUserId != null
+        ? await this.organizationRepository.isUserMember(viewerUserId, id)
+        : false;
+    if (member) {
+      return organization;
+    }
+    if (organization.joinPolicy === OrganizationJoinPolicy.INVITE_ONLY) {
+      return {
+        id: organization.id,
+        name: organization.name,
+        avatar: organization.avatar,
+        joinPolicy: organization.joinPolicy,
+        blocked: organization.blocked,
+      };
+    }
+    return {
+      id: organization.id,
+      name: organization.name,
+      description: organization.description,
+      avatar: organization.avatar,
+      joinPolicy: organization.joinPolicy,
+      blocked: organization.blocked,
+    };
+  }
+
+  async joinOpenOrganization(userId: number, organizationId: number) {
+    const organization = await this.organizationRepository.findById(organizationId);
+    if (!organization || organization.deletedAt) {
+      throw new NotFoundException(`Organization with id ${organizationId} not found`);
+    }
+    if (organization.joinPolicy !== OrganizationJoinPolicy.OPEN) {
+      throw new BadRequestException(
+        'Без пригласительного кода можно вступить только в организации с типом «открытая»',
+      );
+    }
+    if (organization.blocked || !(await this.isOrganizationActive(organizationId))) {
+      throw new ForbiddenException('Организация временно недоступна');
+    }
+    await this.organizationRepository.addMember(userId, organizationId);
+    return this.findById(organizationId);
+  }
+
   async updateById(id: number, data: any): Promise<Organization> {
     const organization = await this.organizationRepository.findById(id);
     if (!organization) {
@@ -105,6 +165,7 @@ export class OrganizationService {
       blocked: updated.blocked,
       blockedReason: updated.blockedReason,
       inviteCode: updated.inviteCode,
+      joinPolicy: updated.joinPolicy,
     });
     return updated;
   }
@@ -129,8 +190,12 @@ export class OrganizationService {
       throw new ForbiddenException('Достигнут лимит организаций для текущего тарифа');
     }
 
+    const joinPolicy = data.joinPolicy ?? OrganizationJoinPolicy.INVITE_ONLY;
     const createData = {
-      ...data,
+      name: data.name,
+      description: data.description,
+      avatar: data.avatar,
+      joinPolicy,
       owner: { connect: { id: creatorUserId } },
       inviteCode: await generateCode(6),
       users: {
@@ -148,6 +213,7 @@ export class OrganizationService {
       blocked: created.blocked,
       blockedReason: created.blockedReason,
       inviteCode: created.inviteCode,
+      joinPolicy: created.joinPolicy,
     });
     return created;
   }
@@ -167,6 +233,7 @@ export class OrganizationService {
       blocked: updated.blocked,
       blockedReason: updated.blockedReason,
       inviteCode: updated.inviteCode,
+      joinPolicy: updated.joinPolicy,
     });
     return updated;
   }
@@ -214,6 +281,7 @@ export class OrganizationService {
         name: r.organization.name,
         description: r.organization.description,
         inviteCode: r.organization.inviteCode,
+        joinPolicy: r.organization.joinPolicy,
         role: r.role,
         isActive: await this.isOrganizationActive(r.organization.id),
       })),
@@ -325,7 +393,6 @@ export class OrganizationService {
         userId,
         status: SubscriptionStatus.ACTIVE,
         endAt: { gt: now },
-        plan: { isActive: true },
       },
       include: { plan: true },
       orderBy: { endAt: 'desc' },
@@ -347,7 +414,7 @@ export class OrganizationService {
         userId: organization.ownerUserId,
         status: SubscriptionStatus.ACTIVE,
         endAt: { gt: now },
-        plan: { isActive: true, canCreateOrganization: true },
+        plan: { canCreateOrganization: true },
       },
       select: { id: true },
     });

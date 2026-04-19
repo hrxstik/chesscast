@@ -16,6 +16,8 @@ model User {
   platformRole PlatformRole @default(USER)
   blocked      Boolean      @default(false)
   blockedReason String?
+  /// Сохранённый способ оплаты ЮKassa для автопродления (payment_method.id)
+  yookassaPaymentMethodId String?
 
   subscriptions      Subscription[]
   userGames          UserGame[]
@@ -55,6 +57,9 @@ model Organization {
   blockedReason String?
   ownerUserId Int
   owner      User @relation("OrganizationOwner", fields: [ownerUserId], references: [id])
+
+  /// OPEN — вступление без кода; INVITE_ONLY — только по inviteCode
+  joinPolicy OrganizationJoinPolicy @default(INVITE_ONLY)
 
   games Game[]
   users UserOrganization[]
@@ -127,6 +132,11 @@ enum Role {
 enum PlatformRole {
   USER
   SUPERADMIN
+}
+
+enum OrganizationJoinPolicy {
+  OPEN
+  INVITE_ONLY
 }
 
 enum GameVisibility {

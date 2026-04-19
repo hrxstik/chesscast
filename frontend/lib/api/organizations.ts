@@ -5,6 +5,7 @@ export type MyOrganizationDto = {
   name: string;
   description: string;
   inviteCode: string;
+  joinPolicy?: string;
   role: 'PLAYER' | 'ADMIN';
   isActive: boolean;
 };
@@ -47,7 +48,8 @@ export type OrganizationSearchDto = {
   description: string;
   blocked: boolean;
   blockedReason?: string | null;
-  inviteCode: string;
+  inviteCode?: string;
+  joinPolicy?: string;
   isMember: boolean;
   role: 'PLAYER' | 'ADMIN' | null;
   isActive: boolean;
@@ -64,6 +66,10 @@ export async function joinOrganizationByCode(inviteCode: string) {
   });
 }
 
+export async function joinOpenOrganization(organizationId: number) {
+  return apiFetch(`/organization/join-open/${organizationId}`, { method: 'POST' });
+}
+
 export async function searchOrganizations(params: {
   q?: string;
   id?: number;
@@ -75,7 +81,11 @@ export async function searchOrganizations(params: {
   return apiFetch<OrganizationSearchDto[]>(`/organization/search${query ? `?${query}` : ''}`);
 }
 
-export async function createOrganization(body: { name: string; description: string }) {
+export async function createOrganization(body: {
+  name: string;
+  description: string;
+  joinPolicy?: 'OPEN' | 'INVITE_ONLY';
+}) {
   return apiFetch<{ id: number; name: string; inviteCode: string }>('/organization/create', {
     method: 'POST',
     body,
@@ -86,10 +96,11 @@ export async function fetchOrganization(id: number) {
   return apiFetch<{
     id: number;
     name: string;
-    description: string;
-    inviteCode: string;
-    createdAt: string;
-    updatedAt: string;
+    description?: string;
+    inviteCode?: string;
+    joinPolicy?: string;
+    createdAt?: string;
+    updatedAt?: string;
   }>(`/organization/${id}`);
 }
 

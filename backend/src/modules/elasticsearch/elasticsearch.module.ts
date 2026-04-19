@@ -1,13 +1,16 @@
 import { Module } from '@nestjs/common';
 import { ElasticsearchModule as NestElasticsearchModule } from '@nestjs/elasticsearch';
+import { BullModule } from '@nestjs/bullmq';
 import { ConfigService } from '@nestjs/config';
 import { AppElasticsearchService } from './elasticsearch.service';
 import { ElasticsearchController } from './elasticsearch.controller';
 import { PrismaModule } from '../prisma/prisma.module';
+import { SearchReindexProcessor } from './search-reindex.processor';
 
 @Module({
   imports: [
     PrismaModule,
+    BullModule.registerQueue({ name: 'search' }),
     NestElasticsearchModule.registerAsync({
       inject: [ConfigService],
       useFactory: (configService: ConfigService) => {
@@ -35,7 +38,7 @@ import { PrismaModule } from '../prisma/prisma.module';
       },
     }),
   ],
-  providers: [AppElasticsearchService],
+  providers: [AppElasticsearchService, SearchReindexProcessor],
   controllers: [ElasticsearchController],
   exports: [AppElasticsearchService],
 })

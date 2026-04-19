@@ -228,16 +228,23 @@ export class GameService {
     }
   }
 
-  async deleteById(id: number): Promise<Game> {
-    try {
-      await this.gameRepository.findById(id);
-    } catch {
+  async deleteById(id: number, requesterId: number): Promise<Game> {
+    const game = await this.gameRepository.findById(id);
+    if (!game || game.deletedAt) {
       throw new NotFoundException(`Game with id ${id} not found`);
     }
-    try {
+    if (game.creatorId === requesterId) {
       return this.gameRepository.deleteById(id);
-    } catch {
-      throw new InternalServerErrorException('Error deleting game');
     }
+    if (game.organizationId != null) {
+      const org = await this.prisma.organization.findUnique({
+        where: { id: game.organizationId },
+        select: { ownerUserId: true },
+      });
+      if (org?.ownerUserId === requesterId) {
+        return this.gameRepository.deleteById(id);
+      }
+    }
+    throw new ForbiddenException('Удалить партию может только создатель или владелец организации');
   }
 }

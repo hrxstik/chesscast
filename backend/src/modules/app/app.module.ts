@@ -1,4 +1,6 @@
 import { Module } from '@nestjs/common';
+import { BullModule } from '@nestjs/bullmq';
+import { ScheduleModule } from '@nestjs/schedule';
 import { ConfigModule } from '@nestjs/config';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
@@ -18,6 +20,16 @@ import { PaymentModule } from '../payment/payment.module';
 
 @Module({
   imports: [
+    ScheduleModule.forRoot(),
+    BullModule.forRootAsync({
+      useFactory: () => ({
+        connection: {
+          host: process.env.REDIS_HOST ?? '127.0.0.1',
+          port: parseInt(process.env.REDIS_PORT ?? '6379', 10),
+          password: process.env.REDIS_PWD || undefined,
+        },
+      }),
+    }),
     ConfigModule.forRoot({
       load: [googleConfig],
       isGlobal: true,

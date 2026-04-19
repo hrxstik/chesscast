@@ -4,7 +4,7 @@ import { Suspense, useEffect, useState } from 'react';
 import Image from 'next/image';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { H2, Text } from '@/components/ui/typography';
-import { User, CreditCard, Shield, Bell } from 'lucide-react';
+import { User, CreditCard, Shield, Bell, ChevronRight, Sparkles } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import Link from 'next/link';
 import { getCurrentUser, type MeResponse } from '@/lib/api/user';
@@ -198,25 +198,77 @@ function DashboardProfileInner() {
         </Card>
 
         <div className="space-y-4">
-          <Card className="border-border/80">
-            <CardHeader>
+          <Card className="relative overflow-hidden border-border/80 bg-gradient-to-br from-card via-card to-primary/5">
+            <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_top_right,_var(--tw-gradient-stops))] from-primary/10 via-transparent to-transparent" />
+            <CardHeader className="relative pb-2">
               <CardTitle className="flex items-center gap-2 text-base">
-                <CreditCard className="size-4 text-primary" aria-hidden />
-                Подписка
+                <Sparkles className="size-4 text-primary" aria-hidden />
+                Подписка и тарифы
               </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-2">
-              <Text className="text-sm font-medium">
-                Текущий план: {subscription?.plan.title ?? 'Нет активной подписки'}
+              <Text className="text-xs text-muted-foreground">
+                Управление планом и автопродлением — на странице тарифов с оплатой через ЮKassa.
               </Text>
-              <div className="rounded-md bg-muted/40 px-3 py-2 text-sm text-muted-foreground">
-                {subscription
-                  ? `Статус: ${subscription.status}, до ${new Date(subscription.endAt).toLocaleDateString()}`
-                  : 'Оформите подписку для расширенного доступа'}
-              </div>
-              <Button asChild variant="outline" className="mt-2 w-full">
-                <Link href="/pricing">Сменить тариф</Link>
-              </Button>
+            </CardHeader>
+            <CardContent className="relative space-y-4">
+              {subscription ? (
+                <>
+                  <div>
+                    <Text className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                      Текущий план
+                    </Text>
+                    <p className="mt-1 text-lg font-semibold tracking-tight">{subscription.plan.title}</p>
+                    <div className="mt-2 flex flex-wrap gap-2 text-xs text-muted-foreground">
+                      <span className="rounded-full bg-muted/80 px-2 py-0.5 font-medium text-foreground/80">
+                        {subscription.status}
+                      </span>
+                      <span>
+                        Действует до{' '}
+                        <time dateTime={subscription.endAt}>
+                          {new Date(subscription.endAt).toLocaleDateString('ru-RU', {
+                            day: 'numeric',
+                            month: 'long',
+                            year: 'numeric',
+                          })}
+                        </time>
+                      </span>
+                      {subscription.autoRenew ? (
+                        <span className="rounded-full bg-primary/15 px-2 py-0.5 text-primary">
+                          Автопродление включено
+                        </span>
+                      ) : (
+                        <span className="rounded-full bg-muted px-2 py-0.5">Без автопродления</span>
+                      )}
+                    </div>
+                  </div>
+                  <Button asChild className="group w-full justify-between gap-2">
+                    <Link href="/pricing">
+                      <span className="flex items-center gap-2">
+                        <CreditCard className="size-4 opacity-80" aria-hidden />
+                        Перейти к тарифам и оплате
+                      </span>
+                      <ChevronRight
+                        className="size-4 shrink-0 opacity-60 transition group-hover:translate-x-0.5 group-hover:opacity-100"
+                        aria-hidden
+                      />
+                    </Link>
+                  </Button>
+                </>
+              ) : (
+                <>
+                  <Text className="text-sm text-muted-foreground">
+                    Нет активной подписки в ответе API — выберите тариф, чтобы открыть стриминг и лимиты.
+                  </Text>
+                  <Button asChild className="group w-full justify-between gap-2">
+                    <Link href="/pricing">
+                      <span>Посмотреть тарифы</span>
+                      <ChevronRight
+                        className="size-4 shrink-0 opacity-60 transition group-hover:translate-x-0.5 group-hover:opacity-100"
+                        aria-hidden
+                      />
+                    </Link>
+                  </Button>
+                </>
+              )}
             </CardContent>
           </Card>
 

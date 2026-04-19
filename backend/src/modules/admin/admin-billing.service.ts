@@ -68,4 +68,39 @@ export class AdminBillingService {
       nextCursor,
     };
   }
+
+  /** Экспорт ленты биллинг-событий в CSV (UTF-8 BOM для Excel). */
+  async exportEventsCsv(): Promise<string> {
+    const rows = await this.prisma.billingEvent.findMany({
+      orderBy: { id: 'desc' },
+      take: 5000,
+      include: {
+        payment: { select: { id: true, status: true, purpose: true } },
+        actor: { select: { id: true, name: true, email: true } },
+      },
+    });
+    const esc = (v: unknown) => {
+      const s = v === null || v === undefined ? '' : String(v);
+      if (/[",\n\r]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
+      return s;
+    };
+    const header = ['id', 'type', 'amount', 'currency', 'createdAt', 'paymentId', 'actorUserId', 'actorName', 'paymentStatus'];
+    const lines = [header.join(',')];
+    for (const e of rows) {
+      lines.push(
+        [
+          e.id,
+          esc(e.type),
+          esc(e.amount?.toString() ?? ''),
+          esc(e.currency ?? ''),
+          e.createdAt.toISOString(),
+          e.paymentId ?? '',
+          e.actorUserId ?? '',
+          esc(e.actor?.name ?? ''),
+          esc(e.payment?.status ?? ''),
+        ].join(','),
+      );
+    }
+    return '\uFEFF' + lines.join('\n');
+  }
 }

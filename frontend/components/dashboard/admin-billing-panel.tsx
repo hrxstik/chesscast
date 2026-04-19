@@ -10,12 +10,16 @@ import {
 import { ApiError } from '@/lib/api/types';
 import { Text } from '@/components/ui/typography';
 import { Button } from '@/components/ui/button';
+import { getApiUrl } from '@/lib/utils';
+import { useAuthStore } from '@/store/auth-store';
 
 export function AdminBillingPanel() {
+  const token = useAuthStore((s) => s.accessToken);
   const [summary, setSummary] = useState<BillingSummaryDto | null>(null);
   const [events, setEvents] = useState<BillingEventRow[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [exporting, setExporting] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -56,26 +60,30 @@ export function AdminBillingPanel() {
     return <Text className="text-sm text-destructive">{error}</Text>;
   }
 
-  function onExportCsv() {
-    const header = ['id', 'type', 'amount', 'currency', 'createdAt', 'paymentId'];
-    const body = events.map((e) => [
-      e.id,
-      e.type,
-      e.amount ?? '',
-      e.currency ?? '',
-      e.createdAt,
-      e.paymentId ?? '',
-    ]);
-    const csv = [header, ...body]
-      .map((row) => row.map((v) => `"${String(v).replaceAll('"', '""')}"`).join(','))
-      .join('\n');
-    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `billing-events-${new Date().toISOString().slice(0, 10)}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
+  async function onExportCsv() {
+    if (!token) return;
+    setExporting(true);
+    setError(null);
+    try {
+      const res = await fetch(`${getApiUrl()}/admin/billing/events/export`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) {
+        const t = await res.text();
+        throw new Error(t || res.statusText);
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `billing-events-${new Date().toISOString().slice(0, 10)}.csv`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Не удалось выгрузить CSV');
+    } finally {
+      setExporting(false);
+    }
   }
 
   return (
@@ -125,8 +133,13 @@ export function AdminBillingPanel() {
         </ul>
       </div>
 
-      <Button type="button" variant="outline" className="h-8 text-xs" onClick={onExportCsv}>
-        Экспорт CSV
+      <Button
+        type="button"
+        variant="outline"
+        className="h-8 text-xs"
+        disabled={exporting}
+        onClick={() => void onExportCsv()}>
+        {exporting ? 'Выгрузка…' : 'Экспорт CSV (сервер)'}
       </Button>
     </div>
   );

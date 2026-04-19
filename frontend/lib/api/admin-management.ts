@@ -25,7 +25,7 @@ export async function fetchAdminUsers(q?: string): Promise<{ items: AdminUserRow
   return apiFetch(`/admin/users${sp.size ? `?${sp}` : ''}`);
 }
 
-export async function setAdminUserBlocked(id: number, blocked: boolean, reason?: string) {
+export async function setAdminUserBlocked(id: number, blocked: boolean, reason: string) {
   return apiFetch(`/admin/users/${id}/block`, {
     method: 'PATCH',
     body: { blocked, reason },
@@ -45,7 +45,7 @@ export async function fetchAdminOrganizations(q?: string): Promise<{ items: Admi
   return apiFetch(`/admin/organizations${sp.size ? `?${sp}` : ''}`);
 }
 
-export async function setAdminOrganizationBlocked(id: number, blocked: boolean, reason?: string) {
+export async function setAdminOrganizationBlocked(id: number, blocked: boolean, reason: string) {
   return apiFetch(`/admin/organizations/${id}/block`, {
     method: 'PATCH',
     body: { blocked, reason },

@@ -9,6 +9,7 @@ import {
   Query,
   UseGuards,
   Req,
+  ForbiddenException,
 } from '@nestjs/common';
 import { Game } from '@prisma/client';
 import { GameService } from './game.service';
@@ -29,12 +30,17 @@ export class GameController {
   constructor(private readonly gameService: GameService) {}
 
   /** Must be before :token — otherwise "user" is parsed as token. */
+  @UseGuards(JwtAuthGuard)
   @Get('user/:userId')
   async getGamesByUserId(
     @Param('userId', ParseIntPipe) userId: number,
     @Query('skip') skip?: string,
     @Query('take') take?: string,
+    @Req() req: Request & { user: RequestUser },
   ) {
+    if (req.user.id !== userId) {
+      throw new ForbiddenException('Можно запрашивать только свои партии');
+    }
     const skipNum = skip ? parseInt(skip, 10) : 0;
     const takeNum = take ? parseInt(take, 10) : 10;
     return this.gameService.getPaginatedByUserId(userId, skipNum, takeNum);
@@ -108,7 +114,10 @@ export class GameController {
 
   @UseGuards(JwtAuthGuard)
   @Delete(':id')
-  async deleteGameById(@Param('id', ParseIntPipe) id: number): Promise<Game> {
-    return this.gameService.deleteById(id);
+  async deleteGameById(
+    @Param('id', ParseIntPipe) id: number,
+    @Req() req: Request & { user: RequestUser },
+  ): Promise<Game> {
+    return this.gameService.deleteById(id, req.user.id);
   }
 }

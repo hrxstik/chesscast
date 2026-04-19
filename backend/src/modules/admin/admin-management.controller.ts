@@ -3,6 +3,7 @@ import { JwtAuthGuard } from 'src/guards/jwt-auth.guard';
 import { SuperAdminGuard } from 'src/guards/super-admin.guard';
 import { PlatformRole } from '@prisma/client';
 import { AdminManagementService } from './admin-management.service';
+import { SetBlockedDto } from 'src/dtos/admin/set-blocked.dto';
 
 @Controller('admin')
 @UseGuards(JwtAuthGuard, SuperAdminGuard)
@@ -21,12 +22,8 @@ export class AdminManagementController {
   }
 
   @Patch('users/:id/block')
-  async blockUser(
-    @Param('id', ParseIntPipe) id: number,
-    @Body('blocked') blocked: boolean,
-    @Body('reason') reason?: string,
-  ) {
-    return this.admin.setUserBlocked(id, !!blocked, reason ?? null);
+  async blockUser(@Param('id', ParseIntPipe) id: number, @Body() body: SetBlockedDto) {
+    return this.admin.setUserBlocked(id, body.blocked, body.reason);
   }
 
   @Patch('users/:id/role')
@@ -49,11 +46,7 @@ export class AdminManagementController {
   }
 
   @Patch('organizations/:id/block')
-  async blockOrganization(
-    @Param('id', ParseIntPipe) id: number,
-    @Body('blocked') blocked: boolean,
-    @Body('reason') reason?: string,
-  ) {
-    return this.admin.setOrganizationBlocked(id, !!blocked, reason ?? null);
+  async blockOrganization(@Param('id', ParseIntPipe) id: number, @Body() body: SetBlockedDto) {
+    return this.admin.setOrganizationBlocked(id, body.blocked, body.reason);
   }
 }

@@ -18,6 +18,7 @@ type OrganizationSearchDoc = {
   blocked: boolean;
   blockedReason: string | null;
   inviteCode: string;
+  joinPolicy?: string;
 };
 
 const USERS_INDEX = 'users';
@@ -70,6 +71,7 @@ export class AppElasticsearchService {
               blocked: { type: 'boolean' },
               blockedReason: { type: 'text' },
               inviteCode: { type: 'keyword' },
+              joinPolicy: { type: 'keyword' },
             },
           },
         });
@@ -184,6 +186,7 @@ export class AppElasticsearchService {
           blocked: true,
           blockedReason: true,
           inviteCode: true,
+          joinPolicy: true,
         },
       }),
     ]);
@@ -206,6 +209,7 @@ export class AppElasticsearchService {
         blocked: o.blocked,
         blockedReason: o.blockedReason,
         inviteCode: o.inviteCode,
+        joinPolicy: o.joinPolicy,
       });
     }
     return { users: users.length, organizations: organizations.length };

@@ -5,6 +5,7 @@ export type CurrentSubscriptionDto = {
   status: 'ACTIVE' | 'EXPIRED' | 'CANCELED' | 'PAUSED';
   startAt: string;
   endAt: string;
+  /** Автопродление подписки (ЮKassa). */
   autoRenew: boolean;
   plan: {
     id: number;

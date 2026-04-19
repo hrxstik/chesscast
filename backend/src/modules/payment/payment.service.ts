@@ -16,6 +16,12 @@ import { YookassaApiService } from './yookassa-api.service';
 
 const SUBSCRIPTION_PERIOD_DAYS = 30;
 
+function addDays(d: Date, days: number): Date {
+  const x = new Date(d);
+  x.setDate(x.getDate() + days);
+  return x;
+}
+
 @Injectable()
 export class PaymentService {
   private readonly logger = new Logger(PaymentService.name);
@@ -25,12 +31,18 @@ export class PaymentService {
     private readonly yookassa: YookassaApiService,
   ) {}
 
-  async createYookassaCheckout(userId: number, planId: number) {
+  async createYookassaCheckout(
+    userId: number,
+    planId: number,
+    autoRenew?: boolean,
+  ) {
     if (!this.yookassa.isConfigured()) {
       throw new ServiceUnavailableException(
         'Платежи ЮKassa не настроены (переменные YOOKASSA_SHOP_ID / YOOKASSA_SECRET_KEY).',
       );
     }
+
+    const wantAutoRenew = autoRenew !== false;
 
     const plan = await this.prisma.plan.findFirst({
       where: { id: planId, isActive: true },
@@ -49,7 +61,7 @@ export class PaymentService {
         userId,
         status: SubscriptionStatus.ACTIVE,
         endAt: { gt: now },
-        plan: { isActive: true, code: { not: 'FREE' } },
+        plan: { code: { not: 'FREE' } },
       },
       select: { id: true },
     });
@@ -78,7 +90,7 @@ export class PaymentService {
         status: SubscriptionStatus.PAUSED,
         startAt: now,
         endAt: endPlaceholder,
-        autoRenew: false,
+        autoRenew: wantAutoRenew,
       },
     });
 
@@ -91,7 +103,10 @@ export class PaymentService {
         currency: plan.currency,
         status: PaymentStatus.PENDING,
         purpose: PaymentPurpose.SUBSCRIPTION_PERSONAL,
-        metadata: { source: 'yookassa_checkout' } as Prisma.InputJsonValue,
+        metadata: {
+          source: 'yookassa_checkout',
+          autoRenew: wantAutoRenew,
+        } as Prisma.InputJsonValue,
       },
     });
 
@@ -108,10 +123,12 @@ export class PaymentService {
         currency: plan.currency,
         returnUrl,
         description,
+        savePaymentMethod: wantAutoRenew,
         metadata: {
           chesscastPaymentId: String(payment.id),
           chesscastSubscriptionId: String(subscription.id),
           chesscastUserId: String(userId),
+          chesscastAutoRenew: wantAutoRenew ? '1' : '0',
         },
       });
 
@@ -125,7 +142,7 @@ export class PaymentService {
         data: { providerPaymentId: yk.id },
       });
 
-      return { confirmationUrl: url, paymentId: payment.id };
+      return { confirmationUrl: url, paymentId: payment.id, autoRenew: wantAutoRenew };
     } catch (e) {
       await this.prisma.payment.delete({ where: { id: payment.id } }).catch(() => undefined);
       await this.prisma.subscription
@@ -139,6 +156,105 @@ export class PaymentService {
     }
   }
 
+  /** Вызывается воркером очереди (Redis): создаёт оффлайн-платежи за 1–3 суток до конца периода. */
+  async processDueRenewals(): Promise<{ attempted: number; errors: string[] }> {
+    if (!this.yookassa.isConfigured()) {
+      return { attempted: 0, errors: [] };
+    }
+    const now = new Date();
+    const horizon = addDays(now, 3);
+    const errors: string[] = [];
+    const subs = await this.prisma.subscription.findMany({
+      where: {
+        status: SubscriptionStatus.ACTIVE,
+        autoRenew: true,
+        endAt: { gt: now, lte: horizon },
+        plan: { isActive: true },
+        user: { blocked: false, yookassaPaymentMethodId: { not: null } },
+      },
+      include: { plan: true, user: true },
+    });
+
+    let attempted = 0;
+    for (const sub of subs) {
+      const zero = new Prisma.Decimal(0);
+      if (sub.plan.priceMonthly.lte(zero)) continue;
+
+      const pend = await this.prisma.payment.findFirst({
+        where: {
+          subscriptionId: sub.id,
+          status: PaymentStatus.PENDING,
+          createdAt: { gte: addDays(now, -3) },
+        },
+      });
+      const pendMeta = pend?.metadata as { renewal?: boolean } | null;
+      if (pend && pendMeta?.renewal) continue;
+
+      try {
+        await this.chargeSubscriptionRenewal(sub.id);
+        attempted += 1;
+      } catch (e) {
+        const m = e instanceof Error ? e.message : String(e);
+        errors.push(`sub ${sub.id}: ${m}`);
+        this.logger.warn(`Renewal charge failed for subscription ${sub.id}: ${m}`);
+      }
+    }
+    return { attempted, errors };
+  }
+
+  private async chargeSubscriptionRenewal(subscriptionId: number) {
+    const sub = await this.prisma.subscription.findUnique({
+      where: { id: subscriptionId },
+      include: { plan: true, user: true },
+    });
+    if (
+      !sub ||
+      sub.status !== SubscriptionStatus.ACTIVE ||
+      !sub.autoRenew ||
+      !sub.user.yookassaPaymentMethodId
+    ) {
+      return;
+    }
+    if (!sub.plan.isActive || sub.plan.priceMonthly.lte(new Prisma.Decimal(0))) {
+      return;
+    }
+
+    const payment = await this.prisma.payment.create({
+      data: {
+        userId: sub.userId,
+        subscriptionId: sub.id,
+        planId: sub.planId,
+        amount: sub.plan.priceMonthly,
+        currency: sub.plan.currency,
+        status: PaymentStatus.PENDING,
+        purpose: PaymentPurpose.SUBSCRIPTION_PERSONAL,
+        metadata: { renewal: true } as Prisma.InputJsonValue,
+      },
+    });
+
+    const yk = await this.yookassa.createPaymentWithSavedMethod({
+      amountValue: sub.plan.priceMonthly.toFixed(2),
+      currency: sub.plan.currency,
+      paymentMethodId: sub.user.yookassaPaymentMethodId,
+      description: `ChessCast: продление «${sub.plan.title}»`,
+      metadata: {
+        chesscastRenewal: '1',
+        chesscastPaymentId: String(payment.id),
+        chesscastSubscriptionId: String(sub.id),
+        chesscastUserId: String(sub.userId),
+      },
+    });
+
+    await this.prisma.payment.update({
+      where: { id: payment.id },
+      data: { providerPaymentId: yk.id },
+    });
+
+    if (yk.status === 'succeeded' || yk.paid) {
+      await this.finalizeRenewalPayment(yk.id);
+    }
+  }
+
   async handleYookassaWebhook(body: unknown): Promise<void> {
     if (!this.yookassa.isConfigured()) {
       this.logger.warn('Webhook ignored: YooKassa not configured');
@@ -147,7 +263,6 @@ export class PaymentService {
 
     const b = body as {
       event?: string;
-      type?: string;
       object?: { id?: string; status?: string; metadata?: Record<string, string> };
     };
     const event = b.event;
@@ -158,7 +273,12 @@ export class PaymentService {
     }
 
     if (event === 'payment.succeeded') {
-      await this.applyPaymentSucceeded(ykId);
+      const remote = await this.yookassa.getPayment(ykId);
+      if (remote.metadata?.chesscastRenewal === '1') {
+        await this.finalizeRenewalPayment(ykId);
+        return;
+      }
+      await this.applyFirstPaymentSucceeded(remote);
       return;
     }
     if (event === 'payment.canceled') {
@@ -166,8 +286,8 @@ export class PaymentService {
     }
   }
 
-  private async applyPaymentSucceeded(ykPaymentId: string) {
-    const remote = await this.yookassa.getPayment(ykPaymentId);
+  private async applyFirstPaymentSucceeded(remote: import('./yookassa-api.service').YkPaymentResource) {
+    const ykPaymentId = remote.id;
     if (remote.status !== 'succeeded' && !remote.paid) {
       this.logger.warn(`payment.succeeded webhook but remote status=${remote.status}`);
       return;
@@ -181,6 +301,9 @@ export class PaymentService {
 
     const paymentId = parseInt(pid, 10);
     if (Number.isNaN(paymentId)) return;
+
+    const autoRenewFlag = remote.metadata?.chesscastAutoRenew === '1';
+    const pmId = remote.payment_method?.id;
 
     await this.prisma.$transaction(async (tx) => {
       const payment = await tx.payment.findUnique({
@@ -201,8 +324,7 @@ export class PaymentService {
       }
 
       const now = new Date();
-      const endAt = new Date(now);
-      endAt.setDate(endAt.getDate() + SUBSCRIPTION_PERIOD_DAYS);
+      const endAt = addDays(now, SUBSCRIPTION_PERIOD_DAYS);
 
       await tx.subscription.updateMany({
         where: {
@@ -219,7 +341,7 @@ export class PaymentService {
           status: SubscriptionStatus.ACTIVE,
           startAt: now,
           endAt,
-          autoRenew: false,
+          autoRenew: autoRenewFlag,
         },
       });
 
@@ -231,6 +353,13 @@ export class PaymentService {
         },
       });
 
+      if (autoRenewFlag && pmId) {
+        await tx.user.update({
+          where: { id: payment.userId },
+          data: { yookassaPaymentMethodId: pmId },
+        });
+      }
+
       await tx.billingEvent.create({
         data: {
           type: BillingEventType.INVOICE_PAID,
@@ -238,6 +367,52 @@ export class PaymentService {
           currency: payment.currency,
           paymentId: payment.id,
           metadata: { source: 'yookassa_webhook' } as Prisma.InputJsonValue,
+        },
+      });
+    });
+  }
+
+  private async finalizeRenewalPayment(ykPaymentId: string) {
+    const remote = await this.yookassa.getPayment(ykPaymentId);
+    if (remote.status !== 'succeeded' && !remote.paid) {
+      return;
+    }
+    const pid = remote.metadata?.chesscastPaymentId;
+    if (!pid) return;
+    const paymentId = parseInt(pid, 10);
+    if (Number.isNaN(paymentId)) return;
+
+    await this.prisma.$transaction(async (tx) => {
+      const payment = await tx.payment.findUnique({
+        where: { id: paymentId },
+        include: { subscription: true },
+      });
+      if (!payment || payment.status === PaymentStatus.SUCCEEDED) return;
+      if (payment.providerPaymentId && payment.providerPaymentId !== ykPaymentId) return;
+
+      const sub = payment.subscription;
+      if (sub.status !== SubscriptionStatus.ACTIVE) return;
+
+      const base = sub.endAt > new Date() ? sub.endAt : new Date();
+      const newEnd = addDays(base, SUBSCRIPTION_PERIOD_DAYS);
+
+      await tx.subscription.update({
+        where: { id: sub.id },
+        data: { endAt: newEnd },
+      });
+
+      await tx.payment.update({
+        where: { id: payment.id },
+        data: { status: PaymentStatus.SUCCEEDED, providerPaymentId: ykPaymentId },
+      });
+
+      await tx.billingEvent.create({
+        data: {
+          type: BillingEventType.INVOICE_PAID,
+          amount: payment.amount,
+          currency: payment.currency,
+          paymentId: payment.id,
+          metadata: { source: 'yookassa_renewal' } as Prisma.InputJsonValue,
         },
       });
     });
@@ -252,15 +427,24 @@ export class PaymentService {
       return;
     }
 
-    await this.prisma.$transaction([
-      this.prisma.payment.update({
+    const isRenewal = !!(payment.metadata as { renewal?: boolean } | null)?.renewal;
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.payment.update({
         where: { id: payment.id },
         data: { status: PaymentStatus.CANCELLED },
-      }),
-      this.prisma.subscription.update({
-        where: { id: payment.subscriptionId },
-        data: { status: SubscriptionStatus.CANCELED },
-      }),
-    ]);
+      });
+      if (!isRenewal) {
+        await tx.subscription.update({
+          where: { id: payment.subscriptionId },
+          data: { status: SubscriptionStatus.CANCELED },
+        });
+      } else if (payment.subscription.autoRenew) {
+        await tx.subscription.update({
+          where: { id: payment.subscriptionId },
+          data: { autoRenew: false },
+        });
+      }
+    });
   }
 }

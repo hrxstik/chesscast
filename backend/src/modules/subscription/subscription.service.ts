@@ -13,7 +13,6 @@ export class SubscriptionService {
         userId,
         status: SubscriptionStatus.ACTIVE,
         endAt: { gt: now },
-        plan: { isActive: true },
       },
       include: { plan: true },
       orderBy: { endAt: 'desc' },

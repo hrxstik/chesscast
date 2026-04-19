@@ -1,6 +1,7 @@
-import { Controller, Get } from '@nestjs/common';
+import { Controller, Get, Post, UseGuards } from '@nestjs/common';
+import { InjectQueue } from '@nestjs/bullmq';
+import { Queue } from 'bullmq';
 import { AppElasticsearchService } from './elasticsearch.service';
-import { Post, UseGuards } from '@nestjs/common';
 import { JwtAuthGuard } from 'src/guards/jwt-auth.guard';
 import { SuperAdminGuard } from 'src/guards/super-admin.guard';
 
@@ -8,6 +9,7 @@ import { SuperAdminGuard } from 'src/guards/super-admin.guard';
 export class ElasticsearchController {
   constructor(
     private readonly appElasticsearchService: AppElasticsearchService,
+    @InjectQueue('search') private readonly searchQueue: Queue,
   ) {}
 
   @Get('health')
@@ -19,7 +21,8 @@ export class ElasticsearchController {
   @Post('reindex')
   @UseGuards(JwtAuthGuard, SuperAdminGuard)
   async reindex() {
-    return this.appElasticsearchService.reindexAll();
+    await this.searchQueue.add('reindex-all', {}, { removeOnComplete: 50 });
+    return { ok: true, queued: true };
   }
 }
 

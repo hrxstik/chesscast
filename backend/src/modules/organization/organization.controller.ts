@@ -14,9 +14,12 @@ import {
   UseInterceptors,
 } from '@nestjs/common';
 import { OrganizationService } from './organization.service';
-import { Organization } from '@prisma/client';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { JwtAuthGuard } from 'src/guards/jwt-auth.guard';
+import {
+  OptionalJwtAuthGuard,
+  type AuthRequestUser,
+} from 'src/guards/optional-jwt-auth.guard';
 import { UpdateOrganizationInfoDto } from 'src/dtos/update/update-organization-info.dto';
 import { UploadService } from '../upload/upload.service';
 import { CreateOrganizationDto } from 'src/dtos/create/create-organization.dto';
@@ -44,41 +47,6 @@ export class OrganizationController {
     );
   }
 
-  @Get(':id')
-  async getOrganizationById(
-    @Param('id', ParseIntPipe) id: number,
-  ): Promise<Organization> {
-    return this.organizationService.findById(id);
-  }
-
-  @Get(':id/status')
-  @UseGuards(JwtAuthGuard)
-  async getOrganizationStatus(
-    @Param('id', ParseIntPipe) id: number,
-    @Req() req: Request & { user: { id: number } },
-  ) {
-    await this.organizationService.assertUserHasAccess(req.user.id, id);
-    const isActive = await this.organizationService.isOrganizationActive(id);
-    return { organizationId: id, isActive };
-  }
-
-  @UseGuards(JwtAuthGuard)
-  @UseInterceptors(FileInterceptor('image'))
-  @Patch(':id')
-  async updateOrganizationById(
-    @Param('id', ParseIntPipe) id: number,
-    @Body() updateOrganizaitonDto: Partial<UpdateOrganizationInfoDto>,
-    @Req() req: Request & { user: { id: number } },
-    @UploadedFile() image?: Express.Multer.File,
-  ): Promise<Organization> {
-    await this.organizationService.assertUserIsAdmin(req.user.id, id);
-    await this.organizationService.assertOrganizationActiveForActions(id);
-    if (image) {
-      await this.uploadService.saveFile(image, 'organizations-avatars');
-    }
-    return this.organizationService.updateById(id, updateOrganizaitonDto);
-  }
-
   @Post('create')
   @UseGuards(JwtAuthGuard)
   async createOrganization(
@@ -101,6 +69,43 @@ export class OrganizationController {
     @Req() req: Request & { user: { id: number } },
   ) {
     return this.organizationService.joinByInviteCode(req.user.id, inviteCode);
+  }
+
+  @Post('join-open/:id')
+  @UseGuards(JwtAuthGuard)
+  async joinOpen(
+    @Param('id', ParseIntPipe) id: number,
+    @Req() req: Request & { user: { id: number } },
+  ) {
+    return this.organizationService.joinOpenOrganization(req.user.id, id);
+  }
+
+  @Get(':id/status')
+  @UseGuards(JwtAuthGuard)
+  async getOrganizationStatus(
+    @Param('id', ParseIntPipe) id: number,
+    @Req() req: Request & { user: { id: number } },
+  ) {
+    await this.organizationService.assertUserHasAccess(req.user.id, id);
+    const isActive = await this.organizationService.isOrganizationActive(id);
+    return { organizationId: id, isActive };
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @UseInterceptors(FileInterceptor('image'))
+  @Patch(':id')
+  async updateOrganizationById(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() updateOrganizaitonDto: Partial<UpdateOrganizationInfoDto>,
+    @Req() req: Request & { user: { id: number } },
+    @UploadedFile() image?: Express.Multer.File,
+  ) {
+    await this.organizationService.assertUserIsAdmin(req.user.id, id);
+    await this.organizationService.assertOrganizationActiveForActions(id);
+    if (image) {
+      await this.uploadService.saveFile(image, 'organizations-avatars');
+    }
+    return this.organizationService.updateById(id, updateOrganizaitonDto);
   }
 
   @Get(':id/members')
@@ -169,5 +174,15 @@ export class OrganizationController {
   ) {
     await this.organizationService.assertUserIsAdmin(req.user.id, id);
     return this.organizationService.deleteById(id);
+  }
+
+  /** Публичная карточка / полные данные для участников (без утечки кода для посторонних при INVITE_ONLY). */
+  @UseGuards(OptionalJwtAuthGuard)
+  @Get(':id')
+  async getOrganizationById(
+    @Param('id', ParseIntPipe) id: number,
+    @Req() req: Request & { user?: AuthRequestUser },
+  ) {
+    return this.organizationService.getOrganizationVisible(id, req.user?.id);
   }
 }

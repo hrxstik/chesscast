@@ -14,7 +14,11 @@ export class PaymentController {
     @Req() req: Request & { user: { id: number } },
     @Body() body: YookassaCheckoutDto,
   ) {
-    return this.paymentService.createYookassaCheckout(req.user.id, body.planId);
+    return this.paymentService.createYookassaCheckout(
+      req.user.id,
+      body.planId,
+      body.autoRenew,
+    );
   }
 
   /** Уведомления ЮKassa (без JWT); достоверность проверяется повторным GET платежа в API. */
