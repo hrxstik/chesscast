@@ -16,13 +16,16 @@ export default async function PricingPage() {
         <div className="w-full text-center">
           <H1 className="text-balance">Тарифы ChessCast</H1>
           <Lead className="mx-auto mt-4 max-w-2xl">
-            Личные планы и корпоративные лимиты для клубов. Оплата через ЮKassa — на следующем этапе.
+            Личные планы и корпоративные лимиты для клубов. Оплата платных тарифов — через ЮKassa (тестовый магазин и
+            тестовые карты в личном кабинете ЮKassa).
           </Lead>
         </div>
         <div className="mt-12 grid gap-8 laptop:grid-cols-2">
           {plans.map((plan) => (
             <PlanCard
-              key={plan.title}
+              key={plan.id}
+              planId={plan.id}
+              planCode={plan.code}
               title={plan.title}
               price={plan.price}
               description={plan.description}
@@ -35,14 +38,15 @@ export default async function PricingPage() {
       <Section className="pb-20">
         <H2 className="text-center">Частые вопросы</H2>
         <Text className="mx-auto mt-3 max-w-xl text-center text-muted-foreground">
-          Коротко о том, как будут работать подписки после подключения биллинга.
+          Коротко о подписках и оплате через ЮKassa.
         </Text>
         <div className="mx-auto mt-10 grid max-w-3xl gap-4 md:grid-cols-2">
           <Card className="border-border/80">
             <CardContent className="pt-6">
               <Text className="font-semibold">Можно ли сменить тариф?</Text>
               <Text className="mt-2 text-sm text-muted-foreground">
-                Да — апгрейд и даунгрейд через личный кабинет после интеграции ЮKassa.
+                Да — оформление платного тарифа со страницы тарифов; смена тарифа при необходимости дорабатывается в
+                личном кабинете.
               </Text>
             </CardContent>
           </Card>

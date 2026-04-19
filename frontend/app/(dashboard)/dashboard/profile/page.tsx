@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { Suspense, useEffect, useState } from 'react';
 import Image from 'next/image';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { H2, Text } from '@/components/ui/typography';
@@ -16,12 +16,22 @@ import {
 } from '@/lib/api/user';
 import { fetchMyCurrentSubscription, type CurrentSubscriptionDto } from '@/lib/api/subscription';
 import { ApiError } from '@/lib/api/types';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
+import toast from 'react-hot-toast';
 import { useAuthStore } from '@/store/auth-store';
 import { useUserStore } from '@/store/user';
 
 export default function DashboardProfilePage() {
+  return (
+    <Suspense fallback={<div className="p-6 text-muted-foreground">Загрузка…</div>}>
+      <DashboardProfileInner />
+    </Suspense>
+  );
+}
+
+function DashboardProfileInner() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const clearAuth = useAuthStore((s) => s.clearAuth);
   const clearUser = useUserStore((s) => s.clearUser);
   const [me, setMe] = useState<MeResponse | null>(null);
@@ -45,6 +55,20 @@ export default function DashboardProfilePage() {
       }
     })();
   }, []);
+
+  useEffect(() => {
+    if (searchParams.get('payment') !== 'success') return;
+    toast.success('Возврат с оплаты. Обновляем данные подписки…');
+    void (async () => {
+      try {
+        const sub = await fetchMyCurrentSubscription();
+        setSubscription(sub);
+      } catch {
+        /* ignore */
+      }
+    })();
+    router.replace('/dashboard/profile', { scroll: false });
+  }, [searchParams, router]);
 
   async function onSave() {
     if (!me) return;
@@ -252,3 +276,4 @@ export default function DashboardProfilePage() {
     </div>
   );
 }
+

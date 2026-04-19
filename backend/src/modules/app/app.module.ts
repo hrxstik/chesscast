@@ -14,6 +14,7 @@ import { JwtModule } from '@nestjs/jwt';
 import { ElasticsearchModule } from '../elasticsearch/elasticsearch.module';
 import { AdminModule } from '../admin/admin.module';
 import { SubscriptionModule } from '../subscription/subscription.module';
+import { PaymentModule } from '../payment/payment.module';
 
 @Module({
   imports: [
@@ -49,6 +50,7 @@ import { SubscriptionModule } from '../subscription/subscription.module';
     ElasticsearchModule,
     AdminModule,
     SubscriptionModule,
+    PaymentModule,
     JwtModule.register({
       global: true,
       secret: process.env.JWT_SECRET_KEY,

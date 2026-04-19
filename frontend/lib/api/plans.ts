@@ -8,6 +8,8 @@ function pricingUrl(): string {
 }
 
 export type PlanDto = {
+  id: number;
+  code: string;
   title: string;
   price: string;
   description: string;

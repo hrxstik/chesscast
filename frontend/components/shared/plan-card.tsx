@@ -1,12 +1,13 @@
-import Link from 'next/link';
 import React from 'react';
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
 import { Check } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { CheckoutPlanButton } from '@/components/pricing/checkout-plan-button';
 
 interface Props {
   className?: string;
+  planId: number;
+  planCode: string;
   title: string;
   price: string;
   description: string;
@@ -14,6 +15,8 @@ interface Props {
 }
 
 export const PlanCard: React.FC<Props> = ({
+  planId,
+  planCode,
   title,
   price,
   description,
@@ -38,11 +41,11 @@ export const PlanCard: React.FC<Props> = ({
         </ul>
       </CardContent>
       <CardFooter>
-        <Button asChild className="w-full">
-          <Link href="/login" aria-label={`Оформить ${title}`}>
-            Оформить
-          </Link>
-        </Button>
+        <CheckoutPlanButton
+          planId={planId}
+          planCode={planCode}
+          aria-label={planCode === 'FREE' ? `Регистрация — ${title}` : `Оформить ${title}`}
+        />
       </CardFooter>
     </Card>
   );
