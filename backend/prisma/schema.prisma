@@ -232,6 +232,10 @@ model Subscription {
   startAt    DateTime
   endAt      DateTime
   autoRenew  Boolean            @default(false)
+  /// Подряд неуспешных автопродлений (payment.canceled по renewal); при успехе сбрасывается в 0.
+  renewalFailureCount Int       @default(0)
+  /// После неуспеха: не создавать новый renewal-платёж до этой даты (пауза между попытками).
+  renewalNextRetryAt DateTime?
   canceledAt DateTime?
   createdAt  DateTime           @default(now())
   updatedAt  DateTime           @updatedAt

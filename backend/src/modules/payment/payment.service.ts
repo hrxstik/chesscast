@@ -15,10 +15,20 @@ import { PrismaService } from '../prisma/prisma.service';
 import { YookassaApiService } from './yookassa-api.service';
 
 const SUBSCRIPTION_PERIOD_DAYS = 30;
+/** После 5 неуспешных renewal (ЮKassa cancel) автопродление отключается. */
+const RENEWAL_MAX_FAILURES = 5;
+/** Пауза между попытками после отмены платежа (часы). */
+const RENEWAL_RETRY_GAP_HOURS = 24;
 
 function addDays(d: Date, days: number): Date {
   const x = new Date(d);
   x.setDate(x.getDate() + days);
+  return x;
+}
+
+function addHours(d: Date, hours: number): Date {
+  const x = new Date(d);
+  x.setTime(x.getTime() + hours * 60 * 60 * 1000);
   return x;
 }
 
@@ -142,9 +152,15 @@ export class PaymentService {
         data: { providerPaymentId: yk.id },
       });
 
-      return { confirmationUrl: url, paymentId: payment.id, autoRenew: wantAutoRenew };
+      return {
+        confirmationUrl: url,
+        paymentId: payment.id,
+        autoRenew: wantAutoRenew,
+      };
     } catch (e) {
-      await this.prisma.payment.delete({ where: { id: payment.id } }).catch(() => undefined);
+      await this.prisma.payment
+        .delete({ where: { id: payment.id } })
+        .catch(() => undefined);
       await this.prisma.subscription
         .delete({ where: { id: subscription.id } })
         .catch(() => undefined);
@@ -168,9 +184,23 @@ export class PaymentService {
       where: {
         status: SubscriptionStatus.ACTIVE,
         autoRenew: true,
-        endAt: { gt: now, lte: horizon },
+        renewalFailureCount: { lt: RENEWAL_MAX_FAILURES },
         plan: { isActive: true },
         user: { blocked: false, yookassaPaymentMethodId: { not: null } },
+        OR: [
+          {
+            endAt: { gt: now, lte: horizon },
+            OR: [
+              { renewalNextRetryAt: null },
+              { renewalNextRetryAt: { lte: now } },
+            ],
+          },
+          {
+            renewalFailureCount: { gt: 0 },
+            renewalNextRetryAt: { lte: now },
+            endAt: { lte: now, gt: addDays(now, -30) },
+          },
+        ],
       },
       include: { plan: true, user: true },
     });
@@ -196,7 +226,9 @@ export class PaymentService {
       } catch (e) {
         const m = e instanceof Error ? e.message : String(e);
         errors.push(`sub ${sub.id}: ${m}`);
-        this.logger.warn(`Renewal charge failed for subscription ${sub.id}: ${m}`);
+        this.logger.warn(
+          `Renewal charge failed for subscription ${sub.id}: ${m}`,
+        );
       }
     }
     return { attempted, errors };
@@ -215,7 +247,10 @@ export class PaymentService {
     ) {
       return;
     }
-    if (!sub.plan.isActive || sub.plan.priceMonthly.lte(new Prisma.Decimal(0))) {
+    if (
+      !sub.plan.isActive ||
+      sub.plan.priceMonthly.lte(new Prisma.Decimal(0))
+    ) {
       return;
     }
 
@@ -263,7 +298,11 @@ export class PaymentService {
 
     const b = body as {
       event?: string;
-      object?: { id?: string; status?: string; metadata?: Record<string, string> };
+      object?: {
+        id?: string;
+        status?: string;
+        metadata?: Record<string, string>;
+      };
     };
     const event = b.event;
     const ykId = b.object?.id;
@@ -286,16 +325,22 @@ export class PaymentService {
     }
   }
 
-  private async applyFirstPaymentSucceeded(remote: import('./yookassa-api.service').YkPaymentResource) {
+  private async applyFirstPaymentSucceeded(
+    remote: import('./yookassa-api.service').YkPaymentResource,
+  ) {
     const ykPaymentId = remote.id;
     if (remote.status !== 'succeeded' && !remote.paid) {
-      this.logger.warn(`payment.succeeded webhook but remote status=${remote.status}`);
+      this.logger.warn(
+        `payment.succeeded webhook but remote status=${remote.status}`,
+      );
       return;
     }
 
     const pid = remote.metadata?.chesscastPaymentId;
     if (!pid) {
-      this.logger.warn('YooKassa payment has no chesscastPaymentId in metadata');
+      this.logger.warn(
+        'YooKassa payment has no chesscastPaymentId in metadata',
+      );
       return;
     }
 
@@ -313,7 +358,10 @@ export class PaymentService {
       if (!payment || payment.status === PaymentStatus.SUCCEEDED) {
         return;
       }
-      if (payment.providerPaymentId && payment.providerPaymentId !== ykPaymentId) {
+      if (
+        payment.providerPaymentId &&
+        payment.providerPaymentId !== ykPaymentId
+      ) {
         this.logger.warn(`Payment ${paymentId} provider id mismatch`);
         return;
       }
@@ -388,22 +436,34 @@ export class PaymentService {
         include: { subscription: true },
       });
       if (!payment || payment.status === PaymentStatus.SUCCEEDED) return;
-      if (payment.providerPaymentId && payment.providerPaymentId !== ykPaymentId) return;
+      if (
+        payment.providerPaymentId &&
+        payment.providerPaymentId !== ykPaymentId
+      )
+        return;
 
       const sub = payment.subscription;
       if (sub.status !== SubscriptionStatus.ACTIVE) return;
 
+      // Продление от текущего endAt (а не от даты списания): ранний charge не съедает дни периода.
       const base = sub.endAt > new Date() ? sub.endAt : new Date();
       const newEnd = addDays(base, SUBSCRIPTION_PERIOD_DAYS);
 
       await tx.subscription.update({
         where: { id: sub.id },
-        data: { endAt: newEnd },
+        data: {
+          endAt: newEnd,
+          renewalFailureCount: 0,
+          renewalNextRetryAt: null,
+        },
       });
 
       await tx.payment.update({
         where: { id: payment.id },
-        data: { status: PaymentStatus.SUCCEEDED, providerPaymentId: ykPaymentId },
+        data: {
+          status: PaymentStatus.SUCCEEDED,
+          providerPaymentId: ykPaymentId,
+        },
       });
 
       await tx.billingEvent.create({
@@ -427,7 +487,8 @@ export class PaymentService {
       return;
     }
 
-    const isRenewal = !!(payment.metadata as { renewal?: boolean } | null)?.renewal;
+    const isRenewal = !!(payment.metadata as { renewal?: boolean } | null)
+      ?.renewal;
 
     await this.prisma.$transaction(async (tx) => {
       await tx.payment.update({
@@ -439,10 +500,19 @@ export class PaymentService {
           where: { id: payment.subscriptionId },
           data: { status: SubscriptionStatus.CANCELED },
         });
-      } else if (payment.subscription.autoRenew) {
+      } else {
+        const s = payment.subscription;
+        const newFailures = s.renewalFailureCount + 1;
+        const giveUp = newFailures >= RENEWAL_MAX_FAILURES;
         await tx.subscription.update({
           where: { id: payment.subscriptionId },
-          data: { autoRenew: false },
+          data: {
+            renewalFailureCount: newFailures,
+            autoRenew: giveUp ? false : s.autoRenew,
+            renewalNextRetryAt: giveUp
+              ? null
+              : addHours(new Date(), RENEWAL_RETRY_GAP_HOURS),
+          },
         });
       }
     });
