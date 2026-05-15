@@ -18,7 +18,6 @@ export type ChessStreamRefs = {
   consumerCreatingRef: RefObject<boolean>;
   boardStateHistoryRef: RefObject<string[]>;
   boardStateStableCountRef: RefObject<number>;
-  a1SettingRef: RefObject<boolean>;
   gameStartedRef: RefObject<boolean>;
   viewerRef: RefObject<boolean>;
 };

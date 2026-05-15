@@ -820,11 +820,9 @@ def map_chessboard(image: np.ndarray,
         # После вызова debug_image содержит все нарисованные рамки из _detect_board_corners_resnet
         
         if board_corners is None:
-            # ResNet не смог определить углы - требуем ручную калибровку
             result['error'] = (
-                "Не удалось автоматически определить границы доски через модель ResNet. "
-                "Пожалуйста, используйте ручную калибровку границ доски. "
-                "Вы можете вызвать map_chessboard_manual с указанными углами."
+                'Не удалось автоматически определить границы доски. '
+                'Проверьте ракурс камеры и освещение.'
             )
             return result
         
@@ -939,92 +937,6 @@ def map_chessboard(image: np.ndarray,
         return result
 
 
-def map_chessboard_manual(image: np.ndarray,
-                          game_token: str,
-                          board_corners: np.ndarray,
-                          output_size: Tuple[int, int] = OUTPUT_IMAGE_SIZE,
-                          mappings_dir: Path = None) -> Dict:
-    """
-    Маппинг шахматной доски при ручной калибровке по заданным углам.
-    
-    Используется, когда пользователь на фронте расставил полигон по краям доски.
-    Здесь мы:
-    - применяем перспективное преобразование по этим углам,
-    - строим равномерную сетку 8x8 на выровненном изображении,
-    - сохраняем результат в mapping.json.
-    """
-    if mappings_dir is None:
-        mappings_dir = Path('./chessboard_mappings')
-    mappings_dir.mkdir(exist_ok=True)
-    
-    result = {
-        'success': False,
-        'game_token': game_token,
-        'timestamp': datetime.now().isoformat(),
-        'error': None,
-        'is_empty': None,
-        'empty_confidence': None,
-        'board_corners': None,
-        'square_corners': None,
-        'perspective_matrix': None,
-        'warped_image_shape': None
-    }
-    
-    try:
-        board_corners = np.asarray(board_corners, dtype=np.float32).reshape(4, 2)
-        result['board_corners'] = board_corners.tolist()
-        
-        warped_image, perspective_matrix = perspective_transform(
-            image, board_corners, output_size
-        )
-        
-        result['perspective_matrix'] = perspective_matrix.tolist()
-        result['warped_image_shape'] = warped_image.shape
-        
-        # Используем умную сетку клеток с учетом полей доски
-        square_corners = _generate_smart_square_grid(
-            warped_image,
-            square_count=SQUARE_COUNT
-        )
-        result['square_corners'] = square_corners.tolist()
-        
-        result['success'] = True
-        
-        # Сохранение результата калибровки (warped image с сеткой)
-        try:
-            # Рисуем сетку на warped image
-            warped_with_grid = warped_image.copy()
-            for i in range(SQUARE_COUNT + 1):
-                for j in range(SQUARE_COUNT + 1):
-                    pt = square_corners[i, j].astype(int)
-                    # Рисуем точки углов
-                    cv2.circle(warped_with_grid, tuple(pt), 3, (0, 255, 0), -1)
-                    # Рисуем линии сетки
-                    if i < SQUARE_COUNT:
-                        pt_next = square_corners[i + 1, j].astype(int)
-                        cv2.line(warped_with_grid, tuple(pt), tuple(pt_next), (0, 255, 0), 1)
-                    if j < SQUARE_COUNT:
-                        pt_next = square_corners[i, j + 1].astype(int)
-                        cv2.line(warped_with_grid, tuple(pt), tuple(pt_next), (0, 255, 0), 1)
-            
-            # Сохраняем результат калибровки
-            calibration_result_path = mappings_dir / f'{game_token}_calibration_result.jpg'
-            cv2.imwrite(str(calibration_result_path), warped_with_grid)
-            result['calibration_result_path'] = str(calibration_result_path)
-        except Exception as e:
-            print(f"[MAPPING] Failed to save calibration result: {e}", file=sys.stderr, flush=True)
-        
-        mapping_file = mappings_dir / f'{game_token}_mapping.json'
-        with open(mapping_file, 'w', encoding='utf-8') as f:
-            json.dump(result, f, indent=2, ensure_ascii=False)
-        
-        return result
-        
-    except Exception as e:
-        result['error'] = str(e)
-        return result
-
-
 def load_mapping_data(game_token: str, mappings_dir: Path = None) -> Optional[Dict]:
     """Загрузка данных маппинга"""
     if mappings_dir is None:
@@ -1114,100 +1026,4 @@ def find_square_by_point(x: float, y: float, square_corners: np.ndarray) -> Opti
     
     return None
 
-
-def set_a1_orientation(game_token: str,
-                       a1_x: float,
-                       a1_y: float,
-                       mappings_dir: Path = None) -> Dict:
-    """
-    Ручная установка ориентации доски по клику на a1.
-    
-    Параметры:
-    - game_token: Токен игры
-    - a1_x, a1_y: Координаты клика на a1 в warped-изображении
-    - mappings_dir: Директория с маппингами
-    
-    Возвращает:
-    - Словарь с результатом операции
-    """
-    if mappings_dir is None:
-        mappings_dir = Path('./chessboard_mappings')
-    
-    mapping_file = mappings_dir / f'{game_token}_mapping.json'
-    
-    if not mapping_file.exists():
-        return {
-            'success': False,
-            'error': 'Mapping file not found. Please calibrate the board first.'
-        }
-    
-    try:
-        # Загружаем маппинг
-        with open(mapping_file, 'r', encoding='utf-8') as f:
-            mapping_data = json.load(f)
-        
-        if not mapping_data.get('success') or 'square_corners' not in mapping_data:
-            return {
-                'success': False,
-                'error': 'Invalid mapping data'
-            }
-        
-        square_corners = np.array(mapping_data['square_corners'], dtype=np.float32)
-        
-        # Находим, какая сырая клетка соответствует клику
-        a1_raw = find_square_by_point(a1_x, a1_y, square_corners)
-        
-        if a1_raw is None:
-            return {
-                'success': False,
-                'error': 'Click point is outside the board'
-            }
-        
-        i_raw_a1, j_raw_a1 = a1_raw
-        
-        # Строим index_map:
-        # В ориентированной системе a1 = (7, 0) (нижний левый угол)
-        # Значит, ориентированная клетка (i_oriented, j_oriented) соответствует
-        # сырой клетке с учетом смещения от a1
-        
-        # Вычисляем смещение от сырого a1 к ориентированному a1
-        di = 7 - i_raw_a1  # смещение по строкам
-        dj = 0 - j_raw_a1  # смещение по столбцам
-        
-        index_map = np.zeros((8, 8, 2), dtype=np.int32)
-        
-        for i_o in range(8):
-            for j_o in range(8):
-                # Обратное преобразование: ориентированная -> сырая
-                i_r = i_o - di
-                j_r = j_o - dj
-                
-                # Проверка границ
-                if 0 <= i_r < 8 and 0 <= j_r < 8:
-                    index_map[i_o, j_o] = (i_r, j_r)
-                else:
-                    # Если выходит за границы, используем ближайшую валидную клетку
-                    i_r = max(0, min(7, i_r))
-                    j_r = max(0, min(7, j_r))
-                    index_map[i_o, j_o] = (i_r, j_r)
-        
-        # Сохраняем index_map в маппинг
-        mapping_data['index_map'] = index_map.tolist()
-        mapping_data['a1_raw_index'] = [int(i_raw_a1), int(j_raw_a1)]
-        mapping_data['orientation_set_manually'] = True
-        
-        with open(mapping_file, 'w', encoding='utf-8') as f:
-            json.dump(mapping_data, f, indent=2, ensure_ascii=False)
-        
-        return {
-            'success': True,
-            'message': 'Orientation set successfully',
-            'a1_raw_index': [int(i_raw_a1), int(j_raw_a1)]
-        }
-    
-    except Exception as e:
-        return {
-            'success': False,
-            'error': str(e)
-        }
 

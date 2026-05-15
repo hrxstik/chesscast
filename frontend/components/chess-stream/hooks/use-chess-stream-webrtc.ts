@@ -1,10 +1,8 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState, type MouseEvent } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { io } from 'socket.io-client';
 import { getWsUrl } from '@/lib/utils';
-import { videoElementClickToSourceCoords } from '@/components/chess-stream/lib/video-element-click-to-source';
-import { transformPointToWarped } from '@/components/chess-stream/lib/transform-perspective-point';
 import { useChessStreamRefs } from './use-chess-stream-refs';
 import { useChessStreamMediasoup } from './use-chess-stream-mediasoup';
 import { useChessStreamCamera } from './use-chess-stream-camera';
@@ -40,7 +38,6 @@ export function useChessStreamWebRtc({
     recvTransportRef,
     gameStartedRef,
     viewerRef,
-    a1SettingRef,
   } = refs;
 
   const [isStreaming, setIsStreaming] = useState(false);
@@ -58,8 +55,6 @@ export function useChessStreamWebRtc({
   const [calibrationMessage, setCalibrationMessage] = useState<string | null>(null);
   const [gameStarted, setGameStarted] = useState(false);
   const [mappingData, setMappingData] = useState<Record<string, unknown> | null>(null);
-  const [a1SelectionMode, setA1SelectionMode] = useState(false);
-  const [a1Setting, setA1Setting] = useState(false);
   const [moves, setMoves] = useState<{ san: string; uci: string }[]>([]);
 
   useEffect(() => {
@@ -69,10 +64,6 @@ export function useChessStreamWebRtc({
   useEffect(() => {
     viewerRef.current = viewer;
   }, [viewer, viewerRef]);
-
-  useEffect(() => {
-    a1SettingRef.current = a1Setting;
-  }, [a1Setting, a1SettingRef]);
 
   const { initMediasoupDevice, createProducer, createConsumer } = useChessStreamMediasoup(
     gameToken,
@@ -109,8 +100,6 @@ export function useChessStreamWebRtc({
       setGameStarted,
       setMoves,
       setMappingData,
-      setA1Setting,
-      setA1SelectionMode,
       setPositionFromFen,
       captureAndSendFrame,
       initMediasoupDevice,
@@ -208,32 +197,6 @@ export function useChessStreamWebRtc({
     setGameStarted(true);
   }, [calibrationCompleted]);
 
-  const handleVideoClick = useCallback(
-    (e: MouseEvent<HTMLVideoElement>) => {
-      const sock = socketRef.current || socket;
-      if (!a1SelectionMode || !mappingData || !sock || a1Setting) {
-        return;
-      }
-      const video = e.currentTarget;
-      const coords = videoElementClickToSourceCoords(video, e.clientX, e.clientY);
-      if (!coords) return;
-      const { imgX, imgY } = coords;
-      const matrix = mappingData.perspective_matrix as number[][] | undefined;
-      if (matrix) {
-        const warpedCoords = transformPointToWarped(imgX, imgY, matrix);
-        if (warpedCoords) {
-          setA1Setting(true);
-          sock.emit('set-a1', {
-            token: gameToken,
-            x: warpedCoords[0],
-            y: warpedCoords[1],
-          });
-        }
-      }
-    },
-    [a1SelectionMode, mappingData, socket, gameToken, a1Setting, socketRef],
-  );
-
   useChessStreamLifecycle({
     viewer,
     gameToken,
@@ -254,18 +217,13 @@ export function useChessStreamWebRtc({
     gameStarted,
     calibrationInProgress,
     calibrationMessage,
-    mappingData,
-    a1SelectionMode,
-    a1Setting,
     onStartGame: handleStartGame,
     onStopStreaming: stopStreaming,
-    onStartA1Selection: () => setA1SelectionMode(true),
   };
 
   return {
     videoRef,
     canvasRef,
-    handleVideoClick,
     hasVideoStream,
     setHasVideoStream,
     isStreaming,
@@ -273,11 +231,6 @@ export function useChessStreamWebRtc({
     startStreaming,
     stopStreaming,
     handleStartGame,
-    a1SelectionMode,
-    setA1SelectionMode,
-    a1Setting,
-    setA1Setting,
-    mappingData,
     calibrationCompleted,
     calibrationInProgress,
     calibrationMessage,

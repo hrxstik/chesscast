@@ -20,8 +20,6 @@ export type ChessStreamSocketRegisterContext = {
   setGameStarted: (b: boolean) => void;
   setMoves: Dispatch<SetStateAction<{ san: string; uci: string }[]>>;
   setMappingData: Dispatch<SetStateAction<Record<string, unknown> | null>>;
-  setA1Setting: (b: boolean) => void;
-  setA1SelectionMode: (b: boolean) => void;
   setPositionFromFen: (fen: string) => void;
   captureAndSendFrame: () => void;
   initMediasoupDevice: (
@@ -50,8 +48,6 @@ export function registerChessStreamSocketHandlers(
     setGameStarted,
     setMoves,
     setMappingData,
-    setA1Setting,
-    setA1SelectionMode,
     setPositionFromFen,
     captureAndSendFrame,
     initMediasoupDevice,
@@ -70,7 +66,6 @@ export function registerChessStreamSocketHandlers(
     socketRef,
     boardStateHistoryRef,
     boardStateStableCountRef,
-    a1SettingRef,
     viewerRef,
     gameStartedRef,
   } = refs;
@@ -256,15 +251,6 @@ export function registerChessStreamSocketHandlers(
     }
   });
 
-  newSocket.on('a1-set', () => {
-    setA1Setting(false);
-    setA1SelectionMode(false);
-    setCalibrationMessage('Ориентация установлена. Можно начинать партию.');
-    setMappingData((m) =>
-      m && typeof m === 'object' ? { ...m, orientation_set_manually: true } : m,
-    );
-  });
-
   newSocket.on('frame-processed', (data: Record<string, unknown>) => {
     if (data.board_state && Array.isArray(data.board_state)) {
       if (viewerRef.current || gameStartedRef.current) {
@@ -318,9 +304,6 @@ export function registerChessStreamSocketHandlers(
 
   newSocket.on('error', (error: { message: string }) => {
     setError(error.message);
-    if (a1SettingRef.current) {
-      setA1Setting(false);
-    }
   });
 
   newSocket.on('disconnect', () => {

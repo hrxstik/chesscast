@@ -12,12 +12,8 @@ export type ChessStreamStreamerControlsProps = {
   gameStarted: boolean;
   calibrationInProgress: boolean;
   calibrationMessage: string | null;
-  mappingData: Record<string, unknown> | null;
-  a1SelectionMode: boolean;
-  a1Setting: boolean;
   onStartGame: () => void;
   onStopStreaming: () => void;
-  onStartA1Selection: () => void;
 };
 
 export function ChessStreamStreamerControls({
@@ -29,12 +25,8 @@ export function ChessStreamStreamerControls({
   gameStarted,
   calibrationInProgress,
   calibrationMessage,
-  mappingData,
-  a1SelectionMode,
-  a1Setting,
   onStartGame,
   onStopStreaming,
-  onStartA1Selection,
 }: ChessStreamStreamerControlsProps) {
   return (
     <>
@@ -53,19 +45,9 @@ export function ChessStreamStreamerControls({
               Остановить стрим
             </Button>
           </div>
-          {calibrationCompleted &&
-            !mappingData?.orientation_set_manually &&
-            !mappingData?.index_map && (
-              <Button
-                onClick={onStartA1Selection}
-                variant="outline"
-                disabled={a1SelectionMode || a1Setting}>
-                Указать клетку a1 (если нужно)
-              </Button>
-            )}
           {!calibrationCompleted ? (
             <Text className="!text-xs text-muted-foreground">
-              Дождитесь завершения калибровки доски, чтобы начать партию.
+              Дождитесь завершения автоматической калибровки доски, чтобы начать партию.
             </Text>
           ) : null}
           {calibrationInProgress && calibrationMessage ? (

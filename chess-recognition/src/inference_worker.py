@@ -20,7 +20,7 @@ warnings.filterwarnings('ignore', message='.*pkg_resources.*')
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from improved_board_mapping import map_chessboard, map_chessboard_manual
+from improved_board_mapping import map_chessboard
 from model.stream_processor import StreamProcessor
 from shared_models import SharedInferenceModels
 
@@ -84,18 +84,6 @@ class InferenceWorker:
         )
         return result
 
-    def calibrate_manual(self, token: str, image_path: str, corners: list) -> dict:
-        image = cv2.imread(image_path)
-        if image is None:
-            return {'success': False, 'error': f'Cannot read image: {image_path}'}
-        corners_arr = np.array(corners, dtype=np.float32).reshape(4, 2)
-        return map_chessboard_manual(
-            image=image,
-            game_token=token,
-            board_corners=corners_arr,
-            mappings_dir=self.mappings_dir,
-        )
-
     def emit(self, payload: dict) -> None:
         print(json.dumps(payload, ensure_ascii=False), flush=True)
 
@@ -119,15 +107,6 @@ class InferenceWorker:
 
         if cmd == 'calibrate_auto':
             result = self.calibrate_auto(msg['token'], msg['image_path'])
-            self.emit({'event': 'calibrate_result', 'token': msg['token'], **result})
-            return
-
-        if cmd == 'calibrate_manual':
-            result = self.calibrate_manual(
-                msg['token'],
-                msg['image_path'],
-                msg['corners'],
-            )
             self.emit({'event': 'calibrate_result', 'token': msg['token'], **result})
             return
 

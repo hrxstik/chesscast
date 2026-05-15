@@ -22,7 +22,6 @@ export function useChessStreamRefs(): ChessStreamRefs {
 
   const boardStateHistoryRef = useRef<string[]>([]);
   const boardStateStableCountRef = useRef(0);
-  const a1SettingRef = useRef(false);
   const gameStartedRef = useRef(false);
   const viewerRef = useRef(false);
 
@@ -42,7 +41,6 @@ export function useChessStreamRefs(): ChessStreamRefs {
       consumerCreatingRef,
       boardStateHistoryRef,
       boardStateStableCountRef,
-      a1SettingRef,
       gameStartedRef,
       viewerRef,
     }),
@@ -61,7 +59,6 @@ export function useChessStreamRefs(): ChessStreamRefs {
       consumerCreatingRef,
       boardStateHistoryRef,
       boardStateStableCountRef,
-      a1SettingRef,
       gameStartedRef,
       viewerRef,
     ],

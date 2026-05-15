@@ -77,8 +77,15 @@ export class ChessRecognitionService implements OnModuleInit, OnModuleDestroy {
     return cwd;
   }
 
+  private getChessRecognitionRoot(): string {
+    return (
+      process.env.CHESS_RECOGNITION_DIR ||
+      join(this.getProjectRoot(), 'chess-recognition')
+    );
+  }
+
   private getModelPaths(): { yolo: string; corner: string } {
-    const chessRoot = join(this.getProjectRoot(), 'chess-recognition');
+    const chessRoot = this.getChessRecognitionRoot();
     return {
       yolo:
         process.env.YOLO_MODEL_PATH ||
@@ -94,14 +101,8 @@ export class ChessRecognitionService implements OnModuleInit, OnModuleDestroy {
       return;
     }
 
-    const projectRoot = this.getProjectRoot();
     const { yolo, corner } = this.getModelPaths();
-    const script = join(
-      projectRoot,
-      'chess-recognition',
-      'src',
-      'inference_worker.py',
-    );
+    const script = join(this.getChessRecognitionRoot(), 'src', 'inference_worker.py');
 
     this.workerReady = false;
     this.workerReadyPromise = new Promise<void>((resolve) => {
@@ -112,9 +113,7 @@ export class ChessRecognitionService implements OnModuleInit, OnModuleDestroy {
       `Starting CV inference worker (single YOLO + ResNet): yolo=${yolo}`,
     );
 
-    this.worker = spawn(
-      'python',
-      [
+    this.worker = spawn(this.getPythonBin(), [
         script,
         '--mappings-dir',
         this.mappingsDir,
@@ -330,58 +329,6 @@ export class ChessRecognitionService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  async manualCalibrateBoard(
-    gameToken: string,
-    imageBuffer: Buffer,
-    corners: { x: number; y: number }[],
-  ): Promise<{ success: boolean; message: string; mappingData?: unknown }> {
-    try {
-      if (!corners || corners.length !== 4) {
-        return {
-          success: false,
-          message: 'Exactly 4 corners are required for manual calibration',
-        };
-      }
-
-      const tempImagePath = join(
-        this.mappingsDir,
-        `${gameToken}_manual_calibration.jpg`,
-      );
-      await writeFile(tempImagePath, imageBuffer);
-      await this.ensureWorkerReady();
-
-      const flatCorners = corners.flatMap((c) => [c.x, c.y]);
-      const result = await new Promise<WorkerMessage>((resolve) => {
-        this.pendingCalibrations.set(gameToken, resolve);
-        this.sendCommand({
-          cmd: 'calibrate_manual',
-          token: gameToken,
-          image_path: tempImagePath,
-          corners: flatCorners,
-        });
-      });
-
-      if (result.success) {
-        const mappingData = this.getMapping(gameToken);
-        return {
-          success: true,
-          message: 'Board manually calibrated successfully',
-          mappingData,
-        };
-      }
-      return {
-        success: false,
-        message: String(result.error ?? 'Manual calibration failed'),
-      };
-    } catch (error) {
-      this.logger.error('Error in manualCalibrateBoard', error);
-      return {
-        success: false,
-        message: `Error: ${(error as Error).message}`,
-      };
-    }
-  }
-
   startStreamProcessing(
     gameToken: string,
     _modelPath: string,
@@ -483,91 +430,7 @@ export class ChessRecognitionService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  async setA1Orientation(
-    gameToken: string,
-    a1X: number,
-    a1Y: number,
-  ): Promise<{ success: boolean; message: string; error?: string }> {
-    try {
-      if (!this.hasMapping(gameToken)) {
-        return {
-          success: false,
-          message: 'Mapping not found. Please calibrate the board first.',
-        };
-      }
-
-      const projectRoot = this.getProjectRoot();
-      const pythonScript = join(
-        projectRoot,
-        'chess-recognition',
-        'src',
-        'set_a1_orientation.py',
-      );
-
-      const pythonProcess = spawn('python', [
-        pythonScript,
-        '--token',
-        gameToken,
-        '--x',
-        a1X.toString(),
-        '--y',
-        a1Y.toString(),
-        '--mappings-dir',
-        this.mappingsDir,
-      ]);
-
-      return new Promise((resolve) => {
-        let stdout = '';
-        let stderr = '';
-
-        pythonProcess.stdout.on('data', (data) => {
-          stdout += data.toString();
-        });
-
-        pythonProcess.stderr.on('data', (data) => {
-          stderr += data.toString();
-        });
-
-        pythonProcess.on('close', (code) => {
-          if (code === 0) {
-            try {
-              const lines = stdout.trim().split('\n');
-              const jsonLine = lines.find((line) =>
-                line.trim().startsWith('{'),
-              );
-              if (jsonLine) {
-                const result = JSON.parse(jsonLine);
-                resolve({
-                  success: true,
-                  message: result.message || 'Orientation set successfully',
-                });
-              } else {
-                resolve({
-                  success: true,
-                  message: 'Orientation set successfully',
-                });
-              }
-            } catch {
-              resolve({
-                success: true,
-                message: 'Orientation set (unable to parse response)',
-              });
-            }
-          } else {
-            this.logger.error(`setA1Orientation failed: ${stderr}`);
-            resolve({
-              success: false,
-              message: `Failed to set orientation: ${stderr}`,
-            });
-          }
-        });
-      });
-    } catch (error) {
-      this.logger.error('Error in setA1Orientation', error);
-      return {
-        success: false,
-        message: `Error: ${(error as Error).message}`,
-      };
-    }
+  private getPythonBin(): string {
+    return process.env.PYTHON_BIN || (process.platform === 'win32' ? 'python' : 'python3');
   }
 }

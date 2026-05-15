@@ -4,7 +4,7 @@ import React from 'react';
 import { useEngine } from '@/lib/hooks/useEngine';
 import { SquareChessboard } from '@/components/game/square-chessboard';
 import { streamVideoContainerClass } from '@/lib/stream-config';
-import { H3, Text } from '@/components/ui/typography';
+import { Text } from '@/components/ui/typography';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
@@ -38,16 +38,11 @@ export const ChessVideoStreamWebRTC: React.FC<ChessVideoStreamProps> = ({
   const {
     videoRef,
     canvasRef,
-    handleVideoClick,
     hasVideoStream,
     setHasVideoStream,
     isStreaming,
     viewer: viewerMode,
     startStreaming,
-    a1SelectionMode,
-    setA1SelectionMode,
-    a1Setting,
-    setA1Setting,
     moves,
     streamerControlsProps,
   } = useChessStreamWebRtc({
@@ -70,9 +65,7 @@ export const ChessVideoStreamWebRTC: React.FC<ChessVideoStreamProps> = ({
             style={{
               display: hasVideoStream || !!videoRef.current?.srcObject ? 'block' : 'none',
               backgroundColor: '#000',
-              cursor: a1SelectionMode ? 'crosshair' : 'default',
             }}
-            onClick={handleVideoClick}
             onLoadedMetadata={() => {
               void videoRef.current?.play().catch(() => {});
               setHasVideoStream(true);
@@ -107,30 +100,6 @@ export const ChessVideoStreamWebRTC: React.FC<ChessVideoStreamProps> = ({
               variant="default">
               LIVE
             </Badge>
-          ) : null}
-          {a1SelectionMode ? (
-            <div className="absolute inset-0 z-20 flex items-center justify-center bg-black/50 p-4">
-              <div className="max-w-md rounded-xl border border-border bg-card p-6 text-center shadow-lg">
-                <H3 className="!text-lg">Укажите клетку a1</H3>
-                <Text className="mt-2 text-muted-foreground">
-                  Кликните на клетку a1 (угол с белой ладьёй).
-                </Text>
-                {a1Setting ? (
-                  <Text className="mt-2 text-sm text-primary">Обработка…</Text>
-                ) : null}
-                <Button
-                  type="button"
-                  className="mt-4"
-                  onClick={() => {
-                    setA1SelectionMode(false);
-                    setA1Setting(false);
-                  }}
-                  variant="outline"
-                  disabled={a1Setting}>
-                  Отмена
-                </Button>
-              </div>
-            </div>
           ) : null}
         </div>
       }

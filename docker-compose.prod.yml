@@ -68,8 +68,8 @@ services:
 
   backend:
     build:
-      context: ./backend
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: backend/Dockerfile
     restart: unless-stopped
     env_file:
       - .env.prod
@@ -91,8 +91,12 @@ services:
       YOOKASSA_RETURN_URL: https://${DOMAIN}/dashboard/profile?payment=success
       GOOGLE_CALLBACK_URL: https://${DOMAIN}/api/auth/google/callback
       MEDIASOUP_ANNOUNCED_IP: ${MEDIASOUP_ANNOUNCED_IP}
+      CHESS_RECOGNITION_DIR: /chess-recognition
+      PYTHON_BIN: python3
     volumes:
       - uploads_data:/app/uploads
+      - ./chess-recognition:/chess-recognition:ro
+      - chessboard_mappings:/app/chessboard_mappings
     depends_on:
       postgres:
         condition: service_healthy
@@ -156,6 +160,7 @@ volumes:
   postgres_data:
   redis_data:
   elasticsearch_data:
+  chessboard_mappings:
   uploads_data:
   certbot_www:
   certbot_certs:
