@@ -20,40 +20,40 @@ class StreamProcessor:
                  model_path: str,
                  game_token: str,
                  mapping_dir: Path = Path('./chessboard_mappings'),
-                 on_move_detected: Optional[Callable] = None):
+                 on_move_detected: Optional[Callable] = None,
+                 detector: Optional[YOLO11Detector] = None):
         """
         Инициализация обработчика потока
         
         Args:
-            model_path: Путь к модели YOLO 11
+            model_path: Путь к модели YOLO 11 (игнорируется, если передан detector)
             game_token: Токен игры
             mapping_dir: Директория с маппингами
             on_move_detected: Callback функция при обнаружении хода
+            detector: Общий экземпляр YOLO (для inference-воркера)
         """
         self.game_token = game_token
         self.mapping_dir = mapping_dir
         self.on_move_detected = on_move_detected
         
-        # Загрузка детектора с трекингом
-        # Если модель не найдена, будет использована предобученная YOLO11n
-        self.detector = None
-        try:
-            self.detector = YOLO11Detector(model_path)
-        except (FileNotFoundError, Exception) as e:
-            # Если пользовательская модель не найдена, пробуем предобученную
-            import warnings
-            warnings.warn(f"Custom model not found, trying pretrained YOLO11n: {str(e)}")
+        if detector is not None:
+            self.detector = detector
+        else:
+            self.detector = None
             try:
-                self.detector = YOLO11Detector('yolo11n.pt')
-            except Exception as e2:
-                # Если и предобученная модель не загрузилась, работаем без детекции
+                self.detector = YOLO11Detector(model_path)
+            except (FileNotFoundError, Exception) as e:
                 import warnings
-                warnings.warn(
-                    f"Could not load any model. System will work in calibration-only mode. "
-                    f"Error: {str(e2)}. "
-                    f"To enable piece detection, please train a model using yolo11_training.ipynb"
-                )
-                self.detector = None  # Режим без детекции
+                warnings.warn(f"Custom model not found, trying pretrained YOLO11n: {str(e)}")
+                try:
+                    self.detector = YOLO11Detector('yolo11n.pt')
+                except Exception as e2:
+                    import warnings
+                    warnings.warn(
+                        f"Could not load any model. System will work in calibration-only mode. "
+                        f"Error: {str(e2)}."
+                    )
+                    self.detector = None
         
         # Загрузка маппинга доски (необязательно)
         self.mapping_data = self._load_mapping()

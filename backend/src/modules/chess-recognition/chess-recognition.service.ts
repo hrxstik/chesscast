@@ -1,164 +1,340 @@
-import { Injectable, Logger } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  OnModuleDestroy,
+  OnModuleInit,
+} from '@nestjs/common';
 import { spawn, ChildProcess } from 'child_process';
 import { join } from 'path';
 import { writeFile, mkdir, unlink } from 'fs/promises';
 import { existsSync, readFileSync } from 'fs';
 
+interface StreamSession {
+  onFrameProcessed: (result: unknown) => void;
+  onError: (error: Error) => void;
+}
+
+interface WorkerMessage {
+  event?: string;
+  token?: string;
+  status?: string;
+  message?: string;
+  success?: boolean;
+  error?: string;
+  [key: string]: unknown;
+}
+
 @Injectable()
-export class ChessRecognitionService {
+export class ChessRecognitionService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(ChessRecognitionService.name);
   private readonly mappingsDir = join(process.cwd(), 'chessboard_mappings');
-  private activeProcesses: Map<string, ChildProcess> = new Map();
+
+  private worker: ChildProcess | null = null;
+  private workerReady = false;
+  private workerReadyResolve: (() => void) | null = null;
+  private workerReadyPromise: Promise<void> | null = null;
+  private stdoutBuffer = '';
+  private stderrBuffer = '';
+
+  private readonly sessions = new Map<string, StreamSession>();
+  private readonly pendingCalibrations = new Map<
+    string,
+    (msg: WorkerMessage) => void
+  >();
 
   constructor() {
-    // Создание директории для маппингов
-    this.ensureMappingsDir();
+    void this.ensureMappingsDir();
   }
 
-  private async ensureMappingsDir() {
+  async onModuleInit(): Promise<void> {
+    this.startWorker();
+    try {
+      await this.ensureWorkerReady();
+    } catch (error) {
+      this.logger.error('CV inference worker failed to start', error);
+    }
+  }
+
+  onModuleDestroy(): void {
+    this.stopWorker();
+  }
+
+  private async ensureMappingsDir(): Promise<void> {
     if (!existsSync(this.mappingsDir)) {
       await mkdir(this.mappingsDir, { recursive: true });
     }
   }
 
-  /**
-   * Калибровка доски - сохранение изображения для обработки Python скриптом
-   */
+  private getProjectRoot(): string {
+    const cwd = process.cwd();
+    if (
+      cwd.endsWith('backend') ||
+      cwd.endsWith('backend\\') ||
+      cwd.endsWith('backend/')
+    ) {
+      return join(cwd, '..');
+    }
+    return cwd;
+  }
+
+  private getModelPaths(): { yolo: string; corner: string } {
+    const chessRoot = join(this.getProjectRoot(), 'chess-recognition');
+    return {
+      yolo:
+        process.env.YOLO_MODEL_PATH ||
+        join(chessRoot, 'bestmerged_new.pt'),
+      corner:
+        process.env.CORNER_MODEL_PATH ||
+        join(chessRoot, 'best_resnet34_board_corners.pt'),
+    };
+  }
+
+  private startWorker(): void {
+    if (this.worker) {
+      return;
+    }
+
+    const projectRoot = this.getProjectRoot();
+    const { yolo, corner } = this.getModelPaths();
+    const script = join(
+      projectRoot,
+      'chess-recognition',
+      'src',
+      'inference_worker.py',
+    );
+
+    this.workerReady = false;
+    this.workerReadyPromise = new Promise<void>((resolve) => {
+      this.workerReadyResolve = resolve;
+    });
+
+    this.logger.log(
+      `Starting CV inference worker (single YOLO + ResNet): yolo=${yolo}`,
+    );
+
+    this.worker = spawn(
+      'python',
+      [
+        script,
+        '--mappings-dir',
+        this.mappingsDir,
+        '--yolo-model',
+        yolo,
+        '--corner-model',
+        corner,
+      ],
+      { stdio: ['pipe', 'pipe', 'pipe'] },
+    );
+
+    this.worker.stdout?.on('data', (data: Buffer) => {
+      this.handleWorkerStdout(data.toString());
+    });
+
+    this.worker.stderr?.on('data', (data: Buffer) => {
+      this.handleWorkerStderr(data.toString());
+    });
+
+    this.worker.on('error', (error) => {
+      this.logger.error(`CV worker process error: ${error.message}`);
+    });
+
+    this.worker.on('close', (code) => {
+      this.logger.warn(`CV worker exited with code ${code ?? 'unknown'}`);
+      this.worker = null;
+      this.workerReady = false;
+      this.workerReadyResolve = null;
+      this.workerReadyPromise = null;
+    });
+
+    if (this.worker.stdin) {
+      this.worker.stdin.on('error', (error: NodeJS.ErrnoException) => {
+        if (error.code !== 'EOF') {
+          this.logger.debug(`CV worker stdin error: ${error.message}`);
+        }
+      });
+    }
+  }
+
+  private stopWorker(): void {
+    if (!this.worker) {
+      return;
+    }
+    try {
+      this.sendCommand({ cmd: 'shutdown' });
+    } catch {
+      // worker may already be dead
+    }
+    this.worker.kill();
+    this.worker = null;
+    this.workerReady = false;
+    this.sessions.clear();
+    this.pendingCalibrations.clear();
+  }
+
+  private async ensureWorkerReady(): Promise<void> {
+    if (!this.worker) {
+      this.startWorker();
+    }
+    if (this.workerReady) {
+      return;
+    }
+    if (!this.workerReadyPromise) {
+      throw new Error('CV worker is not starting');
+    }
+    const timeoutMs = 120_000;
+    await Promise.race([
+      this.workerReadyPromise,
+      new Promise<void>((_, reject) =>
+        setTimeout(
+          () => reject(new Error('CV worker ready timeout')),
+          timeoutMs,
+        ),
+      ),
+    ]);
+  }
+
+  private sendCommand(cmd: Record<string, unknown>, binary?: Buffer): void {
+    if (!this.worker?.stdin || this.worker.killed) {
+      throw new Error('CV worker is not running');
+    }
+    const line = `${JSON.stringify(cmd)}\n`;
+    this.worker.stdin.write(line);
+    if (binary) {
+      this.worker.stdin.write(binary);
+    }
+  }
+
+  private handleWorkerStdout(chunk: string): void {
+    this.stdoutBuffer += chunk;
+    const lines = this.stdoutBuffer.split('\n');
+    this.stdoutBuffer = lines.pop() ?? '';
+
+    for (const line of lines) {
+      if (!line.trim()) {
+        continue;
+      }
+      try {
+        const msg = JSON.parse(line) as WorkerMessage;
+        this.dispatchWorkerMessage(msg);
+      } catch {
+        this.logger.warn(`Failed to parse worker message: ${line}`);
+      }
+    }
+  }
+
+  private dispatchWorkerMessage(msg: WorkerMessage): void {
+    const event = msg.event;
+
+    if (event === 'ready') {
+      this.workerReady = true;
+      this.workerReadyResolve?.();
+      this.logger.log('CV inference worker is ready');
+      return;
+    }
+
+    if (event === 'calibrate_result' && msg.token) {
+      const handler = this.pendingCalibrations.get(msg.token);
+      if (handler) {
+        this.pendingCalibrations.delete(msg.token);
+        handler(msg);
+      }
+      return;
+    }
+
+    if (event === 'frame_result' && msg.token) {
+      const session = this.sessions.get(msg.token);
+      if (!session) {
+        return;
+      }
+      if (msg.status === 'error' && msg.message) {
+        session.onError(new Error(String(msg.message)));
+        return;
+      }
+      const { event: _e, token: _t, ...framePayload } = msg;
+      session.onFrameProcessed(framePayload);
+      return;
+    }
+
+    if (event === 'error') {
+      this.logger.error(`CV worker error: ${msg.message ?? 'unknown'}`);
+    }
+  }
+
+  private handleWorkerStderr(chunk: string): void {
+    this.stderrBuffer += chunk;
+    const lines = this.stderrBuffer.split('\n');
+    this.stderrBuffer = lines.pop() ?? '';
+
+    for (const line of lines) {
+      if (!line.trim()) {
+        continue;
+      }
+      if (
+        line.includes('[WORKER]') ||
+        line.includes('[RESNET]') ||
+        line.includes('[MAPPING]') ||
+        line.includes('[MOVE]')
+      ) {
+        this.logger.log(`🐍 [CV] ${line.trim()}`);
+      } else if (
+        line.includes('Error') ||
+        line.includes('Traceback') ||
+        line.includes('Exception')
+      ) {
+        this.logger.error(`🐍 [CV] ${line.trim()}`);
+      } else {
+        this.logger.debug(`🐍 [CV] ${line.trim()}`);
+      }
+    }
+  }
+
   async calibrateBoard(
     gameToken: string,
     imageBuffer: Buffer,
-  ): Promise<{ success: boolean; message: string; mappingData?: any }> {
+  ): Promise<{ success: boolean; message: string; mappingData?: unknown }> {
     try {
-      // Сохранение изображения во временный файл
       const tempImagePath = join(
         this.mappingsDir,
         `${gameToken}_calibration.jpg`,
       );
-
       await writeFile(tempImagePath, imageBuffer);
+      await this.ensureWorkerReady();
 
-      // Запуск Python скрипта для калибровки
-      // Путь относительно корня проекта (не backend/)
-      // process.cwd() может быть backend/ или корень проекта
-      const cwd = process.cwd();
-      const projectRoot =
-        cwd.endsWith('backend') ||
-        cwd.endsWith('backend\\') ||
-        cwd.endsWith('backend/')
-          ? join(cwd, '..')
-          : cwd;
-      const pythonScript = join(
-        projectRoot,
-        'chess-recognition',
-        'src',
-        'calibrate_board.py',
-      );
-
-      // Путь к модели YOLO11 для калибровки по фигурам
-      const defaultModelPath =
-        process.env.YOLO_MODEL_PATH ||
-        join(projectRoot, 'chess-recognition', 'bestmerged.pt');
-
-      const pythonProcess = spawn('python', [
-        pythonScript,
-        '--token',
-        gameToken,
-        '--image',
-        tempImagePath,
-        '--mappings-dir',
-        this.mappingsDir,
-        '--model',
-        defaultModelPath,
-      ]);
-
-      return new Promise((resolve, reject) => {
-        let stdout = '';
-        let stderr = '';
-
-        pythonProcess.stdout.on('data', (data) => {
-          stdout += data.toString();
-        });
-
-        pythonProcess.stderr.on('data', (data) => {
-          const lines = data.toString().split('\n');
-          for (const line of lines) {
-            if (line.trim()) {
-              // Логируем все сообщения из stderr для отладки калибровки
-              if (
-                line.includes('[RESNET]') ||
-                line.includes('[MAPPING]') ||
-                line.includes('[STARTUP]') ||
-                line.includes('[INIT]')
-              ) {
-                this.logger.log(`🐍 [CALIBRATION] ${line.trim()}`);
-              } else if (
-                line.includes('Error') ||
-                line.includes('Traceback') ||
-                line.includes('Exception')
-              ) {
-                this.logger.error(`🐍 [CALIBRATION] ${line.trim()}`);
-              } else {
-                this.logger.debug(`🐍 [CALIBRATION] ${line.trim()}`);
-              }
-              stderr += line + '\n';
-            }
-          }
-        });
-
-        pythonProcess.on('close', (code) => {
-          if (code === 0) {
-            try {
-              // Чтение результата маппинга
-              const mappingPath = join(
-                this.mappingsDir,
-                `${gameToken}_mapping.json`,
-              );
-              if (existsSync(mappingPath)) {
-                const mappingData = require(mappingPath);
-                resolve({
-                  success: true,
-                  message: 'Board calibrated successfully',
-                  mappingData,
-                });
-              } else {
-                resolve({
-                  success: false,
-                  message: 'Mapping file not created',
-                });
-              }
-            } catch (error) {
-              this.logger.error('Error reading mapping file', error);
-              resolve({
-                success: false,
-                message: 'Error reading mapping result',
-              });
-            }
-          } else {
-            this.logger.error(`Calibration failed: ${stderr}`);
-            resolve({
-              success: false,
-              message: `Calibration failed: ${stderr}`,
-            });
-          }
+      const result = await new Promise<WorkerMessage>((resolve) => {
+        this.pendingCalibrations.set(gameToken, resolve);
+        this.sendCommand({
+          cmd: 'calibrate_auto',
+          token: gameToken,
+          image_path: tempImagePath,
         });
       });
+
+      if (result.success) {
+        const mappingData = this.getMapping(gameToken);
+        return {
+          success: true,
+          message: 'Board calibrated successfully',
+          mappingData,
+        };
+      }
+      return {
+        success: false,
+        message: String(result.error ?? 'Calibration failed'),
+      };
     } catch (error) {
       this.logger.error('Error in calibrateBoard', error);
       return {
         success: false,
-        message: `Error: ${error.message}`,
+        message: `Error: ${(error as Error).message}`,
       };
     }
   }
 
-  /**
-   * Ручная калибровка по углам, заданным с фронта
-   */
   async manualCalibrateBoard(
     gameToken: string,
     imageBuffer: Buffer,
     corners: { x: number; y: number }[],
-  ): Promise<{ success: boolean; message: string; mappingData?: any }> {
+  ): Promise<{ success: boolean; message: string; mappingData?: unknown }> {
     try {
       if (!corners || corners.length !== 4) {
         return {
@@ -167,388 +343,115 @@ export class ChessRecognitionService {
         };
       }
 
-      // Сохранение изображения во временный файл
       const tempImagePath = join(
         this.mappingsDir,
         `${gameToken}_manual_calibration.jpg`,
       );
-
       await writeFile(tempImagePath, imageBuffer);
+      await this.ensureWorkerReady();
 
-      // Путь к Python-скрипту
-      const cwd = process.cwd();
-      const projectRoot =
-        cwd.endsWith('backend') ||
-        cwd.endsWith('backend\\') ||
-        cwd.endsWith('backend/')
-          ? join(cwd, '..')
-          : cwd;
-      const pythonScript = join(
-        projectRoot,
-        'chess-recognition',
-        'src',
-        'calibrate_board.py',
-      );
-
-      // Преобразуем углы в плоский массив [x1,y1,x2,y2,x3,y3,x4,y4]
-      const cornersArgs = corners
-        .map((c) => [c.x.toString(), c.y.toString()])
-        .flat();
-
-      const pythonProcess = spawn('python', [
-        pythonScript,
-        '--token',
-        gameToken,
-        '--image',
-        tempImagePath,
-        '--mappings-dir',
-        this.mappingsDir,
-        '--corners',
-        ...cornersArgs,
-      ]);
-
-      return new Promise((resolve) => {
-        let stdout = '';
-        let stderr = '';
-
-        pythonProcess.stdout.on('data', (data) => {
-          stdout += data.toString();
-        });
-
-        pythonProcess.stderr.on('data', (data) => {
-          const lines = data.toString().split('\n');
-          for (const line of lines) {
-            if (line.trim()) {
-              // Логируем все сообщения из stderr для отладки ручной калибровки
-              if (
-                line.includes('[RESNET]') ||
-                line.includes('[MAPPING]') ||
-                line.includes('[STARTUP]') ||
-                line.includes('[INIT]')
-              ) {
-                this.logger.log(`🐍 [MANUAL-CALIBRATION] ${line.trim()}`);
-              } else if (
-                line.includes('Error') ||
-                line.includes('Traceback') ||
-                line.includes('Exception')
-              ) {
-                this.logger.error(`🐍 [MANUAL-CALIBRATION] ${line.trim()}`);
-              } else {
-                this.logger.debug(`🐍 [MANUAL-CALIBRATION] ${line.trim()}`);
-              }
-              stderr += line + '\n';
-            }
-          }
-        });
-
-        pythonProcess.on('close', (code) => {
-          if (code === 0) {
-            try {
-              const mappingPath = join(
-                this.mappingsDir,
-                `${gameToken}_mapping.json`,
-              );
-              if (existsSync(mappingPath)) {
-                const mappingData = require(mappingPath);
-                resolve({
-                  success: true,
-                  message: 'Board manually calibrated successfully',
-                  mappingData,
-                });
-              } else {
-                resolve({
-                  success: false,
-                  message: 'Mapping file not created in manual calibration',
-                });
-              }
-            } catch (error) {
-              this.logger.error(
-                'Error reading mapping file after manual calibration',
-                error,
-              );
-              resolve({
-                success: false,
-                message:
-                  'Error reading mapping result after manual calibration',
-              });
-            }
-          } else {
-            this.logger.error(`Manual calibration failed: ${stderr}`);
-            resolve({
-              success: false,
-              message: `Manual calibration failed: ${stderr}`,
-            });
-          }
+      const flatCorners = corners.flatMap((c) => [c.x, c.y]);
+      const result = await new Promise<WorkerMessage>((resolve) => {
+        this.pendingCalibrations.set(gameToken, resolve);
+        this.sendCommand({
+          cmd: 'calibrate_manual',
+          token: gameToken,
+          image_path: tempImagePath,
+          corners: flatCorners,
         });
       });
+
+      if (result.success) {
+        const mappingData = this.getMapping(gameToken);
+        return {
+          success: true,
+          message: 'Board manually calibrated successfully',
+          mappingData,
+        };
+      }
+      return {
+        success: false,
+        message: String(result.error ?? 'Manual calibration failed'),
+      };
     } catch (error) {
       this.logger.error('Error in manualCalibrateBoard', error);
       return {
         success: false,
-        message: `Error: ${error.message}`,
+        message: `Error: ${(error as Error).message}`,
       };
     }
   }
 
-  /**
-   * Запуск обработки потока для игры
-   */
   startStreamProcessing(
     gameToken: string,
-    modelPath: string,
-    onFrameProcessed: (result: any) => void,
+    _modelPath: string,
+    onFrameProcessed: (result: unknown) => void,
     onError: (error: Error) => void,
   ): void {
-    if (this.activeProcesses.has(gameToken)) {
+    if (this.sessions.has(gameToken)) {
       this.logger.warn(
         `Stream processing already active for token ${gameToken}`,
       );
       return;
     }
 
-    // Путь относительно корня проекта (не backend/)
-    // process.cwd() может быть backend/ или корень проекта
-    const cwd = process.cwd();
-    const projectRoot =
-      cwd.endsWith('backend') ||
-      cwd.endsWith('backend\\') ||
-      cwd.endsWith('backend/')
-        ? join(cwd, '..')
-        : cwd;
-    const pythonScript = join(
-      projectRoot,
-      'chess-recognition',
-      'src',
-      'stream_server.py',
-    );
+    this.sessions.set(gameToken, { onFrameProcessed, onError });
 
-    // Преобразуем путь к маппингам в абсолютный, чтобы Python скрипт точно нашел файлы
-    const absoluteMappingsDir = join(process.cwd(), 'chessboard_mappings');
-
-    this.logger.log(
-      `📹 Starting stream processing for token ${gameToken}, mappings dir: ${absoluteMappingsDir}`,
-    );
-
-    const pythonProcess = spawn(
-      'python',
-      [
-        pythonScript,
-        '--token',
-        gameToken,
-        '--model',
-        modelPath,
-        '--mappings-dir',
-        absoluteMappingsDir,
-      ],
-      {
-        stdio: ['pipe', 'pipe', 'pipe'], // stdin, stdout, stderr - все через pipe
-      },
-    );
-
-    // Логируем запуск процесса
-    this.logger.log(
-      `🐍 Python process spawned: PID=${pythonProcess.pid}, script=${pythonScript}`,
-    );
-
-    let stdoutBuffer = '';
-    let stderrBuffer = '';
-
-    pythonProcess.stdout.on('data', (data) => {
-      stdoutBuffer += data.toString();
-      const lines = stdoutBuffer.split('\n');
-      stdoutBuffer = lines.pop() || '';
-
-      for (const line of lines) {
-        if (line.trim()) {
-          try {
-            const result = JSON.parse(line);
-            onFrameProcessed(result);
-          } catch (error) {
-            this.logger.warn('Failed to parse result', line);
-          }
-        }
-      }
-    });
-
-    pythonProcess.stderr.on('data', (data) => {
-      const rawData = data.toString();
-      stderrBuffer += rawData;
-      const lines = stderrBuffer.split('\n');
-      stderrBuffer = lines.pop() || '';
-
-      for (const line of lines) {
-        if (!line.trim()) continue;
-
-        // Логируем важные сообщения из Python (инициализация, детекция ходов, запуск)
-        if (
-          line.includes('[STARTUP]') ||
-          line.includes('[INIT]') ||
-          (line.includes('[MOVE]') && !line.includes('[MOVE-DEBUG]'))
-        ) {
-          this.logger.log(`🐍 [PYTHON] ${line.trim()}`);
-        } else if (line.includes('[DETECTION]')) {
-          // Детекции логируем как log каждый кадр
-          this.logger.log(`🐍 [PYTHON] ${line.trim()}`);
-        } else if (line.includes('[FRAME]')) {
-          // Логирование обработки кадров
-          this.logger.log(`🐍 [PYTHON] ${line.trim()}`);
-        } else if (line.includes('[STDIN]')) {
-          // Логирование чтения из stdin
-          this.logger.log(`🐍 [PYTHON] ${line.trim()}`);
-        } else if (
-          line.includes('[STABILIZATION]') ||
-          line.includes('[MOVE-DEBUG]') ||
-          line.includes('[VISUALIZATION]')
-        ) {
-          // Отладочные логи логируем как debug
-          this.logger.debug(`🐍 [PYTHON] ${line.trim()}`);
-        } else if (
-          line.includes('UserWarning') ||
-          line.includes('pkg_resources is deprecated') ||
-          line.includes('Warning:') ||
-          (line.trim().startsWith('C:\\') && line.includes('UserWarning'))
-        ) {
-          // Это предупреждение, логируем как debug, но не как ошибку
-          this.logger.debug(`Python warning: ${line.trim()}`);
-        } else if (
-          line.includes('Traceback') ||
-          line.includes('Error:') ||
-          line.includes('Exception:') ||
-          line.includes('NameError') ||
-          line.includes('TypeError') ||
-          line.includes('ValueError') ||
-          line.includes('File "') ||
-          line.trim().startsWith('  File ')
-        ) {
-          // Реальные ошибки Python логируем и отправляем
-          this.logger.error(`Stream processing error: ${line.trim()}`);
-          onError(new Error(line.trim()));
-        } else {
-          // Неизвестные логи логируем как debug (возможно, это просто информационные сообщения)
-          this.logger.debug(`🐍 [PYTHON] ${line.trim()}`);
-        }
-      }
-    });
-
-    // Логируем ошибки запуска процесса
-    pythonProcess.on('error', (error) => {
-      this.logger.error(`🐍 Python process error: ${error.message}`);
-      onError(error);
-    });
-
-    // Обработка ошибок записи в stdin (EOF и т.д.)
-    if (pythonProcess.stdin) {
-      pythonProcess.stdin.on('error', (error: NodeJS.ErrnoException) => {
-        // Игнорируем ошибки EOF - это нормально, когда процесс закрывается
-        if (error.code !== 'EOF') {
-          this.logger.debug(
-            `Python stdin error for token ${gameToken}: ${error.message}`,
-          );
-        }
-        // Удаляем процесс из Map, если он еще там
-        if (this.activeProcesses.has(gameToken)) {
-          this.activeProcesses.delete(gameToken);
-        }
-      });
-    }
-
-    pythonProcess.on('close', (code) => {
-      // Удаляем из Map только если процесс еще там (может быть уже удален в stopStreamProcessing)
-      if (this.activeProcesses.has(gameToken)) {
-        this.activeProcesses.delete(gameToken);
+    void this.ensureWorkerReady()
+      .then(() => {
+        this.sendCommand({ cmd: 'register', token: gameToken });
         this.logger.log(
-          `Stream processing stopped for token ${gameToken} (process closed with code ${code})`,
+          `Stream session registered in CV worker for token ${gameToken}`,
         );
-      }
-    });
-
-    this.activeProcesses.set(gameToken, pythonProcess);
+      })
+      .catch((error) => {
+        this.sessions.delete(gameToken);
+        onError(error as Error);
+      });
   }
 
-  /**
-   * Отправка кадра в процесс обработки (бинарные данные)
-   */
   sendFrame(gameToken: string, frameData: Buffer): void {
-    const pythonProcess = this.activeProcesses.get(gameToken);
-    if (!pythonProcess) {
-      // Процесс не существует - это нормально, если он был остановлен
-      this.logger.warn(
-        `⚠️ [SENDFRAME] No Python process found for token ${gameToken}`,
-      );
-      return;
-    }
-
-    // Проверяем, что процесс еще жив и stdin доступен
-    if (!pythonProcess.stdin || pythonProcess.killed) {
-      // Процесс уже закрыт - удаляем из Map и выходим
-      this.logger.warn(
-        `⚠️ [SENDFRAME] Python process ${gameToken} is dead or stdin unavailable`,
-      );
-      this.activeProcesses.delete(gameToken);
+    const session = this.sessions.get(gameToken);
+    if (!session || !this.worker?.stdin || this.worker.killed) {
       return;
     }
 
     try {
-      // Отправка бинарных данных: длина (4 байта) + данные
-      // ВАЖНО: отправляем атомарно - объединяем длину и данные в один буфер
-      const lengthBuffer = Buffer.allocUnsafe(4);
-      lengthBuffer.writeUInt32BE(frameData.length, 0);
-
-      // Объединяем длину и данные в один буфер для атомарной отправки
-      const combinedBuffer = Buffer.concat([lengthBuffer, frameData]);
-
-      // Отправляем объединенный буфер
-      const written = pythonProcess.stdin.write(combinedBuffer);
-      if (!written) {
-        // Буфер переполнен - ждем drain
-        this.logger.debug(
-          `📤 [SENDFRAME] Buffer full, waiting for drain for token ${gameToken}`,
-        );
-        pythonProcess.stdin.once('drain', () => {
-          // Данные отправлены
-        });
-      }
-    } catch (error) {
-      // Ошибка записи (например, EOF) - процесс закрыт
-      this.logger.warn(
-        `❌ [SENDFRAME] Failed to write frame to process ${gameToken}: ${error.message}`,
+      this.sendCommand(
+        { cmd: 'frame', token: gameToken, length: frameData.length },
+        frameData,
       );
-      this.activeProcesses.delete(gameToken);
+    } catch (error) {
+      this.logger.warn(
+        `Failed to send frame for token ${gameToken}: ${(error as Error).message}`,
+      );
+      this.sessions.delete(gameToken);
     }
   }
 
-  /**
-   * Остановка обработки потока
-   */
   stopStreamProcessing(gameToken: string): void {
-    const pythonProcess = this.activeProcesses.get(gameToken);
-    if (pythonProcess) {
-      // Удаляем из Map ДО kill, чтобы on('close') не логировал повторно
-      this.activeProcesses.delete(gameToken);
-      pythonProcess.kill();
-      this.logger.log(`Stream processing stopped for token ${gameToken}`);
+    this.sessions.delete(gameToken);
+    if (!this.worker?.stdin || this.worker.killed) {
+      return;
+    }
+    try {
+      this.sendCommand({ cmd: 'unregister', token: gameToken });
+      this.logger.log(`Stream session stopped for token ${gameToken}`);
+    } catch {
+      // worker already closed
     }
   }
 
-  /**
-   * Проверка, есть ли активный процесс обработки для токена
-   */
   hasActiveProcess(gameToken: string): boolean {
-    return this.activeProcesses.has(gameToken);
+    return this.sessions.has(gameToken);
   }
 
-  /**
-   * Проверка наличия маппинга для токена
-   */
   hasMapping(gameToken: string): boolean {
     const mappingPath = join(this.mappingsDir, `${gameToken}_mapping.json`);
     return existsSync(mappingPath);
   }
 
-  /**
-   * Получение сохранённого маппинга для токена
-   */
-  getMapping(gameToken: string): any | null {
+  getMapping(gameToken: string): unknown | null {
     try {
       const mappingPath = join(this.mappingsDir, `${gameToken}_mapping.json`);
       if (!existsSync(mappingPath)) {
@@ -565,9 +468,6 @@ export class ChessRecognitionService {
     }
   }
 
-  /**
-   * Удаление маппинга для токена (для тестирования - калибровка будет запускаться заново)
-   */
   async deleteMapping(gameToken: string): Promise<void> {
     try {
       const mappingPath = join(this.mappingsDir, `${gameToken}_mapping.json`);
@@ -583,16 +483,12 @@ export class ChessRecognitionService {
     }
   }
 
-  /**
-   * Ручная установка ориентации доски по клику на a1
-   */
   async setA1Orientation(
     gameToken: string,
     a1X: number,
     a1Y: number,
   ): Promise<{ success: boolean; message: string; error?: string }> {
     try {
-      // Проверяем наличие маппинга
       if (!this.hasMapping(gameToken)) {
         return {
           success: false,
@@ -600,14 +496,7 @@ export class ChessRecognitionService {
         };
       }
 
-      // Путь к Python-скрипту
-      const cwd = process.cwd();
-      const projectRoot =
-        cwd.endsWith('backend') ||
-        cwd.endsWith('backend\\') ||
-        cwd.endsWith('backend/')
-          ? join(cwd, '..')
-          : cwd;
+      const projectRoot = this.getProjectRoot();
       const pythonScript = join(
         projectRoot,
         'chess-recognition',
@@ -642,7 +531,6 @@ export class ChessRecognitionService {
         pythonProcess.on('close', (code) => {
           if (code === 0) {
             try {
-              // Парсим JSON из stdout
               const lines = stdout.trim().split('\n');
               const jsonLine = lines.find((line) =>
                 line.trim().startsWith('{'),
@@ -659,8 +547,7 @@ export class ChessRecognitionService {
                   message: 'Orientation set successfully',
                 });
               }
-            } catch (error) {
-              this.logger.error('Error parsing setA1Orientation result', error);
+            } catch {
               resolve({
                 success: true,
                 message: 'Orientation set (unable to parse response)',
@@ -679,7 +566,7 @@ export class ChessRecognitionService {
       this.logger.error('Error in setA1Orientation', error);
       return {
         success: false,
-        message: `Error: ${error.message}`,
+        message: `Error: ${(error as Error).message}`,
       };
     }
   }

@@ -121,8 +121,11 @@ def _default_model_path() -> str:
     """
     # src/improved_board_mapping.py -> chess-recognition/
     project_root = Path(__file__).resolve().parent.parent
-    model_path = project_root / 'bestmerged.pt'
-    return str(model_path)
+    for name in ('bestmerged_new.pt', 'bestmerged.pt'):
+        candidate = project_root / name
+        if candidate.exists():
+            return str(candidate)
+    return str(project_root / 'bestmerged_new.pt')
 
 
 def _default_corner_model_path() -> str:
@@ -179,7 +182,9 @@ def _detect_board_corners_resnet(image: np.ndarray,
                                   device: str = 'cpu',
                                   yolo_model_path: Optional[str] = None,
                                   use_crop: bool = False,
-                                  debug_image_out: Optional[np.ndarray] = None) -> Optional[np.ndarray]:
+                                  debug_image_out: Optional[np.ndarray] = None,
+                                  preloaded_corner_bundle=None,
+                                  preloaded_yolo_detector=None) -> Optional[np.ndarray]:
     """
     Детекция углов доски через модель ResNet.
     
@@ -198,13 +203,15 @@ def _detect_board_corners_resnet(image: np.ndarray,
         print("[RESNET] PyTorch not available, cannot use ResNet detection", file=sys.stderr, flush=True)
         return None
     
-    if model_path is None:
-        model_path = _default_corner_model_path()
-
-    
-    if not Path(model_path).exists():
-        print(f"[RESNET] Model not found: {model_path}", file=sys.stderr, flush=True)
-        return None
+    if preloaded_corner_bundle is None:
+        if model_path is None:
+            model_path = _default_corner_model_path()
+        if not Path(model_path).exists():
+            print(f"[RESNET] Model not found: {model_path}", file=sys.stderr, flush=True)
+            return None
+    else:
+        device = preloaded_corner_bundle.device
+        img_size = preloaded_corner_bundle.img_size
     
     # Сохраняем исходный размер ДО кропа для правильного преобразования координат
     h_orig_full, w_orig_full = image.shape[:2]
@@ -225,12 +232,18 @@ def _detect_board_corners_resnet(image: np.ndarray,
     board_bbox = None
     pieces_info = []
     
-    if yolo_model_path:
+    if yolo_model_path or preloaded_yolo_detector is not None:
         try:
             # Используем высокий порог уверенности (0.7) чтобы исключить ложные срабатывания
-            result = _detect_board_from_pieces(image, model_path=yolo_model_path, 
-                                               conf_threshold=0.7, min_pieces=4, min_span_ratio=0.2,
-                                               return_pieces_info=True)
+            result = _detect_board_from_pieces(
+                image,
+                model_path=yolo_model_path,
+                detector=preloaded_yolo_detector,
+                conf_threshold=0.7,
+                min_pieces=4,
+                min_span_ratio=0.2,
+                return_pieces_info=True,
+            )
             
             # YOLO возвращает только фигуры (pieces_info), область доски мы строим сами!
             # Функция _detect_board_from_pieces возвращает (board_bbox, pieces_info) или (None, pieces_info)
@@ -353,25 +366,22 @@ def _detect_board_corners_resnet(image: np.ndarray,
             print(f"[RESNET] Using full image due to YOLO error", file=sys.stderr, flush=True)
     
     try:
-        # Определяем имя модели из пути
-        model_name = 'resnet34'  # по умолчанию
-        if 'resnet18' in model_path.lower():
-            model_name = 'resnet18'
-        elif 'resnet50' in model_path.lower():
-            model_name = 'resnet50'
+        if preloaded_corner_bundle is not None:
+            model = preloaded_corner_bundle.model
+            model_input_size = preloaded_corner_bundle.img_size
+        else:
+            model_name = 'resnet34'
+            if 'resnet18' in model_path.lower():
+                model_name = 'resnet18'
+            elif 'resnet50' in model_path.lower():
+                model_name = 'resnet50'
+            model = CornerRegressor(model_name=model_name, pretrained=False)
+            model.load_state_dict(torch.load(model_path, map_location=device))
+            model.to(device)
+            model.eval()
+            model_input_size = img_size
         
-        # Загружаем модель
-        model = CornerRegressor(model_name=model_name, pretrained=False)
-        model.load_state_dict(torch.load(model_path, map_location=device))
-        model.to(device)
-        model.eval()
-        
-        # Сохраняем размер изображения для ResNet (может быть кропнутым)
         h_resnet, w_resnet = image.shape[:2]
-        
-        # Модель ResNet требует фиксированный размер входа (640x640) из-за полносвязных слоев
-        # Поэтому всегда ресайзим до 640x640, но для кропнутого изображения используем качественный upscale
-        model_input_size = img_size  # Всегда 640x640 для совместимости с моделью
         
         if was_cropped:
             max_dim = max(h_resnet, w_resnet)
@@ -596,7 +606,8 @@ def _detect_board_from_pieces(image: np.ndarray,
                               conf_threshold: float = 0.5,
                               min_pieces: int = 8,
                               min_span_ratio: float = 0.3,
-                              return_pieces_info: bool = False) -> Optional[np.ndarray]:
+                              return_pieces_info: bool = False,
+                              detector=None) -> Optional[np.ndarray]:
     """
     Определение границ доски по детекциям фигур с помощью YOLO.
     
@@ -606,11 +617,10 @@ def _detect_board_from_pieces(image: np.ndarray,
     
     Возвращает массив углов доски (4, 2) или None, если данных недостаточно.
     """
-    if model_path is None:
-        model_path = _default_model_path()
-    
-    # Детектим фигуры
-    detector = YOLO11Detector(model_path, conf_threshold=conf_threshold)
+    if detector is None:
+        if model_path is None:
+            model_path = _default_model_path()
+        detector = YOLO11Detector(model_path, conf_threshold=conf_threshold)
     detections = detector.predict(image)
     
     # Собираем центры фигур с фильтрацией по уверенности
@@ -731,14 +741,16 @@ def _detect_board_from_pieces(image: np.ndarray,
     return pts
 
 
-def map_chessboard(image: np.ndarray, 
+def map_chessboard(image: np.ndarray,
                   game_token: str,
                   check_empty: bool = False,
                   empty_threshold: float = 0.15,
                   output_size: Tuple[int, int] = OUTPUT_IMAGE_SIZE,
                   mappings_dir: Path = None,
                   model_path: Optional[str] = None,
-                  conf_threshold: float = 0.5) -> Dict:
+                  conf_threshold: float = 0.5,
+                  preloaded_yolo_detector=None,
+                  preloaded_corner_bundle=None) -> Dict:
     """
     Полный процесс маппинга шахматной доски.
     
@@ -794,9 +806,16 @@ def map_chessboard(image: np.ndarray,
         debug_image = image.copy()
         
         # Передаем debug_image по ссылке - все изменения будут видны в оригинале
-        board_corners = _detect_board_corners_resnet(image, model_path=None, device=device, 
-                                                     yolo_model_path=yolo_model_path, use_crop=True,
-                                                     debug_image_out=debug_image)
+        board_corners = _detect_board_corners_resnet(
+            image,
+            model_path=None,
+            device=device,
+            yolo_model_path=yolo_model_path if preloaded_yolo_detector is None else None,
+            use_crop=True,
+            debug_image_out=debug_image,
+            preloaded_corner_bundle=preloaded_corner_bundle,
+            preloaded_yolo_detector=preloaded_yolo_detector,
+        )
         
         # После вызова debug_image содержит все нарисованные рамки из _detect_board_corners_resnet
         

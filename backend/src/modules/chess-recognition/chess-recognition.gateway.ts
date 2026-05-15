@@ -332,7 +332,7 @@ export class ChessRecognitionGateway
           : cwd;
       const defaultModelPath =
         process.env.YOLO_MODEL_PATH ||
-        join(projectRoot, 'chess-recognition', 'bestmerged.pt');
+        join(projectRoot, 'chess-recognition', 'bestmerged_new.pt');
 
       // Запускаем обработку потока только если еще не запущена И маппинг уже есть
       // Если маппинга еще нет, процесс будет запущен после завершения калибровки в handleFrame
@@ -691,7 +691,7 @@ export class ChessRecognitionGateway
         //           : cwd;
         //       const defaultModelPath =
         //         process.env.YOLO_MODEL_PATH ||
-        //         join(projectRoot, 'chess-recognition', 'bestmerged.pt');
+        //         join(projectRoot, 'chess-recognition', 'bestmerged_new.pt');
 
         //       this.chessRecognitionService.startStreamProcessing(
         //         token,
@@ -764,7 +764,7 @@ export class ChessRecognitionGateway
             : cwd;
         const defaultModelPath =
           process.env.YOLO_MODEL_PATH ||
-          join(projectRoot, 'chess-recognition', 'bestmerged.pt');
+          join(projectRoot, 'chess-recognition', 'bestmerged_new.pt');
 
         this.chessRecognitionService.startStreamProcessing(
           token,
@@ -1014,7 +1014,7 @@ export class ChessRecognitionGateway
               : cwd;
           const defaultModelPath =
             process.env.YOLO_MODEL_PATH ||
-            join(projectRoot, 'chess-recognition', 'bestmerged.pt');
+            join(projectRoot, 'chess-recognition', 'bestmerged_new.pt');
 
           // Устанавливаем флаг ДО запуска процесса (защита от race condition)
           this.processStartedAfterCalibration.set(token, true);
@@ -1170,7 +1170,7 @@ export class ChessRecognitionGateway
               : cwd;
           const defaultModelPath =
             process.env.YOLO_MODEL_PATH ||
-            join(projectRoot, 'chess-recognition', 'bestmerged.pt');
+            join(projectRoot, 'chess-recognition', 'bestmerged_new.pt');
 
           this.logger.log(
             `Starting stream processing for token ${token} after manual calibration`,
