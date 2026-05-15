@@ -3,6 +3,7 @@ import { getLanIp } from './lib/utils';
 
 const lanIp = getLanIp();
 let nextConfig: NextConfig = {
+  output: 'standalone',
   allowedDevOrigins: ['localhost', '127.0.0.1'],
   webpack: (config, { dev }) => {
     if (dev) {

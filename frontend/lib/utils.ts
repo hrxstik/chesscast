@@ -7,11 +7,13 @@ export function cn(...inputs: ClassValue[]) {
 }
 
 export function getApiBaseUrl(): string {
-  if (typeof window !== 'undefined') {
-    return `${window.location.protocol}//${window.location.hostname}:5000`;
-  }
   const fromEnv = process.env.NEXT_PUBLIC_NEST_API_URL?.replace(/\/api\/?$/, '');
-  return fromEnv || 'https://localhost:5000';
+  if (typeof window !== 'undefined') {
+    if (fromEnv) return fromEnv;
+    // За nginx: API на том же origin (/api), без :5000
+    return window.location.origin;
+  }
+  return fromEnv || 'http://localhost:5000';
 }
 
 export function getApiUrl(): string {

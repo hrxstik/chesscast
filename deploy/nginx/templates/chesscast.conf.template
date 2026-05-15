@@ -1,0 +1,52 @@
+# По умолчанию HTTP (для первого certbot). После SSL замените на chesscast-https.conf.template
+# (см. deploy/scripts/init-letsencrypt.sh).
+
+upstream chesscast_frontend {
+  server frontend:3000;
+}
+
+upstream chesscast_backend {
+  server backend:5000;
+}
+
+server {
+  listen 80;
+  listen [::]:80;
+  server_name ${DOMAIN};
+
+  location /.well-known/acme-challenge/ {
+    root /var/www/certbot;
+  }
+
+  location /api/ {
+    proxy_pass http://chesscast_backend/api/;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+  }
+
+  location /uploads/ {
+    proxy_pass http://chesscast_backend/uploads/;
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-Proto $scheme;
+  }
+
+  location /ws/ {
+    proxy_pass http://chesscast_backend/ws/;
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection "upgrade";
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_read_timeout 86400s;
+  }
+
+  location / {
+    proxy_pass http://chesscast_frontend;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-Proto $scheme;
+  }
+}
