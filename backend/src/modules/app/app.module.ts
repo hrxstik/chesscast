@@ -4,7 +4,6 @@ import { ScheduleModule } from '@nestjs/schedule';
 import { ConfigModule } from '@nestjs/config';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
-import googleConfig from '../../config/config';
 import { UploadModule } from '../upload/upload.module';
 import { ServeStaticModule } from '@nestjs/serve-static';
 import { join } from 'path';
@@ -30,10 +29,7 @@ import { PaymentModule } from '../payment/payment.module';
         },
       }),
     }),
-    ConfigModule.forRoot({
-      load: [googleConfig],
-      isGlobal: true,
-    }),
+    ConfigModule.forRoot({ isGlobal: true }),
     ServeStaticModule.forRoot(
       {
         rootPath: join(__dirname, '..', '..', '..', 'uploads'),

@@ -10,7 +10,6 @@ import { FormInput } from './form-input';
 import { LoginFormValues, loginSchema } from './schemas';
 import toast from 'react-hot-toast';
 import { Button } from '@/components/ui/button';
-import { GoogleButton } from '../google-button';
 import { loginRequest } from '@/lib/api/auth';
 import { useAuthStore } from '@/store/auth-store';
 import { useUserStore } from '@/store/user';
@@ -74,8 +73,6 @@ export const LoginForm: React.FC<Props> = ({ onClose }) => {
           className="w-full">
           Войти
         </Button>
-
-        <GoogleButton />
 
         <p className="mt-6 text-center text-sm">
           Нет аккаунта?{' '}

@@ -10,7 +10,6 @@ import { RegisterFormValues, registerSchema } from './schemas';
 import { toast } from 'react-hot-toast';
 import { FormInput } from './form-input';
 import { Button } from '@/components/ui/button';
-import { GoogleButton } from '../google-button';
 import { registerRequest } from '@/lib/api/auth';
 import { useAuthStore } from '@/store/auth-store';
 import { useUserStore } from '@/store/user';
@@ -78,8 +77,6 @@ export const RegisterForm: React.FC<Props> = ({ onClose }) => {
           className="w-full">
           Зарегистрироваться
         </Button>
-
-        <GoogleButton />
 
         <p className="mt-6 text-center text-sm">
           Уже есть аккаунт?{' '}

@@ -87,9 +87,7 @@ services:
       ELASTICSEARCH_PASSWORD: ${ELASTIC_PASSWORD}
       ELASTICSEARCH_TLS_INSECURE: "true"
       FRONTEND_URL: https://${DOMAIN}
-      NEXT_URL: https://${DOMAIN}
       YOOKASSA_RETURN_URL: https://${DOMAIN}/dashboard/profile?payment=success
-      GOOGLE_CALLBACK_URL: https://${DOMAIN}/api/auth/google/callback
       MEDIASOUP_ANNOUNCED_IP: ${MEDIASOUP_ANNOUNCED_IP}
       CHESS_RECOGNITION_DIR: /chess-recognition
       PYTHON_BIN: python3
