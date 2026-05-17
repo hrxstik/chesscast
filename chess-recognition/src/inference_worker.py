@@ -21,6 +21,7 @@ warnings.filterwarnings('ignore', message='.*pkg_resources.*')
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from improved_board_mapping import map_chessboard
+from model.hand_detector import close_hand_detector
 from model.stream_processor import StreamProcessor
 from shared_models import SharedInferenceModels
 
@@ -135,6 +136,7 @@ class InferenceWorker:
             return
 
         if cmd == 'shutdown':
+            close_hand_detector()
             self.emit({'event': 'shutdown'})
             sys.exit(0)
 

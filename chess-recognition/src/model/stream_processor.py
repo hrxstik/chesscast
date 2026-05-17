@@ -10,6 +10,7 @@ from collections import Counter
 from pathlib import Path
 from model.yolo11_detector import YOLO11Detector, BoardStateMapper
 from model.virtual_board import VirtualBoard
+from model.hand_detector import detect_hand_on_board
 import chess
 
 
@@ -82,17 +83,22 @@ class StreamProcessor:
         # Стабилизация состояний доски: храним последние N состояний для усреднения
         # Каждый элемент - это tuple (board_state, confidence_map)
         self.board_state_history = []  # type: List[Tuple[np.ndarray, np.ndarray]]
-        self.history_size = 10  # Увеличено количество кадров для стабилизации (было 5)
+        self.history_size = 5
         
-        # Стабилизация ходов: ход должен быть стабильным в нескольких кадрах
+        # Стабилизация ходов: ход должен быть стабильным в нескольких кадрах (~3 FPS)
         self.pending_move = None  # type: Optional[chess.Move]
         self.pending_move_frames = 0
-        self.move_confirmation_frames = 7  # Увеличено количество кадров для подтверждения хода (было 3)
+        self.move_confirmation_frames = 3
         
         # Предотвращение откатов: храним последний подтвержденный ход
         self.last_confirmed_move = None  # type: Optional[chess.Move]
-        self.move_lock_frames = 0  # Количество кадров после подтверждения хода, в течение которых игнорируем изменения
-        self.move_lock_duration = 10  # Количество кадров, в течение которых игнорируем изменения после подтверждения хода
+        self.move_lock_frames = 0
+        self.move_lock_duration = 3
+
+        # Рука на поле (MediaPipe Hands): подтверждение несколькими кадрами подряд
+        self.hand_confirm_frames = 2
+        self.hand_landmarks_inside_min = 3
+        self._hand_frames = 0
         
     def _load_mapping(self) -> Optional[Dict]:
         """Загрузка данных маппинга"""
@@ -182,7 +188,40 @@ class StreamProcessor:
                     'message': 'Model not loaded, detection disabled'
                 }
             }
-        
+
+        square_corners_grid = np.array(self.mapping_data['square_corners'])
+        hand_result = detect_hand_on_board(
+            warped,
+            square_corners_grid,
+            min_landmarks_inside=self.hand_landmarks_inside_min,
+        )
+        if hand_result.detected:
+            self._hand_frames += 1
+        else:
+            self._hand_frames = 0
+        hand_detected = hand_result.available and self._hand_frames >= self.hand_confirm_frames
+
+        if hand_detected:
+            if len(self.board_state_history) > 0:
+                frozen_board = self._stabilize_board_state(self.board_state_history)
+            elif self.previous_board_state is not None:
+                frozen_board = self.previous_board_state
+            else:
+                frozen_board = np.ones((8, 8), dtype=np.int32) * -1
+            return {
+                'status': 'processed',
+                'tracks': {},
+                'board_state': frozen_board.tolist(),
+                'tracks_count': 0,
+                'detections_info': {
+                    'total_detections': 0,
+                    'hand_detected': True,
+                    'hand_landmarks_inside': hand_result.landmarks_inside,
+                    'hand_mediapipe_available': hand_result.available,
+                    'message': 'Hand on board — position frozen',
+                },
+            }
+
         try:
             # Детекция идет на warped изображении (после перспективной трансформации)
             # Warped - это трансформированное изображение, где доска выровнена в квадрат
@@ -227,18 +266,18 @@ class StreamProcessor:
                         board_filtered_tracks.append(track)
                 
                 filtered_tracks = board_filtered_tracks
-            
-            # Детекция руки (простая проверка - если есть большие объекты в верхней части кадра)
-            # Можно улучшить, добавив специальную модель для детекции руки
-            hand_detected = self._detect_hand_simple(warped, filtered_tracks)
-            
-            # Логирование детекций для отладки
+
+            tracks_for_board = filtered_tracks
+
             detections_info = {
                 'total_detections': len(tracks),
                 'filtered_detections': len(filtered_tracks),
-                'hand_detected': False,  # Будет установлено ниже
+                'board_mapped_detections': len(tracks_for_board),
+                'hand_detected': hand_detected,
+                'hand_landmarks_inside': hand_result.landmarks_inside,
+                'hand_mediapipe_available': hand_result.available,
                 'classes_detected': {},
-                'detections_by_class': {}
+                'detections_by_class': {},
             }
             
             for track in filtered_tracks:
@@ -257,10 +296,6 @@ class StreamProcessor:
                     'bbox': track['bbox']
                 })
             
-            # Детекция руки (простая проверка - если есть большие объекты в верхней части кадра)
-            hand_detected = self._detect_hand_simple(warped, filtered_tracks)
-            detections_info['hand_detected'] = hand_detected
-            
             # Логирование детекций убрано - дублируется в NestJS
                 
         except Exception as e:
@@ -274,57 +309,31 @@ class StreamProcessor:
                 }
             }
         
-        # Преобразование треков в состояние доски (сырая сетка)
-        square_corners = np.array(self.mapping_data['square_corners'])
-        
-        # Детекция руки отключена - всегда обновляем доску
-        # if hand_detected:
-        #     # Используем последнее стабилизированное состояние из истории
-        #     if len(self.board_state_history) > 0:
-        #         current_board_state = self.board_state_history[-1][0].copy()  # Берем только board_state
-        #     elif self.previous_board_state is not None:
-        #         current_board_state = self.previous_board_state.copy()
-        #     else:
-        #         # Если нет истории, используем текущее (но не обновляем)
-        #         board_state_raw, _ = self.board_mapper.tracks_to_board_state(filtered_tracks, square_corners)
-        #         if self.index_map is not None:
-        #             current_board_state = self._apply_index_map(board_state_raw)
-        #         else:
-        #             current_board_state = board_state_raw
-        # else:
-        # Нормальная обработка - маппинг треков на доску (всегда)
-        if True:
-            # Нормальная обработка - маппинг треков на доску
-            board_state_raw = self.board_mapper.tracks_to_board_state(filtered_tracks, square_corners)
-            # BoardStateMapper возвращает только board_state, без confidence_map
-            confidence_map_raw = None
+        board_state_raw = self.board_mapper.tracks_to_board_state(
+            tracks_for_board, square_corners_grid,
+        )
 
-            # Если ориентация ещё не определена, пробуем авто-детекцию для стартовой позиции
-            if self.index_map is None:
-                # Передаем tracks для определения ориентации по bbox белых фигур
-                # Используем board_filtered_tracks если доступны, иначе filtered_tracks
-                tracks_for_orientation = board_filtered_tracks if 'board_filtered_tracks' in locals() else filtered_tracks
-                self._try_init_orientation(board_state_raw, tracks=tracks_for_orientation)
+        if self.index_map is None:
+            tracks_for_orientation = (
+                board_filtered_tracks if 'board_filtered_tracks' in locals() else tracks_for_board
+            )
+            self._try_init_orientation(board_state_raw, tracks=tracks_for_orientation)
 
-            # Применяем ориентацию, если index_map уже есть
-            if self.index_map is not None:
-                current_board_state_raw = self._apply_index_map(board_state_raw)
-            else:
-                # Фолбек: работаем в сырой системе, если ориентация не определена
-                current_board_state_raw = board_state_raw
-            
-            # BoardStateMapper не возвращает confidence_map, создаем пустой
-            current_confidence_map_raw = np.zeros((8, 8), dtype=np.float32)
-            
-            # Стабилизация состояния доски: добавляем в историю и усредняем
-            self.board_state_history.append((current_board_state_raw.copy(), current_confidence_map_raw.copy()))
-            if len(self.board_state_history) > self.history_size:
-                self.board_state_history.pop(0)
-            
-            # Усредняем состояние доски по истории (взвешенное голосование по каждому квадрату)
-            current_board_state = self._stabilize_board_state(self.board_state_history)
-        
-        # Определение хода (только если уже инициализирован, в ориентированной системе)
+        if self.index_map is not None:
+            current_board_state_raw = self._apply_index_map(board_state_raw)
+        else:
+            current_board_state_raw = board_state_raw
+
+        current_confidence_map_raw = np.zeros((8, 8), dtype=np.float32)
+
+        self.board_state_history.append(
+            (current_board_state_raw.copy(), current_confidence_map_raw.copy()),
+        )
+        if len(self.board_state_history) > self.history_size:
+            self.board_state_history.pop(0)
+
+        current_board_state = self._stabilize_board_state(self.board_state_history)
+
         move = None
         if self.initialized and self.previous_board_state is not None:
             move = self._detect_move_stable(current_board_state)
@@ -581,36 +590,6 @@ class StreamProcessor:
         ]
         return board
 
-    def _detect_hand_simple(self, warped_image: np.ndarray, tracks: List[Dict]) -> bool:
-        """
-        Простая детекция руки или больших посторонних объектов в кадре.
-        
-        Методы:
-        1. Проверка больших объектов в любой части кадра (рука, рукав, посторонние предметы)
-        2. Проверка очень больших bbox, которые могут быть рукой или чем-то посторонним
-        
-        Args:
-            warped_image: Выровненное изображение доски
-            tracks: Список треков фигур
-        
-        Returns:
-            True если большой объект обнаружен, False иначе
-        """
-        h, w = warped_image.shape[:2]
-        image_area = h * w
-        
-        # Проверяем все треки на наличие больших объектов в любой части кадра
-        for track in tracks:
-            x1, y1, x2, y2 = track['bbox']
-            bbox_area = (x2 - x1) * (y2 - y1)
-            
-            # Большой объект (больше 8% площади кадра) - вероятно рука, рукав или посторонний предмет
-            # Шахматные фигуры обычно занимают 1-3% площади кадра
-            if bbox_area > image_area * 0.08:
-                return True
-        
-        return False
-    
     def _apply_orientation(self, board_state: np.ndarray, orientation: str) -> np.ndarray:
         """
         Применяет поворот к board_state в зависимости от ориентации.
