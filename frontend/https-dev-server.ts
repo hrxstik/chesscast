@@ -4,10 +4,13 @@ import next from 'next';
 import fs from 'fs';
 import path from 'path';
 import { config } from 'dotenv';
-import { getLanIp } from './lib/utils';
+import { applyLanDevEnv, printLanBanner } from '../scripts/lan-env.mjs';
 
-config({ path: path.join(__dirname, '.env') });
-config({ path: path.join(__dirname, '.env.local'), override: true });
+const frontendDir = __dirname;
+config({ path: path.join(frontendDir, '.env') });
+config({ path: path.join(frontendDir, '.env.local'), override: true });
+
+const { frontOrigin, apiOrigin, protocol } = applyLanDevEnv({ https: true });
 
 const dev = process.env.NODE_ENV !== 'production';
 const hostname = process.env.HOSTNAME || '0.0.0.0';
@@ -16,13 +19,15 @@ const app = next({ dev, hostname, port });
 const handle = app.getRequestHandler();
 
 const certPath = process.env.SSL_CERT_PATH
-  ? path.resolve(__dirname, process.env.SSL_CERT_PATH)
+  ? path.resolve(frontendDir, process.env.SSL_CERT_PATH)
   : '';
-const keyPath = process.env.SSL_KEY_PATH ? path.resolve(__dirname, process.env.SSL_KEY_PATH) : '';
+const keyPath = process.env.SSL_KEY_PATH
+  ? path.resolve(frontendDir, process.env.SSL_KEY_PATH)
+  : '';
 
 if (!certPath || !keyPath || !fs.existsSync(certPath) || !fs.existsSync(keyPath)) {
-  console.error('❌ HTTPS certs not found. Set SSL_CERT_PATH and SSL_KEY_PATH in .env');
-  console.error('Example: SSL_CERT_PATH=../localhost+1.pem SSL_KEY_PATH=../localhost+1-key.pem');
+  console.error('❌ HTTPS certs not found. Set SSL_CERT_PATH and SSL_KEY_PATH in frontend/.env');
+  console.error('  mkcert -install && mkcert localhost 127.0.0.1 YOUR_LAN_IP');
   process.exit(1);
 }
 
@@ -43,15 +48,7 @@ app.prepare().then(() => {
     }
   })
     .listen({ port, host: hostname }, () => {
-      console.log('');
-      console.log(`  Local:   https://${hostname === '0.0.0.0' ? 'localhost' : hostname}:${port}`);
-      if (hostname === '0.0.0.0') {
-        const lanIp = getLanIp();
-        if (lanIp) {
-          console.log(`  Network: https://${lanIp}:${port}`);
-        }
-      }
-      console.log('');
+      printLanBanner({ frontOrigin, apiOrigin, protocol });
     })
     .on('error', (err) => {
       console.error('HTTPS server error:', err);

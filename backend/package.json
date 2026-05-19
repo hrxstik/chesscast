@@ -14,7 +14,7 @@
     "local:reset-db": "powershell -ExecutionPolicy Bypass -File ./scripts/local-reset-db.ps1",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate deploy",
-    "start:dev": "npm run local:up && nest start --watch",
+    "start:dev": "npm run local:up && node scripts/nest-dev.mjs",
     "start:debug": "nest start --debug --watch",
     "start:prod": "node dist/main",
     "lint": "eslint \"{src,apps,libs,test}/**/*.ts\" --fix",

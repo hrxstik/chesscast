@@ -3,9 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "npx tsx scripts/http-dev.ts",
+    "dev": "npx tsx scripts/https-dev.ts",
+    "dev:http": "npx tsx scripts/http-dev.ts",
     "dev:next": "next dev",
-    "dev:https": "npx tsx scripts/https-dev.ts",
     "build": "next build",
     "start": "next start",
     "lint": "eslint"
