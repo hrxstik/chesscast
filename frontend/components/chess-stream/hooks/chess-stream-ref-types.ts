@@ -20,4 +20,6 @@ export type ChessStreamRefs = {
   boardStateStableCountRef: RefObject<number>;
   gameStartedRef: RefObject<boolean>;
   viewerRef: RefObject<boolean>;
+  lastProducerIdRef: RefObject<string | null>;
+  mediaReconnectingRef: RefObject<boolean>;
 };

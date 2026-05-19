@@ -30,6 +30,7 @@ services:
     restart: unless-stopped
     environment:
       REDIS_PASSWORD: ${REDIS_PWD}
+    # Пароль обязателен в prod; локально см. docker-compose.yml (без пароля).
     command: >
       redis-server
       --requirepass ${REDIS_PWD}

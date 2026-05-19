@@ -4,18 +4,16 @@
 """
 from __future__ import annotations
 
-import sys
 import threading
 from dataclasses import dataclass
 from typing import Optional
 
 import cv2
+import mediapipe as mp
 import numpy as np
 
 _hands_solution = None
 _hands_lock = threading.Lock()
-_import_error: Optional[str] = None
-_warned_unavailable = False
 
 
 @dataclass
@@ -24,13 +22,6 @@ class HandDetectionResult:
     landmarks_inside: int
     hands_seen: int
     available: bool
-
-
-def _warn_once(message: str) -> None:
-    global _warned_unavailable
-    if not _warned_unavailable:
-        _warned_unavailable = True
-        print(f'[HAND] {message}', file=sys.stderr, flush=True)
 
 
 def _point_in_quad(px: float, py: float, quad: np.ndarray) -> bool:
@@ -54,16 +45,9 @@ def board_quad_from_square_corners(square_corners: np.ndarray) -> np.ndarray:
 
 
 def _get_hands():
-    global _hands_solution, _import_error
-    if _import_error is not None:
-        raise ImportError(_import_error)
+    global _hands_solution
     with _hands_lock:
         if _hands_solution is None:
-            try:
-                import mediapipe as mp
-            except ImportError as exc:
-                _import_error = str(exc)
-                raise
             _hands_solution = mp.solutions.hands.Hands(
                 static_image_mode=True,
                 max_num_hands=2,
@@ -87,12 +71,7 @@ def detect_hand_on_board(
     if warped_bgr is None or square_corners is None:
         return empty
 
-    try:
-        hands = _get_hands()
-    except ImportError as exc:
-        _warn_once(f'MediaPipe unavailable ({exc}); hand freeze disabled')
-        return HandDetectionResult(False, 0, 0, False)
-
+    hands = _get_hands()
     h, w = warped_bgr.shape[:2]
     if h == 0 or w == 0:
         return HandDetectionResult(False, 0, 0, True)

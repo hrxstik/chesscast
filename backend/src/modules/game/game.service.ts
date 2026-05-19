@@ -84,16 +84,7 @@ export class GameService {
     if (game.creatorId === viewerUserId) {
       return true;
     }
-    if (game.users.some((u) => u.userId === viewerUserId)) {
-      return true;
-    }
-    if (game.organizationId != null) {
-      return this.organizationService.isUserMember(
-        viewerUserId,
-        game.organizationId,
-      );
-    }
-    return false;
+    return game.users.some((u) => u.userId === viewerUserId);
   }
 
   async getPaginatedByUserId(

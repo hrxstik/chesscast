@@ -3,6 +3,12 @@
 import { useCallback } from 'react';
 import * as mediasoupClient from 'mediasoup-client';
 import type { ChessStreamRefs } from './chess-stream-ref-types';
+import {
+  type MediasoupConsumedPayload,
+  type MediasoupProducedPayload,
+  type MediasoupTransportPayload,
+} from '../lib/mediasoup-socket.types';
+import { waitSocketEvent } from '../lib/socket-once';
 
 export function useChessStreamMediasoup(
   gameToken: string,
@@ -10,7 +16,21 @@ export function useChessStreamMediasoup(
   setError: (msg: string | null) => void,
   setHasVideoStream: (v: boolean) => void,
 ) {
-  const { socketRef, deviceRef, sendTransportRef, recvTransportRef, producerRef, consumerRef, consumerCreatingRef, videoRef, streamRef, streamBackupRef } = refs;
+  const {
+    socketRef,
+    deviceRef,
+    sendTransportRef,
+    recvTransportRef,
+    producerRef,
+    consumerRef,
+    consumerCreatingRef,
+    videoRef,
+    streamRef,
+    streamBackupRef,
+    lastProducerIdRef,
+    mediaReconnectingRef,
+    viewerRef,
+  } = refs;
 
   const initMediasoupDevice = useCallback(
     async (rtpCapabilities: mediasoupClient.types.RtpCapabilities) => {
@@ -23,28 +43,47 @@ export function useChessStreamMediasoup(
     [deviceRef],
   );
 
+  const closeRecvSide = useCallback(() => {
+    if (consumerRef.current) {
+      consumerRef.current.close();
+      consumerRef.current = null;
+    }
+    if (recvTransportRef.current) {
+      recvTransportRef.current.close();
+      recvTransportRef.current = null;
+    }
+    if (videoRef.current) {
+      videoRef.current.srcObject = null;
+    }
+    setHasVideoStream(false);
+  }, [consumerRef, recvTransportRef, videoRef, setHasVideoStream]);
+
+  const requestViewerMediaReconnect = useCallback(() => {
+    if (!viewerRef.current || mediaReconnectingRef.current) return;
+    const socket = socketRef.current;
+    if (!socket?.connected) return;
+
+    mediaReconnectingRef.current = true;
+    closeRecvSide();
+    socket.emit('get-producers', { token: gameToken });
+    window.setTimeout(() => {
+      mediaReconnectingRef.current = false;
+    }, 2000);
+  }, [viewerRef, mediaReconnectingRef, socketRef, closeRecvSide, gameToken]);
+
   const createProducer = useCallback(
     async (stream: MediaStream) => {
       if (!socketRef.current || !deviceRef.current) {
         throw new Error('Socket or device not initialized');
       }
 
-      socketRef.current.emit('create-transport', {
-        token: gameToken,
-        direction: 'send',
-      });
+      const socket = socketRef.current;
+      socket.emit('create-transport', { token: gameToken, direction: 'send' });
 
-      const transportData = await new Promise<any>((resolve, reject) => {
-        const timeout = setTimeout(() => reject(new Error('Transport creation timeout')), 10000);
-        socketRef.current!.once('transport-created', (data: any) => {
-          clearTimeout(timeout);
-          resolve(data);
-        });
-        socketRef.current!.once('error', (error: any) => {
-          clearTimeout(timeout);
-          reject(new Error(error.message));
-        });
-      });
+      const transportData = await waitSocketEvent<MediasoupTransportPayload>(
+        socket,
+        'transport-created',
+      );
 
       const sendTransport = deviceRef.current.createSendTransport({
         id: transportData.id,
@@ -61,24 +100,8 @@ export function useChessStreamMediasoup(
           errback: (error: Error) => void,
         ) => {
           try {
-            socketRef.current!.emit('connect-transport', {
-              token: gameToken,
-              dtlsParameters,
-            });
-            await new Promise<void>((resolve, reject) => {
-              const timeout = setTimeout(
-                () => reject(new Error('Transport connect timeout')),
-                10000,
-              );
-              socketRef.current!.once('transport-connected', () => {
-                clearTimeout(timeout);
-                resolve();
-              });
-              socketRef.current!.once('error', (error: any) => {
-                clearTimeout(timeout);
-                reject(new Error(error.message));
-              });
-            });
+            socket.emit('connect-transport', { token: gameToken, dtlsParameters });
+            await waitSocketEvent(socket, 'transport-connected');
             callback();
           } catch (error) {
             errback(error as Error);
@@ -88,7 +111,8 @@ export function useChessStreamMediasoup(
 
       sendTransport.on('connectionstatechange', (state) => {
         if (state === 'failed' || state === 'disconnected') {
-          setError(`Подключение медиатранспорта: ${state}`);
+          setError(`Отправка видео: ${state}. Переподключение…`);
+          socket.emit('start-stream', { token: gameToken });
         }
       });
 
@@ -105,22 +129,12 @@ export function useChessStreamMediasoup(
           errback: (error: Error) => void,
         ) => {
           try {
-            socketRef.current!.emit('produce', {
+            socket.emit('produce', {
               token: gameToken,
               transportId: sendTransport.id,
               rtpParameters,
             });
-            const { id } = await new Promise<any>((resolve, reject) => {
-              const timeout = setTimeout(() => reject(new Error('Produce timeout')), 10000);
-              socketRef.current!.once('produced', (data: any) => {
-                clearTimeout(timeout);
-                resolve(data);
-              });
-              socketRef.current!.once('error', (error: any) => {
-                clearTimeout(timeout);
-                reject(new Error(error.message));
-              });
-            });
+            const { id } = await waitSocketEvent<MediasoupProducedPayload>(socket, 'produced');
             callback({ id });
           } catch (error) {
             errback(error as Error);
@@ -162,22 +176,13 @@ export function useChessStreamMediasoup(
       consumerCreatingRef.current = true;
 
       try {
-        socketRef.current.emit('create-transport', {
-          token: gameToken,
-          direction: 'recv',
-        });
+        const socket = socketRef.current;
+        socket.emit('create-transport', { token: gameToken, direction: 'recv' });
 
-        const transportData = await new Promise<any>((resolve, reject) => {
-          const timeout = setTimeout(() => reject(new Error('Transport creation timeout')), 10000);
-          socketRef.current!.once('transport-created', (data: any) => {
-            clearTimeout(timeout);
-            resolve(data);
-          });
-          socketRef.current!.once('error', (error: any) => {
-            clearTimeout(timeout);
-            reject(new Error(error.message));
-          });
-        });
+        const transportData = await waitSocketEvent<MediasoupTransportPayload>(
+          socket,
+          'transport-created',
+        );
 
         const recvTransport = deviceRef.current.createRecvTransport({
           id: transportData.id,
@@ -194,24 +199,8 @@ export function useChessStreamMediasoup(
             errback: (error: Error) => void,
           ) => {
             try {
-              socketRef.current!.emit('connect-transport', {
-                token: gameToken,
-                dtlsParameters,
-              });
-              await new Promise<void>((resolve, reject) => {
-                const timeout = setTimeout(
-                  () => reject(new Error('Transport connect timeout')),
-                  10000,
-                );
-                socketRef.current!.once('transport-connected', () => {
-                  clearTimeout(timeout);
-                  resolve();
-                });
-                socketRef.current!.once('error', (error: any) => {
-                  clearTimeout(timeout);
-                  reject(new Error(error.message));
-                });
-              });
+              socket.emit('connect-transport', { token: gameToken, dtlsParameters });
+              await waitSocketEvent(socket, 'transport-connected');
               callback();
             } catch (error) {
               errback(error as Error);
@@ -219,26 +208,22 @@ export function useChessStreamMediasoup(
           },
         );
 
+        recvTransport.on('connectionstatechange', (state) => {
+          if (state === 'failed' || state === 'disconnected') {
+            setTimeout(() => requestViewerMediaReconnect(), 500);
+          }
+        });
+
         recvTransportRef.current = recvTransport;
 
-        socketRef.current.emit('consume', {
+        socket.emit('consume', {
           token: gameToken,
           transportId: recvTransport.id,
           producerId,
           rtpCapabilities: deviceRef.current.rtpCapabilities,
         });
 
-        const consumerData = await new Promise<any>((resolve, reject) => {
-          const timeout = setTimeout(() => reject(new Error('Consume timeout')), 10000);
-          socketRef.current!.once('consumed', (data: any) => {
-            clearTimeout(timeout);
-            resolve(data);
-          });
-          socketRef.current!.once('error', (error: any) => {
-            clearTimeout(timeout);
-            reject(new Error(error.message));
-          });
-        });
+        const consumerData = await waitSocketEvent<MediasoupConsumedPayload>(socket, 'consumed');
 
         const consumer = await recvTransport.consume({
           id: consumerData.id,
@@ -248,18 +233,19 @@ export function useChessStreamMediasoup(
         });
 
         consumerRef.current = consumer;
+        lastProducerIdRef.current = producerId;
         consumer.track.enabled = true;
         if (consumer.paused) {
           consumer.resume();
         }
 
-        socketRef.current?.emit('resume-consumer', {
+        socket.emit('resume-consumer', {
           token: gameToken,
           consumerId: consumer.id,
         });
 
         consumer.on('transportclose', () => {
-          setHasVideoStream(false);
+          requestViewerMediaReconnect();
         });
 
         const stream = new MediaStream([consumer.track]);
@@ -274,7 +260,7 @@ export function useChessStreamMediasoup(
           video.playsInline = true;
           video.autoplay = true;
           consumer.track.onended = () => {
-            setHasVideoStream(false);
+            requestViewerMediaReconnect();
           };
           try {
             await video.play();
@@ -300,9 +286,11 @@ export function useChessStreamMediasoup(
       videoRef,
       streamRef,
       streamBackupRef,
+      lastProducerIdRef,
       setHasVideoStream,
+      requestViewerMediaReconnect,
     ],
   );
 
-  return { initMediasoupDevice, createProducer, createConsumer };
+  return { initMediasoupDevice, createProducer, createConsumer, requestViewerMediaReconnect };
 }

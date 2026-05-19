@@ -24,6 +24,8 @@ export function useChessStreamRefs(): ChessStreamRefs {
   const boardStateStableCountRef = useRef(0);
   const gameStartedRef = useRef(false);
   const viewerRef = useRef(false);
+  const lastProducerIdRef = useRef<string | null>(null);
+  const mediaReconnectingRef = useRef(false);
 
   return useMemo(
     () => ({
@@ -43,6 +45,8 @@ export function useChessStreamRefs(): ChessStreamRefs {
       boardStateStableCountRef,
       gameStartedRef,
       viewerRef,
+      lastProducerIdRef,
+      mediaReconnectingRef,
     }),
     [
       videoRef,
@@ -61,6 +65,8 @@ export function useChessStreamRefs(): ChessStreamRefs {
       boardStateStableCountRef,
       gameStartedRef,
       viewerRef,
+      lastProducerIdRef,
+      mediaReconnectingRef,
     ],
   );
 }

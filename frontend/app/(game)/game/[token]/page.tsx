@@ -8,6 +8,7 @@ import { SquareChessboard } from '@/components/game/square-chessboard';
 import { ChessAnalysisShell } from '@/components/game/chess-analysis-shell';
 import { Button } from '@/components/ui/button';
 import { SkipBack, SkipForward, StepBack, StepForward } from 'lucide-react';
+import Link from 'next/link';
 import { fetchGameSessionPublic, type GameSessionPublic } from '@/lib/api/game-session';
 
 type Props = {
@@ -32,7 +33,7 @@ export default function GamePage({ params }: Props) {
         return;
       }
       if ('forbidden' in res) {
-        setStatusText('Нет доступа к партии');
+        setStatusText('forbidden');
         return;
       }
       setStatusText('Партия не найдена');
@@ -71,6 +72,17 @@ export default function GamePage({ params }: Props) {
               {session.mode} · {session.status} · {session.result}
               {session.organization ? ` · ${session.organization.name}` : ''}
             </Text>
+          ) : statusText === 'forbidden' ? (
+            <div className="space-y-3">
+              <Text className="text-muted-foreground">
+                Эта партия приватная. Доступ только у создателя и игроков, указанных в партии.
+              </Text>
+              <Link
+                href={`/login?next=${encodeURIComponent(`/game/${token}`)}`}
+                className="text-sm font-medium text-primary underline-offset-4 hover:underline">
+                Войти, чтобы проверить доступ
+              </Link>
+            </div>
           ) : (
             <Text className="text-muted-foreground">{statusText}</Text>
           )}

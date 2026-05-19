@@ -27,8 +27,6 @@ model User {
   organizationsOwned Organization[]     @relation("OrganizationOwner")
 
   verified   DateTime?
-  provider   String?
-  providerId String?
 
   verificationCodes VerificationCode[]
   createdAt         DateTime           @default(now())

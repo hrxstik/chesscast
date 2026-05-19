@@ -1,0 +1,67 @@
+# Локальная инфраструктура для разработки.
+# Запуск: docker compose up -d   (или npm run local:up в backend/)
+# Остановка: docker compose down
+
+name: chesscast-dev
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: chesscast
+      POSTGRES_PASSWORD: chesscast
+      POSTGRES_DB: chesscast
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_dev_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U chesscast -d chesscast"]
+      interval: 5s
+      timeout: 5s
+      retries: 15
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_dev_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 15
+
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.14.3
+    container_name: chesscast-elasticsearch
+    restart: unless-stopped
+    environment:
+      discovery.type: single-node
+      ELASTIC_PASSWORD: chesscast_es_dev
+      ES_JAVA_OPTS: -Xms512m -Xmx512m
+      xpack.security.enabled: "true"
+      xpack.security.http.ssl.enabled: "true"
+    ports:
+      - "9200:9200"
+    volumes:
+      - elasticsearch_dev_data:/usr/share/elasticsearch/data
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "curl -fsSk -u elastic:chesscast_es_dev https://127.0.0.1:9200/_cluster/health?wait_for_status=yellow&timeout=5s || exit 1",
+        ]
+      interval: 15s
+      timeout: 10s
+      retries: 25
+      start_period: 90s
+
+volumes:
+  postgres_dev_data:
+  redis_dev_data:
+  elasticsearch_dev_data:

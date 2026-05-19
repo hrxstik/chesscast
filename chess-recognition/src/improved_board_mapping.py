@@ -11,15 +11,39 @@ from typing import Tuple, List, Optional, Dict
 from datetime import datetime
 from model.yolo11_detector import YOLO11Detector
 
-# Импорты для ResNet модели
-try:
-    import torch
-    import torch.nn as nn
-    from torchvision import models, transforms
-    from PIL import Image
-    TORCH_AVAILABLE = True
-except ImportError:
-    TORCH_AVAILABLE = False
+import torch
+import torch.nn as nn
+from torchvision import models, transforms
+from PIL import Image
+
+
+class CornerRegressor(nn.Module):
+    """Модель ResNet для регрессии углов доски (8 координат)"""
+
+    def __init__(self, model_name: str = 'resnet34', pretrained: bool = False):
+        super().__init__()
+        self.model_name = model_name
+
+        if model_name == 'resnet18':
+            self.backbone = models.resnet18(weights=None)
+        elif model_name == 'resnet34':
+            self.backbone = models.resnet34(weights=None)
+        elif model_name == 'resnet50':
+            self.backbone = models.resnet50(weights=None)
+        else:
+            raise ValueError(f"Неизвестная ResNet модель: {model_name}")
+
+        in_features = self.backbone.fc.in_features
+        self.backbone.fc = nn.Sequential(
+            nn.Linear(in_features, 512),
+            nn.ReLU(),
+            nn.Dropout(0.2),
+            nn.Linear(512, 8),
+        )
+
+    def forward(self, x):
+        output = self.backbone(x)
+        return torch.sigmoid(output)
 
 # Параметры маппинга
 OUTPUT_IMAGE_SIZE = (640, 640)
@@ -148,34 +172,6 @@ def _default_corner_model_path() -> str:
     return str(possible_paths[0])
 
 
-class CornerRegressor(nn.Module):
-    """Модель ResNet для регрессии углов доски (8 координат)"""
-    def __init__(self, model_name: str = 'resnet34', pretrained: bool = False):
-        super().__init__()
-        self.model_name = model_name
-        
-        if model_name == 'resnet18':
-            self.backbone = models.resnet18(weights=None)
-        elif model_name == 'resnet34':
-            self.backbone = models.resnet34(weights=None)
-        elif model_name == 'resnet50':
-            self.backbone = models.resnet50(weights=None)
-        else:
-            raise ValueError(f"Неизвестная ResNet модель: {model_name}")
-        
-        in_features = self.backbone.fc.in_features
-        self.backbone.fc = nn.Sequential(
-            nn.Linear(in_features, 512),
-            nn.ReLU(),
-            nn.Dropout(0.2),
-            nn.Linear(512, 8)
-        )
-    
-    def forward(self, x):
-        output = self.backbone(x)
-        return torch.sigmoid(output)
-
-
 def _detect_board_corners_resnet(image: np.ndarray, 
                                   model_path: Optional[str] = None,
                                   img_size: int = 640,
@@ -199,10 +195,6 @@ def _detect_board_corners_resnet(image: np.ndarray,
     Returns:
         Массив из 4 углов доски (4, 2) в координатах исходного изображения или None
     """
-    if not TORCH_AVAILABLE:
-        print("[RESNET] PyTorch not available, cannot use ResNet detection", file=sys.stderr, flush=True)
-        return None
-    
     if preloaded_corner_bundle is None:
         if model_path is None:
             model_path = _default_corner_model_path()
@@ -796,7 +788,7 @@ def map_chessboard(image: np.ndarray,
         
         # Шаг 1: Определение границ доски через ResNet модель
         # Определяем устройство (GPU если доступно, иначе CPU)
-        device = 'cuda' if TORCH_AVAILABLE and torch.cuda.is_available() else 'cpu'
+        device = 'cuda' if torch.cuda.is_available() else 'cpu'
         
         # Используем YOLO для предварительного кропа области доски (если модель доступна)
         yolo_model_path = model_path if model_path else None

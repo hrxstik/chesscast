@@ -82,7 +82,8 @@ export function useChessStreamWebRtc({
       transports: ['websocket'],
       reconnection: true,
       reconnectionDelay: 1000,
-      reconnectionAttempts: 5,
+      reconnectionDelayMax: 5000,
+      reconnectionAttempts: Infinity,
       secure: wsUrl.startsWith('https://'),
     });
 

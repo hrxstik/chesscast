@@ -1,10 +1,10 @@
-import { Container } from '@/components/shared/container';
-import { Section } from '@/components/ui/section';
-import { H1, H2, Lead, Text } from '@/components/ui/typography';
-import { YouTubeEmbed } from '@/components/shared/youtube-embed';
-import Link from 'next/link';
-import { Button } from '@/components/ui/button';
-import { Card, CardContent } from '@/components/ui/card';
+import { Container } from "@/components/shared/container";
+import { Section } from "@/components/ui/section";
+import { H1, H2, Lead, Text } from "@/components/ui/typography";
+import { YouTubeEmbed } from "@/components/shared/youtube-embed";
+import Link from "next/link";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent } from "@/components/ui/card";
 import {
   ArrowRight,
   Brain,
@@ -13,7 +13,7 @@ import {
   Sparkles,
   Trophy,
   Users,
-} from 'lucide-react';
+} from "lucide-react";
 
 export default function RootPage() {
   return (
@@ -24,22 +24,22 @@ export default function RootPage() {
           <div className="pointer-events-none absolute -right-20 -top-20 size-64 rounded-full bg-primary/5 blur-3xl laptop:size-80" />
           <div className="pointer-events-none absolute -bottom-16 -left-16 size-48 rounded-full bg-primary/10 blur-2xl" />
           <div className="relative mx-auto max-w-4xl text-center">
-            <div className="mb-4 inline-flex items-center gap-2 rounded-full border border-border bg-background/80 px-3 py-1 text-xs font-medium text-muted-foreground backdrop-blur md:text-sm">
-              <Sparkles className="size-3.5 text-primary md:size-4" aria-hidden />
-              Физические шахматы в вебе
-            </div>
             <H1 className="text-balance">
-              Добро пожаловать в ChessCast — платформу для анализа физических шахматных партий в
-              реальном времени
+              Добро пожаловать в ChessCast — платформу для анализа физических
+              шахматных партий в реальном времени
             </H1>
             <Lead className="mx-auto mt-5 max-w-2xl text-pretty">
-              Улучшайте свои навыки в шахматах с помощью анализа партий в реальном времени. Наш сервис
-              подходит как новичкам, так и профессионалам. ChessCast можно использовать как в личных
-              целях, так и для игры в шахматной организации или на турнирах.
+              Улучшайте свои навыки в шахматах с помощью анализа партий в
+              реальном времени. Наш сервис подходит как новичкам, так и
+              профессионалам. ChessCast можно использовать как в личных целях,
+              так и для игры в шахматной организации или на турнирах.
             </Lead>
             <div className="mt-8 flex flex-wrap justify-center gap-3">
               <Button asChild>
-                <Link href="/register" className="inline-flex items-center gap-2">
+                <Link
+                  href="/register"
+                  className="inline-flex items-center gap-2"
+                >
                   Зарегистрироваться и начать играть
                   <ArrowRight className="size-4" aria-hidden />
                 </Link>
@@ -56,7 +56,8 @@ export default function RootPage() {
       <Section className="py-8 md:py-10 lg:py-12">
         <H2 className="text-center">Возможности платформы</H2>
         <Text className="mx-auto mt-3 max-w-2xl text-center text-muted-foreground">
-          Стрим, зрительский режим, компьютерное зрение и движок — в одном контуре с вашим клубом.
+          Стрим, зрительский режим, компьютерное зрение и движок — в одном
+          контуре с вашим клубом.
         </Text>
         <div className="mt-10 grid gap-4 md:grid-cols-2 lg:grid-cols-3 lg:gap-6">
           <Card className="border-border/80 transition-shadow hover:shadow-md">
@@ -64,10 +65,12 @@ export default function RootPage() {
               <div className="flex size-11 items-center justify-center rounded-lg bg-primary/10 text-primary">
                 <Camera className="size-5" aria-hidden />
               </div>
-              <h3 className="text-lg font-semibold tracking-tight">Камера и стрим</h3>
+              <h3 className="text-lg font-semibold tracking-tight">
+                Камера и стрим
+              </h3>
               <Text className="text-muted-foreground">
-                Штатив и телефон — запись партии в реальном времени; зрители видят доску и контекст
-                игры.
+                Штатив и телефон — запись партии в реальном времени; зрители
+                видят доску и контекст игры.
               </Text>
             </CardContent>
           </Card>
@@ -76,10 +79,12 @@ export default function RootPage() {
               <div className="flex size-11 items-center justify-center rounded-lg bg-primary/10 text-primary">
                 <Brain className="size-5" aria-hidden />
               </div>
-              <h3 className="text-lg font-semibold tracking-tight">Компьютерное зрение</h3>
+              <h3 className="text-lg font-semibold tracking-tight">
+                Компьютерное зрение
+              </h3>
               <Text className="text-muted-foreground">
-                Система анализирует положение фигур по видео и передаёт состояние партии на сервер для
-                анализа и истории.
+                Система анализирует положение фигур по видео и передаёт
+                состояние партии на сервер для анализа и истории.
               </Text>
             </CardContent>
           </Card>
@@ -88,10 +93,12 @@ export default function RootPage() {
               <div className="flex size-11 items-center justify-center rounded-lg bg-primary/10 text-primary">
                 <History className="size-5" aria-hidden />
               </div>
-              <h3 className="text-lg font-semibold tracking-tight">История и организации</h3>
+              <h3 className="text-lg font-semibold tracking-tight">
+                История и организации
+              </h3>
               <Text className="text-muted-foreground">
-                Оцифрованные партии в личной истории, в шахматной организации и при просмотре игр
-                других игроков.
+                Оцифрованные партии в личной истории, в шахматной организации и
+                при просмотре игр других игроков.
               </Text>
             </CardContent>
           </Card>
@@ -104,19 +111,22 @@ export default function RootPage() {
           <div className="space-y-6">
             <H2>Как работает ChessCast?</H2>
             <Text className="text-muted-foreground">
-              Для анализа партии в реальном времени используется интеллектуальная система, которая
-              использует компьютерное зрение, чтобы анализировать доску и предсказывать ходы. Для
-              работы нашего сервиса вам необходимы штатив и телефон, чтобы записывать партии в
+              Для анализа партии в реальном времени используется
+              интеллектуальная система, которая использует компьютерное зрение,
+              чтобы анализировать доску и предсказывать ходы. Для работы нашего
+              сервиса вам необходимы штатив и телефон, чтобы записывать партии в
               реальном времени.
             </Text>
             <Text className="text-muted-foreground">
-              Запись с камеры телефона передаётся на сервер, где определяется текущее положение игры,
-              и с помощью шахматного движка <strong className="text-foreground">Stockfish 17.1</strong>{' '}
+              Запись с камеры телефона передаётся на сервер, где определяется
+              текущее положение игры, и с помощью шахматного движка{" "}
+              <strong className="text-foreground">Stockfish 17.1</strong>{" "}
               оценивается позиция и подсказываются идеи ходов.
             </Text>
             <Text className="text-muted-foreground">
-              Помимо live-анализа вы можете использовать ChessCast для личных тренировок и просмотра
-              сохранённых партий — в своей истории, в организации или у других игроков.
+              Помимо live-анализа вы можете использовать ChessCast для личных
+              тренировок и просмотра сохранённых партий — в своей истории, в
+              организации или у других игроков.
             </Text>
           </div>
           <Card className="overflow-hidden border-border/80 shadow-sm lg:sticky lg:top-28">
@@ -138,16 +148,22 @@ export default function RootPage() {
               <Trophy className="size-7 md:size-8" aria-hidden />
             </div>
             <div className="min-w-0 flex-1 space-y-2">
-              <H2 className="!text-xl md:!text-2xl laptop:!text-3xl">Турниры</H2>
+              <H2 className="!text-xl md:!text-2xl laptop:!text-3xl">
+                Турниры
+              </H2>
               <Text className="text-muted-foreground md:text-base">
-                Организации могут проводить турниры, записывая сразу несколько игр одновременно.
-                ChessCast позволяет следить за несколькими играми сразу. Ваша шахматная организация
-                может использовать ChessCast на турнирах вместо электронных досок.
+                Организации могут проводить турниры, записывая сразу несколько
+                игр одновременно. ChessCast позволяет следить за несколькими
+                играми сразу. Ваша шахматная организация может использовать
+                ChessCast на турнирах вместо электронных досок.
               </Text>
             </div>
             <div className="flex shrink-0 flex-wrap gap-2 md:flex-col">
               <Button asChild variant="outline">
-                <Link href="/pricing" className="inline-flex items-center gap-2">
+                <Link
+                  href="/pricing"
+                  className="inline-flex items-center gap-2"
+                >
                   <Users className="size-4" aria-hidden />
                   Тарифы для клубов
                 </Link>
@@ -163,8 +179,9 @@ export default function RootPage() {
           <CardContent className="space-y-4 pt-8 md:pt-10">
             <H2>Начать играть</H2>
             <Text className="text-muted-foreground">
-              Присоединяйтесь к сообществу, изучайте стратегии, анализируйте свои игры, следите за
-              турнирами и развивайте мастерство с современными шахматными технологиями.
+              Присоединяйтесь к сообществу, изучайте стратегии, анализируйте
+              свои игры, следите за турнирами и развивайте мастерство с
+              современными шахматными технологиями.
             </Text>
             <div className="flex flex-wrap justify-center gap-3 pt-2">
               <Button asChild>

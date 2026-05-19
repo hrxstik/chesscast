@@ -1,5 +1,11 @@
 import { Injectable } from '@nestjs/common';
-import { GameMode, GameStatus, Organization, Prisma } from '@prisma/client';
+import {
+  GameMode,
+  GameStatus,
+  GameVisibility,
+  Organization,
+  Prisma,
+} from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 
 @Injectable()
@@ -67,6 +73,7 @@ export class OrganizationRepository {
 
   async getGames(
     organizationId: number,
+    requesterUserId: number,
     filters?: {
       status?: string;
       mode?: string;
@@ -77,6 +84,11 @@ export class OrganizationRepository {
     const where: Prisma.GameWhereInput = {
       organizationId,
       deletedAt: null,
+      OR: [
+        { visibility: GameVisibility.PUBLIC },
+        { creatorId: requesterUserId },
+        { users: { some: { userId: requesterUserId } } },
+      ],
     };
     if (filters?.status && Object.values(GameStatus).includes(filters.status as GameStatus)) {
       where.status = filters.status as GameStatus;

@@ -306,15 +306,28 @@ export function registerChessStreamSocketHandlers(
     setError(error.message);
   });
 
-  newSocket.on('disconnect', () => {
+  newSocket.on('disconnect', (reason) => {
     setIsStreaming(false);
-    setCalibrationInProgress(false);
-    setCalibrationCompleted(false);
-    setCalibrationMessage(null);
-    setGameStarted(false);
-    if (frameIntervalRef.current) {
-      clearInterval(frameIntervalRef.current);
-      frameIntervalRef.current = null;
+    if (reason === 'io server disconnect') {
+      setCalibrationInProgress(false);
+      setCalibrationCompleted(false);
+      setCalibrationMessage(null);
+      setGameStarted(false);
+      if (frameIntervalRef.current) {
+        clearInterval(frameIntervalRef.current);
+        frameIntervalRef.current = null;
+      }
+    }
+  });
+
+  newSocket.on('reconnect', () => {
+    setError(null);
+    if (viewerRef.current) {
+      newSocket.emit('join-stream', { token: gameToken });
+      newSocket.emit('get-router-rtp-capabilities', { token: gameToken });
+      newSocket.emit('get-producers', { token: gameToken });
+    } else if (streamRef.current) {
+      newSocket.emit('start-stream', { token: gameToken, modelPath });
     }
   });
 }

@@ -328,7 +328,7 @@ export class OrganizationService {
     }
     const from = filters?.from ? new Date(filters.from) : undefined;
     const to = filters?.to ? new Date(filters.to) : undefined;
-    return this.organizationRepository.getGames(organizationId, {
+    return this.organizationRepository.getGames(organizationId, requesterUserId, {
       status: filters?.status,
       mode: filters?.mode,
       from: from && !Number.isNaN(from.getTime()) ? from : undefined,
@@ -343,10 +343,14 @@ export class OrganizationService {
   ) {
     await this.assertUserHasAccess(requesterUserId, organizationId);
     const org = await this.findById(organizationId);
-    const games = await this.organizationRepository.getGames(organizationId, {
-      from: filters?.from ? new Date(filters.from) : undefined,
-      to: filters?.to ? new Date(filters.to) : undefined,
-    });
+    const games = await this.organizationRepository.getGames(
+      organizationId,
+      requesterUserId,
+      {
+        from: filters?.from ? new Date(filters.from) : undefined,
+        to: filters?.to ? new Date(filters.to) : undefined,
+      },
+    );
     const logs = [
       {
         type: 'ORGANIZATION_CREATED',
