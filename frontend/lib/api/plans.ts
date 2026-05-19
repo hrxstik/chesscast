@@ -1,11 +1,5 @@
 import { ApiRoutes } from '../services/routes';
-
-function pricingUrl(): string {
-  const base =
-    process.env.NEXT_PUBLIC_NEST_API_URL?.replace(/\/$/, '') ||
-    'http://localhost:5000/api';
-  return `${base}/${ApiRoutes.GET_PRICING}`;
-}
+import { serverApiFetch } from './server-fetch';
 
 export type PlanDto = {
   id: number;
@@ -17,11 +11,13 @@ export type PlanDto = {
 };
 
 export async function fetchPlans(): Promise<PlanDto[]> {
-  const res = await fetch(pricingUrl(), {
+  const res = await serverApiFetch(`/${ApiRoutes.GET_PRICING}`, {
     next: { revalidate: 600 },
   });
   if (!res.ok) {
-    throw new Error(`Не удалось загрузить тарифы (${res.status}). Проверьте, что API запущен.`);
+    throw new Error(
+      `Не удалось загрузить тарифы (${res.status}). Проверьте, что API запущен (npm run start:dev в backend).`,
+    );
   }
   const data = (await res.json()) as PlanDto[];
   if (!Array.isArray(data) || data.length === 0) {
