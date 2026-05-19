@@ -10,7 +10,10 @@ import {
 import { Server, Socket } from 'socket.io';
 import { Logger } from '@nestjs/common';
 import { join } from 'path';
-import { ChessRecognitionService } from './chess-recognition.service';
+import {
+  ChessRecognitionService,
+  type FrameProcessedResult,
+} from './chess-recognition.service';
 import { MediasoupService } from './mediasoup.service';
 import sharp from 'sharp';
 
@@ -346,11 +349,11 @@ export class ChessRecognitionGateway
         this.chessRecognitionService.startStreamProcessing(
           token,
           defaultModelPath,
-          (result) => {
+          (result: FrameProcessedResult) => {
             // Логирование информации о детекциях
             if (result?.detections_info) {
               const detInfo = result.detections_info;
-              if (detInfo.total_detections > 0) {
+              if ((detInfo.total_detections ?? 0) > 0) {
                 const classesStr = Object.entries(
                   detInfo.classes_detected || {},
                 )
@@ -769,11 +772,11 @@ export class ChessRecognitionGateway
         this.chessRecognitionService.startStreamProcessing(
           token,
           defaultModelPath,
-          (result) => {
+          (result: FrameProcessedResult) => {
             // Логирование информации о детекциях
             if (result?.detections_info) {
               const detInfo = result.detections_info;
-              if (detInfo.total_detections > 0) {
+              if ((detInfo.total_detections ?? 0) > 0) {
                 const classesStr = Object.entries(
                   detInfo.classes_detected || {},
                 )
@@ -965,11 +968,11 @@ export class ChessRecognitionGateway
           this.chessRecognitionService.startStreamProcessing(
             token,
             defaultModelPath,
-            (result) => {
+            (result: FrameProcessedResult) => {
               // Логирование информации о детекциях
               if (result?.detections_info) {
                 const detInfo = result.detections_info;
-                if (detInfo.total_detections > 0) {
+                if ((detInfo.total_detections ?? 0) > 0) {
                   const classesStr = Object.entries(
                     detInfo.classes_detected || {},
                   )

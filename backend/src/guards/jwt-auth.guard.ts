@@ -6,10 +6,14 @@ import {
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { Request } from 'express';
+import { AuthSessionService } from '../modules/auth/auth-session.service';
 
 @Injectable()
 export class JwtAuthGuard implements CanActivate {
-  constructor(private readonly jwtService: JwtService) {}
+  constructor(
+    private readonly jwtService: JwtService,
+    private readonly sessions: AuthSessionService,
+  ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const request: Request = context.switchToHttp().getRequest();
@@ -26,16 +30,18 @@ export class JwtAuthGuard implements CanActivate {
       throw new UnauthorizedException('Bearer token missing or malformed');
     }
 
-    if (!token) {
-      throw new UnauthorizedException('JWT token is missing');
-    }
-
     try {
       const payload = (await this.jwtService.verifyAsync(token)) as {
         sub: number;
         email?: string;
         platformRole?: string;
+        jti?: string;
       };
+
+      if (await this.sessions.isAccessTokenRevoked(payload.jti)) {
+        throw new UnauthorizedException('Token revoked');
+      }
+
       request['user'] = {
         id: payload.sub,
         email: payload.email,
@@ -43,15 +49,8 @@ export class JwtAuthGuard implements CanActivate {
       };
       return true;
     } catch (err) {
+      if (err instanceof UnauthorizedException) throw err;
       throw new UnauthorizedException('Invalid or expired JWT token');
     }
-  }
-
-  private extractTokenFromHeader(request: Request): string | undefined {
-    const authHeader = request.headers['authorization'];
-    if (!authHeader) return undefined;
-
-    const [type, token] = authHeader.split(' ');
-    return type === 'Bearer' ? token : undefined;
   }
 }

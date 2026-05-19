@@ -34,9 +34,9 @@ export class GameController {
   @Get('user/:userId')
   async getGamesByUserId(
     @Param('userId', ParseIntPipe) userId: number,
+    @Req() req: Request & { user: RequestUser },
     @Query('skip') skip?: string,
     @Query('take') take?: string,
-    @Req() req: Request & { user: RequestUser },
   ) {
     if (req.user.id !== userId) {
       throw new ForbiddenException('Можно запрашивать только свои партии');

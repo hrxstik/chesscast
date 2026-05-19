@@ -7,6 +7,7 @@ import { config } from 'dotenv';
 import { getLanIp } from './lib/utils';
 
 config({ path: path.join(__dirname, '.env') });
+config({ path: path.join(__dirname, '.env.local'), override: true });
 
 const dev = process.env.NODE_ENV !== 'production';
 const hostname = process.env.HOSTNAME || '0.0.0.0';

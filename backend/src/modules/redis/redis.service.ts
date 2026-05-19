@@ -35,21 +35,53 @@ export class RedisService {
     return this.client.del(key);
   }
 
-  async delPattern(pattern: string): Promise<void> {
-    const stream = this.client.scanStream({
-      match: pattern,
-      count: 100,
-    });
-
-    stream.on('data', (keys: string[]) => {
-      if (keys.length) {
-        this.client.del(...keys).catch(console.error);
+  async delPattern(pattern: string): Promise<number> {
+    let deleted = 0;
+    let cursor = '0';
+    do {
+      const [next, keys] = await this.client.scan(
+        cursor,
+        'MATCH',
+        pattern,
+        'COUNT',
+        200,
+      );
+      cursor = next;
+      if (keys.length > 0) {
+        deleted += await this.client.del(...keys);
       }
-    });
+    } while (cursor !== '0');
+    return deleted;
+  }
 
-    return new Promise((resolve, reject) => {
-      stream.on('end', () => resolve());
-      stream.on('error', (err) => reject(err));
-    });
+  async setJson(key: string, value: unknown, ttlSeconds?: number): Promise<void> {
+    const payload = JSON.stringify(value);
+    if (ttlSeconds && ttlSeconds > 0) {
+      await this.client.set(key, payload, 'EX', ttlSeconds);
+    } else {
+      await this.client.set(key, payload);
+    }
+  }
+
+  async getJson<T>(key: string): Promise<T | undefined> {
+    const raw = await this.client.get(key);
+    if (raw == null) return undefined;
+    try {
+      return JSON.parse(raw) as T;
+    } catch {
+      return undefined;
+    }
+  }
+
+  /** GET + DEL atomically; true if key existed. */
+  async consumeKey(key: string): Promise<boolean> {
+    const script = `
+      local v = redis.call('GET', KEYS[1])
+      if not v then return 0 end
+      redis.call('DEL', KEYS[1])
+      return 1
+    `;
+    const result = await this.client.eval(script, 1, key);
+    return Number(result) === 1;
   }
 }

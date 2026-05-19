@@ -1,15 +1,45 @@
 import { getApiUrl } from '@/lib/utils';
 import { ApiError } from './types';
 import { useAuthStore } from '@/store/auth-store';
+import { refreshRequest } from './auth';
 
 type RequestOptions = Omit<RequestInit, 'body'> & {
   body?: unknown;
   skipAuth?: boolean;
 };
 
-function getToken(): string | null {
-  if (typeof window === 'undefined') return null;
-  return useAuthStore.getState().accessToken;
+function getTokens(): { access: string | null; refresh: string | null } {
+  if (typeof window === 'undefined') {
+    return { access: null, refresh: null };
+  }
+  const state = useAuthStore.getState();
+  return { access: state.accessToken, refresh: state.refreshToken };
+}
+
+let refreshInFlight: Promise<string | null> | null = null;
+
+async function tryRefreshAccessToken(): Promise<string | null> {
+  const { refresh } = getTokens();
+  if (!refresh) return null;
+
+  if (!refreshInFlight) {
+    refreshInFlight = refreshRequest(refresh)
+      .then((data) => {
+        useAuthStore
+          .getState()
+          .setTokens(data.access_token, data.refresh_token);
+        return data.access_token;
+      })
+      .catch(() => {
+        useAuthStore.getState().clearAuth();
+        return null;
+      })
+      .finally(() => {
+        refreshInFlight = null;
+      });
+  }
+
+  return refreshInFlight;
 }
 
 export async function apiFetch<T>(
@@ -24,23 +54,35 @@ export async function apiFetch<T>(
     headers.set('Content-Type', 'application/json');
   }
 
+  let token: string | null = null;
   if (!skipAuth) {
-    const token = getToken();
+    token = getTokens().access;
     if (token) {
       headers.set('Authorization', `Bearer ${token}`);
     }
   }
 
-  const res = await fetch(url, {
-    ...rest,
-    headers,
-    body:
-      body === undefined
-        ? undefined
-        : body instanceof FormData
-          ? body
-          : JSON.stringify(body),
-  });
+  const doFetch = () =>
+    fetch(url, {
+      ...rest,
+      headers,
+      body:
+        body === undefined
+          ? undefined
+          : body instanceof FormData
+            ? body
+            : JSON.stringify(body),
+    });
+
+  let res = await doFetch();
+
+  if (res.status === 401 && !skipAuth) {
+    const newToken = await tryRefreshAccessToken();
+    if (newToken) {
+      headers.set('Authorization', `Bearer ${newToken}`);
+      res = await doFetch();
+    }
+  }
 
   const text = await res.text();
   let data: unknown = undefined;

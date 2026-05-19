@@ -1,11 +1,15 @@
 import { CanActivate, ExecutionContext, Injectable } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { Request } from 'express';
+import { AuthSessionService } from '../modules/auth/auth-session.service';
 
 /** Прикрепляет user к запросу, если передан валидный Bearer JWT; иначе user отсутствует. */
 @Injectable()
 export class OptionalJwtAuthGuard implements CanActivate {
-  constructor(private readonly jwtService: JwtService) {}
+  constructor(
+    private readonly jwtService: JwtService,
+    private readonly sessions: AuthSessionService,
+  ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const request = context.switchToHttp().getRequest<Request & { user?: AuthRequestUser }>();
@@ -22,7 +26,11 @@ export class OptionalJwtAuthGuard implements CanActivate {
         sub: number;
         email?: string;
         platformRole?: string;
+        jti?: string;
       };
+      if (await this.sessions.isAccessTokenRevoked(payload.jti)) {
+        return true;
+      }
       request.user = {
         id: payload.sub,
         email: payload.email,

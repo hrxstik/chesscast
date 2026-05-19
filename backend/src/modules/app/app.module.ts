@@ -62,7 +62,6 @@ import { PaymentModule } from '../payment/payment.module';
     JwtModule.register({
       global: true,
       secret: process.env.JWT_SECRET_KEY,
-      signOptions: { expiresIn: '30d' },
     }),
   ],
   controllers: [AppController],

@@ -1,5 +1,5 @@
 import { apiFetch } from './client';
-import type { LoginResponse } from './types';
+import type { LoginResponse, RefreshResponse } from './types';
 
 export type LoginBody = { email: string; password: string };
 
@@ -25,5 +25,22 @@ export async function registerRequest(
     method: 'POST',
     body,
     skipAuth: true,
+  });
+}
+
+export async function refreshRequest(
+  refreshToken: string,
+): Promise<RefreshResponse> {
+  return apiFetch<RefreshResponse>('/auth/refresh', {
+    method: 'POST',
+    body: { refresh_token: refreshToken },
+    skipAuth: true,
+  });
+}
+
+export async function logoutRequest(refreshToken: string): Promise<void> {
+  await apiFetch('/auth/logout', {
+    method: 'POST',
+    body: { refresh_token: refreshToken },
   });
 }

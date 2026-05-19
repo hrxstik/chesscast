@@ -9,8 +9,27 @@ import { join } from 'path';
 import { writeFile, mkdir, unlink } from 'fs/promises';
 import { existsSync, readFileSync } from 'fs';
 
+export interface FrameDetectionsInfo {
+  total_detections?: number;
+  classes_detected?: Record<string, number>;
+  message?: string;
+  hand_detected?: boolean;
+  hand_landmarks_inside?: number;
+}
+
+/** Ответ Python worker на кадр (frame-processed). */
+export interface FrameProcessedResult {
+  detections_info?: FrameDetectionsInfo;
+  move?: string;
+  move_san?: string;
+  fen?: string;
+  success?: boolean;
+  error?: string;
+  [key: string]: unknown;
+}
+
 interface StreamSession {
-  onFrameProcessed: (result: unknown) => void;
+  onFrameProcessed: (result: FrameProcessedResult) => void;
   onError: (error: Error) => void;
 }
 
@@ -250,7 +269,7 @@ export class ChessRecognitionService implements OnModuleInit, OnModuleDestroy {
         return;
       }
       const { event: _e, token: _t, ...framePayload } = msg;
-      session.onFrameProcessed(framePayload);
+      session.onFrameProcessed(framePayload as FrameProcessedResult);
       return;
     }
 
@@ -332,7 +351,7 @@ export class ChessRecognitionService implements OnModuleInit, OnModuleDestroy {
   startStreamProcessing(
     gameToken: string,
     _modelPath: string,
-    onFrameProcessed: (result: unknown) => void,
+    onFrameProcessed: (result: FrameProcessedResult) => void,
     onError: (error: Error) => void,
   ): void {
     if (this.sessions.has(gameToken)) {

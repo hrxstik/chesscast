@@ -23,7 +23,7 @@ interface Props {
 export const RegisterForm: React.FC<Props> = ({ onClose }) => {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const setAccessToken = useAuthStore((s) => s.setAccessToken);
+  const setTokens = useAuthStore((s) => s.setTokens);
   const setUser = useUserStore((s) => s.setUser);
 
   const form = useForm<RegisterFormValues>({
@@ -39,7 +39,7 @@ export const RegisterForm: React.FC<Props> = ({ onClose }) => {
   const mutation = useMutation({
     mutationFn: registerRequest,
     onSuccess: (data) => {
-      setAccessToken(data.access_token);
+      setTokens(data.access_token, data.refresh_token);
       setUser({
         id: data.user.id,
         name: data.user.name,
