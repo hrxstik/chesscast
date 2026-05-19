@@ -2,44 +2,28 @@
 
 import { useAuthStore } from '@/store/auth-store';
 import { useRouter } from 'next/navigation';
-import { useEffect, useState } from 'react';
-import { Text } from '@/components/ui/typography';
+import { useEffect } from 'react';
 
-/**
- * После rehydrate zustand persist: если уже есть токен — уводим с /login и /register.
- */
 export function RedirectIfAuthed({ children }: { children: React.ReactNode }) {
   const router = useRouter();
-  const accessToken = useAuthStore((s) => s.accessToken);
-  const [hydrated, setHydrated] = useState(() => useAuthStore.persist.hasHydrated());
+  const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
+  const isHydrated = useAuthStore((s) => s.isHydrated);
+  const hydrate = useAuthStore((s) => s.hydrate);
 
   useEffect(() => {
-    if (useAuthStore.persist.hasHydrated()) {
-      setHydrated(true);
-      return;
-    }
-    const unsub = useAuthStore.persist.onFinishHydration(() => setHydrated(true));
-    return unsub;
-  }, []);
+    void hydrate();
+  }, [hydrate]);
 
   useEffect(() => {
-    if (!hydrated) return;
-    if (accessToken) {
+    if (!isHydrated) return;
+    if (isAuthenticated) {
       router.replace('/dashboard');
     }
-  }, [hydrated, accessToken, router]);
+  }, [isHydrated, isAuthenticated, router]);
 
-  if (!hydrated) {
-    return (
-      <div className="flex flex-1 items-center justify-center py-12">
-        <Text className="text-muted-foreground">Загрузка…</Text>
-      </div>
-    );
-  }
-
-  if (accessToken) {
+  if (!isHydrated || isAuthenticated) {
     return null;
   }
 
-  return children;
+  return <>{children}</>;
 }

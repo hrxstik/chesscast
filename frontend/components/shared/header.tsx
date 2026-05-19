@@ -1,6 +1,6 @@
-'use client';
+﻿'use client';
 
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Container } from './container';
 import Link from 'next/link';
 import { Button } from '../ui/button';
@@ -8,18 +8,22 @@ import { ThemeToggle } from './theme-toggle';
 import { Menu, X, LayoutDashboard, LogOut } from 'lucide-react';
 import { Logo } from './logo';
 import { useAuthStore } from '@/store/auth-store';
-import { useUserStore } from '@/store/user';
 
 const Header = () => {
   const [isOpen, setIsOpen] = useState(false);
-  const accessToken = useAuthStore((s) => s.accessToken);
-  const clearAuth = useAuthStore((s) => s.clearAuth);
-  const clearUser = useUserStore((s) => s.clearUser);
-  const loggedIn = Boolean(accessToken);
+  const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
+  const isHydrated = useAuthStore((s) => s.isHydrated);
+  const logout = useAuthStore((s) => s.logout);
+  const hydrate = useAuthStore((s) => s.hydrate);
 
-  const logout = () => {
-    clearAuth();
-    clearUser();
+  useEffect(() => {
+    void hydrate();
+  }, [hydrate]);
+
+  const loggedIn = isHydrated && isAuthenticated;
+
+  const onLogout = () => {
+    void logout();
     setIsOpen(false);
   };
 
@@ -48,7 +52,7 @@ const Header = () => {
                     Дашборд
                   </span>
                 </Link>
-                <Button variant="ghost" onClick={logout} className="gap-1.5">
+                <Button variant="ghost" onClick={onLogout} className="gap-1.5">
                   <LogOut className="size-4" />
                   Выйти
                 </Button>
@@ -84,7 +88,7 @@ const Header = () => {
                   onClick={() => setIsOpen(false)}>
                   Дашборд
                 </Link>
-                <button type="button" className={`text-left ${navClass}`} onClick={logout}>
+                <button type="button" className={`text-left ${navClass}`} onClick={onLogout}>
                   Выйти
                 </button>
               </>

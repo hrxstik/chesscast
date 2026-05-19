@@ -7,6 +7,7 @@ import {
 import { JwtService } from '@nestjs/jwt';
 import { Request } from 'express';
 import { AuthSessionService } from '../modules/auth/auth-session.service';
+import { accessTokenFromRequest } from '../auth/access-token-from-request.util';
 
 @Injectable()
 export class JwtAuthGuard implements CanActivate {
@@ -17,17 +18,10 @@ export class JwtAuthGuard implements CanActivate {
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const request: Request = context.switchToHttp().getRequest();
+    const token = accessTokenFromRequest(request);
 
-    const authHeader = request.headers['authorization'];
-
-    if (!authHeader) {
-      throw new UnauthorizedException('Authorization header missing');
-    }
-
-    const [type, token] = authHeader.split(' ');
-
-    if (type !== 'Bearer' || !token) {
-      throw new UnauthorizedException('Bearer token missing or malformed');
+    if (!token) {
+      throw new UnauthorizedException('Authorization token missing');
     }
 
     try {

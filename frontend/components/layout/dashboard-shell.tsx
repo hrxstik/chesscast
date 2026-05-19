@@ -2,7 +2,7 @@
 
 import { AppShell } from '@/components/layout/app-shell';
 import { getDashboardNavItems } from '@/components/layout/dashboard-nav-items';
-import { useUserStore } from '@/store/user';
+import { useAuthStore } from '@/store/auth-store';
 import type { ReactNode } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
@@ -14,7 +14,7 @@ type Props = {
 };
 
 export function DashboardShell({ children, title }: Props) {
-  const user = useUserStore((s) => s.user);
+  const user = useAuthStore((s) => s.user);
   const role = user?.platformRole === 'SUPERADMIN' ? 'SUPERADMIN' : 'USER';
   const navItems = getDashboardNavItems(role);
   const pathname = usePathname();

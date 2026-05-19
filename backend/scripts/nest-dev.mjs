@@ -10,8 +10,13 @@ const backendDir = path.join(__dirname, '..');
 config({ path: path.join(backendDir, '.env') });
 
 const https = process.env.USE_HTTPS === 'true' || process.env.USE_HTTPS === '1';
-const { frontOrigin, apiOrigin, protocol } = applyLanDevEnv({ https });
-printLanBanner({ frontOrigin, apiOrigin, protocol });
+const apiPort = process.env.PORT ?? '5000';
+const { frontOrigin, apiOrigin, protocol, frontendOrigins } = applyLanDevEnv({
+  https,
+  frontPort: '3000',
+  apiPort,
+});
+printLanBanner({ frontOrigin, apiOrigin, protocol, frontendOrigins });
 
 const child = spawn(
   process.platform === 'win32' ? 'npx.cmd' : 'npx',

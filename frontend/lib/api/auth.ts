@@ -1,5 +1,5 @@
 import { apiFetch } from './client';
-import type { LoginResponse, RefreshResponse } from './types';
+import type { AuthUserDto, LoginResponse } from './types';
 
 export type LoginBody = { email: string; password: string };
 
@@ -28,19 +28,16 @@ export async function registerRequest(
   });
 }
 
-export async function refreshRequest(
-  refreshToken: string,
-): Promise<RefreshResponse> {
-  return apiFetch<RefreshResponse>('/auth/refresh', {
+/** Refresh по HttpOnly cookie, тело не передаём. */
+export async function refreshSession(): Promise<void> {
+  await apiFetch<{ ok: boolean }>('/auth/refresh', {
     method: 'POST',
-    body: { refresh_token: refreshToken },
     skipAuth: true,
   });
 }
 
-export async function logoutRequest(refreshToken: string): Promise<void> {
-  await apiFetch('/auth/logout', {
-    method: 'POST',
-    body: { refresh_token: refreshToken },
-  });
+export async function logoutRequest(): Promise<void> {
+  await apiFetch('/auth/logout', { method: 'POST' });
 }
+
+export type { AuthUserDto };

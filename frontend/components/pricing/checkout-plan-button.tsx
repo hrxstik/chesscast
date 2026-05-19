@@ -22,7 +22,7 @@ export function CheckoutPlanButton({
   'aria-label': ariaLabel,
 }: Props) {
   const router = useRouter();
-  const token = useAuthStore((s) => s.accessToken);
+  const hydrate = useAuthStore((s) => s.hydrate);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [autoRenew, setAutoRenew] = useState(true);
@@ -40,7 +40,8 @@ export function CheckoutPlanButton({
 
   async function onClick() {
     setErr(null);
-    if (!token) {
+    await hydrate();
+    if (!useAuthStore.getState().isAuthenticated) {
       router.push(`/login?next=${encodeURIComponent('/pricing')}`);
       return;
     }

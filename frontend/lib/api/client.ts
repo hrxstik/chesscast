@@ -1,44 +1,26 @@
 import { getApiUrl } from '@/lib/utils';
 import { ApiError } from './types';
-import { useAuthStore } from '@/store/auth-store';
-import { refreshRequest } from './auth';
 
 type RequestOptions = Omit<RequestInit, 'body'> & {
   body?: unknown;
   skipAuth?: boolean;
 };
 
-function getTokens(): { access: string | null; refresh: string | null } {
-  if (typeof window === 'undefined') {
-    return { access: null, refresh: null };
-  }
-  const state = useAuthStore.getState();
-  return { access: state.accessToken, refresh: state.refreshToken };
-}
+let refreshInFlight: Promise<boolean> | null = null;
 
-let refreshInFlight: Promise<string | null> | null = null;
-
-async function tryRefreshAccessToken(): Promise<string | null> {
-  const { refresh } = getTokens();
-  if (!refresh) return null;
-
+async function tryRefreshSession(): Promise<boolean> {
   if (!refreshInFlight) {
-    refreshInFlight = refreshRequest(refresh)
-      .then((data) => {
-        useAuthStore
-          .getState()
-          .setTokens(data.access_token, data.refresh_token);
-        return data.access_token;
-      })
-      .catch(() => {
-        useAuthStore.getState().clearAuth();
-        return null;
-      })
+    refreshInFlight = fetch(`${getApiUrl()}/auth/refresh`, {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+    })
+      .then((res) => res.ok)
+      .catch(() => false)
       .finally(() => {
         refreshInFlight = null;
       });
   }
-
   return refreshInFlight;
 }
 
@@ -54,32 +36,37 @@ export async function apiFetch<T>(
     headers.set('Content-Type', 'application/json');
   }
 
-  let token: string | null = null;
-  if (!skipAuth) {
-    token = getTokens().access;
-    if (token) {
-      headers.set('Authorization', `Bearer ${token}`);
+  const doFetch = async () => {
+    try {
+      return await fetch(url, {
+        ...rest,
+        credentials: 'include',
+        headers,
+        body:
+          body === undefined
+            ? undefined
+            : body instanceof FormData
+              ? body
+              : JSON.stringify(body),
+      });
+    } catch (e) {
+      const api = getApiUrl();
+      const hint =
+        typeof window !== 'undefined'
+          ? `Не удалось связаться с API (${api}). Примите HTTPS-сертификат на :5000, откройте сайт с того же адреса, что в баннере LAN (CORS).`
+          : 'Не удалось связаться с API';
+      throw new ApiError(
+        e instanceof Error ? `${hint} ${e.message}`.trim() : hint,
+        0,
+      );
     }
-  }
-
-  const doFetch = () =>
-    fetch(url, {
-      ...rest,
-      headers,
-      body:
-        body === undefined
-          ? undefined
-          : body instanceof FormData
-            ? body
-            : JSON.stringify(body),
-    });
+  };
 
   let res = await doFetch();
 
   if (res.status === 401 && !skipAuth) {
-    const newToken = await tryRefreshAccessToken();
-    if (newToken) {
-      headers.set('Authorization', `Bearer ${newToken}`);
+    const ok = await tryRefreshSession();
+    if (ok) {
       res = await doFetch();
     }
   }
@@ -95,13 +82,12 @@ export async function apiFetch<T>(
   }
 
   if (!res.ok) {
-    const msg =
-      typeof data === 'object' &&
-      data !== null &&
-      'message' in data &&
-      typeof (data as { message: string }).message === 'string'
-        ? (data as { message: string }).message
-        : res.statusText;
+    let msg = res.statusText;
+    if (typeof data === 'object' && data !== null && 'message' in data) {
+      const raw = (data as { message: unknown }).message;
+      if (typeof raw === 'string') msg = raw;
+      else if (Array.isArray(raw)) msg = raw.map(String).join(', ');
+    }
     throw new ApiError(msg || 'Request failed', res.status, data);
   }
 

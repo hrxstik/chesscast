@@ -19,7 +19,6 @@ import { ApiError } from '@/lib/api/types';
 import { useRouter, useSearchParams } from 'next/navigation';
 import toast from 'react-hot-toast';
 import { useAuthStore } from '@/store/auth-store';
-import { useUserStore } from '@/store/user';
 
 export default function DashboardProfilePage() {
   return (
@@ -32,8 +31,8 @@ export default function DashboardProfilePage() {
 function DashboardProfileInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const clearAuth = useAuthStore((s) => s.clearAuth);
-  const clearUser = useUserStore((s) => s.clearUser);
+  const logout = useAuthStore((s) => s.logout);
+  const setUser = useAuthStore((s) => s.setUser);
   const [me, setMe] = useState<MeResponse | null>(null);
   const [subscription, setSubscription] = useState<CurrentSubscriptionDto | null>(null);
   const [name, setName] = useState('');
@@ -78,6 +77,7 @@ function DashboardProfileInner() {
       const updated = await updateCurrentUser(me.id, { name: name.trim() || me.name });
       setMe(updated);
       setName(updated.name);
+      setUser(updated);
     } catch (e) {
       setError(e instanceof ApiError ? e.message : 'Не удалось сохранить профиль');
     } finally {
@@ -92,6 +92,7 @@ function DashboardProfileInner() {
     try {
       const updated = await uploadMyAvatar(file);
       setMe(updated);
+      setUser(updated);
     } catch (e) {
       setError(e instanceof ApiError ? e.message : 'Не удалось загрузить аватар');
     } finally {
@@ -118,8 +119,7 @@ function DashboardProfileInner() {
     setError(null);
     try {
       await deleteMyAccount({ password: deletePassword });
-      clearAuth();
-      clearUser();
+      await logout();
       router.replace('/');
     } catch (e) {
       setError(e instanceof ApiError ? e.message : 'Не удалось удалить аккаунт');

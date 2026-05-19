@@ -11,10 +11,8 @@ import { ApiError } from '@/lib/api/types';
 import { Text } from '@/components/ui/typography';
 import { Button } from '@/components/ui/button';
 import { getApiUrl } from '@/lib/utils';
-import { useAuthStore } from '@/store/auth-store';
 
 export function AdminBillingPanel() {
-  const token = useAuthStore((s) => s.accessToken);
   const [summary, setSummary] = useState<BillingSummaryDto | null>(null);
   const [events, setEvents] = useState<BillingEventRow[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -61,12 +59,11 @@ export function AdminBillingPanel() {
   }
 
   async function onExportCsv() {
-    if (!token) return;
     setExporting(true);
     setError(null);
     try {
       const res = await fetch(`${getApiUrl()}/admin/billing/events/export`, {
-        headers: { Authorization: `Bearer ${token}` },
+        credentials: 'include',
       });
       if (!res.ok) {
         const t = await res.text();

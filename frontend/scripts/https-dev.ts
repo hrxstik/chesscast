@@ -16,8 +16,13 @@ if (rootCA && fs.existsSync(rootCA)) {
   process.env.NODE_EXTRA_CA_CERTS = path.resolve(rootCA);
 }
 
-const { frontOrigin, apiOrigin, protocol } = applyLanDevEnv({ https: true });
-printLanBanner({ frontOrigin, apiOrigin, protocol });
+const frontPort = process.env.PORT ?? '3000';
+const { frontOrigin, apiOrigin, protocol, frontendOrigins } = applyLanDevEnv({
+  https: true,
+  frontPort,
+  apiPort: '5000',
+});
+printLanBanner({ frontOrigin, apiOrigin, protocol, frontendOrigins });
 
 const child = spawn(
   process.platform === 'win32' ? 'npx.cmd' : 'npx',

@@ -4,7 +4,7 @@ import { useParams } from 'next/navigation';
 import Link from 'next/link';
 import { H1, Text } from '@/components/ui/typography';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { useUserStore } from '@/store/user';
+import { useAuthStore } from '@/store/auth-store';
 import React from 'react';
 import { Button } from '@/components/ui/button';
 import { Gamepad2, User, ArrowRight } from 'lucide-react';
@@ -14,7 +14,7 @@ import { ApiError } from '@/lib/api/types';
 export default function PlayerPage() {
   const params = useParams();
   const userIdFromUrl = params.id;
-  const user = useUserStore((state) => state.user);
+  const user = useAuthStore((state) => state.user);
   const [profile, setProfile] = React.useState<PublicUserProfileResponse | null>(null);
   const [error, setError] = React.useState<string | null>(null);
 

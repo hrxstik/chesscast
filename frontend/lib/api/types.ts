@@ -14,17 +14,11 @@ export type AuthUserDto = {
   name: string;
   email: string;
   platformRole?: 'USER' | 'SUPERADMIN';
+  avatar?: string;
 };
 
 export type LoginResponse = {
-  access_token: string;
-  refresh_token: string;
   user: AuthUserDto;
-};
-
-export type RefreshResponse = {
-  access_token: string;
-  refresh_token: string;
 };
 
 export type GameListItem = {

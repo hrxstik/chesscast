@@ -8,8 +8,13 @@ const frontendDir = path.join(path.dirname(fileURLToPath(import.meta.url)), '..'
 config({ path: path.join(frontendDir, '.env') });
 config({ path: path.join(frontendDir, '.env.local'), override: true });
 
-const { frontOrigin, apiOrigin, protocol } = applyLanDevEnv({ https: false });
-printLanBanner({ frontOrigin, apiOrigin, protocol });
+const frontPort = process.env.PORT ?? '3000';
+const { frontOrigin, apiOrigin, protocol, frontendOrigins } = applyLanDevEnv({
+  https: false,
+  frontPort,
+  apiPort: '5000',
+});
+printLanBanner({ frontOrigin, apiOrigin, protocol, frontendOrigins });
 
 const port = process.env.PORT || '3000';
 const host = process.env.HOSTNAME ?? '0.0.0.0';

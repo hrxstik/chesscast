@@ -3,6 +3,7 @@ import { AppModule } from './modules/app/app.module';
 import { ValidationPipe } from '@nestjs/common';
 import { readFileSync } from 'fs';
 import { networkInterfaces } from 'os';
+import cookieParser from 'cookie-parser';
 
 async function bootstrap() {
   const useHttps = process.env.USE_HTTPS === 'true';
@@ -36,13 +37,23 @@ async function bootstrap() {
   }
 
   app.setGlobalPrefix('api');
+  app.use(cookieParser());
   app.useGlobalPipes(
     new ValidationPipe({
       transform: true,
       transformOptions: { enableImplicitConversion: true },
     }),
   );
-  app.enableCors();
+
+  const frontendOrigins = (process.env.FRONTEND_URL ?? 'http://localhost:3000')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+  app.enableCors({
+    origin: frontendOrigins,
+    credentials: true,
+  });
+  console.log(`CORS allowed origins: ${frontendOrigins.join(', ')}`);
 
   await app.listen(port, hostname);
 
