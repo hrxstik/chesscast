@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Chess } from 'chess.js';
-import { ChessboardOptions, PieceDropHandlerArgs } from 'react-chessboard';
+import { ChessboardOptions } from 'react-chessboard';
 import Engine, { EngineMessage } from '@/lib/services/engine';
 
 export type EnginePvRow = {
@@ -19,6 +19,9 @@ type UseEngineOptions = {
 interface UseEngineReturn {
   chessPosition: string;
   positionEvaluation: number;
+  /** Сантипешки с точки зрения белых (для шкалы оценки). */
+  evaluationCpWhite: number;
+  mateWhite: number | null;
   engineReady: boolean;
   depth: number;
   bestLine: string;
@@ -47,6 +50,8 @@ export function useEngine(initialFen?: string, opts?: UseEngineOptions): UseEngi
 
   const [chessPosition, setChessPosition] = useState(chessGameRef.current.fen());
   const [positionEvaluation, setPositionEvaluation] = useState(0);
+  const [evaluationCpWhite, setEvaluationCpWhite] = useState(0);
+  const [mateWhite, setMateWhite] = useState<number | null>(null);
   const [depth, setDepth] = useState(10);
   const [bestLine, setBestLine] = useState('');
   const [possibleMate, setPossibleMate] = useState('');
@@ -96,13 +101,23 @@ export function useEngine(initialFen?: string, opts?: UseEngineOptions): UseEngi
       }
 
       if (idx === 1 || multiPv === 1) {
+        const turn = chessGameRef.current.turn();
         if (message.positionEvaluation) {
-          setPositionEvaluation(
-            ((chessGameRef.current.turn() === 'w' ? 1 : -1) * Number(message.positionEvaluation)) /
-              100,
-          );
+          const cpStm = Number(message.positionEvaluation);
+          const cpWhite = turn === 'w' ? cpStm : -cpStm;
+          setEvaluationCpWhite(cpWhite);
+          setPositionEvaluation(cpWhite / 100);
+          setMateWhite(null);
+          setPossibleMate('');
         }
-        if (message.possibleMate) setPossibleMate(message.possibleMate);
+        if (message.possibleMate) {
+          const mateStm = Number(message.possibleMate);
+          const mWhite = turn === 'w' ? mateStm : -mateStm;
+          setMateWhite(mWhite);
+          setPossibleMate(String(mateStm));
+        } else {
+          setMateWhite(null);
+        }
         if (message.depth) setDepth(message.depth);
         if (message.pv) setBestLine(message.pv);
       }
@@ -133,29 +148,7 @@ export function useEngine(initialFen?: string, opts?: UseEngineOptions): UseEngi
     }
   }, [chessPosition, engineReady, findBestMove]);
 
-  const onPieceDrop = useCallback(
-    ({ sourceSquare, targetSquare }: PieceDropHandlerArgs): boolean => {
-      if (!targetSquare) return false;
-
-      try {
-        chessGameRef.current.move({ from: sourceSquare, to: targetSquare, promotion: 'q' });
-        setPossibleMate('');
-        setChessPosition(chessGameRef.current.fen());
-        engineRef.current?.stop();
-        setBestLine('');
-        pvMapRef.current = new Map();
-        setPvRows([]);
-
-        if (chessGameRef.current.isGameOver() || chessGameRef.current.isDraw()) {
-          return false;
-        }
-        return true;
-      } catch {
-        return false;
-      }
-    },
-    [],
-  );
+  const onPieceDrop = useCallback((): boolean => false, []);
 
   const bestMove = bestLine?.split(' ')?.[0];
 
@@ -170,6 +163,9 @@ export function useEngine(initialFen?: string, opts?: UseEngineOptions): UseEngi
         ]
       : undefined,
     position: chessPosition,
+    allowDragging: false,
+    allowDrawingArrows: false,
+    canDragPiece: () => false,
     onPieceDrop,
     id: 'analysis-board',
     boardStyle: {
@@ -200,6 +196,8 @@ export function useEngine(initialFen?: string, opts?: UseEngineOptions): UseEngi
   return {
     chessPosition,
     positionEvaluation,
+    evaluationCpWhite,
+    mateWhite,
     engineReady,
     depth,
     bestLine,

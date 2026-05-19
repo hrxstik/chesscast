@@ -1,7 +1,7 @@
 'use client';
 
 import { Suspense, useEffect, useState } from 'react';
-import Image from 'next/image';
+import { resolveAvatarSrc } from '@/lib/avatar-url';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { H2, Text } from '@/components/ui/typography';
 import { User, CreditCard, Shield, Bell, ChevronRight, Sparkles } from 'lucide-react';
@@ -128,6 +128,8 @@ function DashboardProfileInner() {
     }
   }
 
+  const avatarSrc = resolveAvatarSrc(me?.avatar);
+
   return (
     <div className="space-y-8">
       <div>
@@ -173,15 +175,18 @@ function DashboardProfileInner() {
               </Text>
               <div className="flex items-center gap-4">
                 <div className="size-16 overflow-hidden rounded-full border border-dashed border-border bg-muted/30">
-                  {me?.avatar ? (
-                    <Image
-                      src={me.avatar}
-                      alt={me.name ?? 'avatar'}
+                  {avatarSrc ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={avatarSrc}
+                      alt={me?.name ?? 'avatar'}
                       className="size-full object-cover"
-                      width={64}
-                      height={64}
                     />
-                  ) : null}
+                  ) : (
+                    <div className="flex size-full items-center justify-center text-xs text-muted-foreground">
+                      —
+                    </div>
+                  )}
                 </div>
                 <input
                   type="file"

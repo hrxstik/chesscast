@@ -4,7 +4,7 @@ import React from 'react';
 import { useEngine } from '@/lib/hooks/useEngine';
 import { Text } from '@/components/ui/typography';
 import { Badge } from '@/components/ui/badge';
-import { SquareChessboard } from '@/components/game/square-chessboard';
+import { BoardWithEvalBar } from '@/components/game/board-with-eval-bar';
 import { ChessAnalysisShell } from '@/components/game/chess-analysis-shell';
 import { Button } from '@/components/ui/button';
 import { SkipBack, SkipForward, StepBack, StepForward } from 'lucide-react';
@@ -45,6 +45,8 @@ export default function GamePage({ params }: Props) {
 
   const {
     positionEvaluation,
+    evaluationCpWhite,
+    mateWhite,
     engineReady,
     depth,
     bestLine,
@@ -97,7 +99,13 @@ export default function GamePage({ params }: Props) {
           <span className="text-muted-foreground"> · белые</span>
         </>
       }
-      board={<SquareChessboard options={chessboardOptions} />}
+      board={
+        <BoardWithEvalBar
+          options={chessboardOptions}
+          cpWhite={evaluationCpWhite}
+          mateWhite={mateWhite}
+        />
+      }
       blackLabel={
         <>
           {session?.players.find((p) => p.color === 'BLACK')?.name ?? 'Игрок 2'}

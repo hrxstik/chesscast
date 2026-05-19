@@ -2,7 +2,7 @@
 
 import React from 'react';
 import { useEngine } from '@/lib/hooks/useEngine';
-import { SquareChessboard } from '@/components/game/square-chessboard';
+import { BoardWithEvalBar } from '@/components/game/board-with-eval-bar';
 import { streamVideoContainerClass } from '@/lib/stream-config';
 import { Text } from '@/components/ui/typography';
 import { Badge } from '@/components/ui/badge';
@@ -26,6 +26,8 @@ export const ChessVideoStreamWebRTC: React.FC<ChessVideoStreamProps> = ({
 }) => {
   const {
     positionEvaluation,
+    evaluationCpWhite,
+    mateWhite,
     engineReady,
     depth,
     bestLine,
@@ -108,9 +110,11 @@ export const ChessVideoStreamWebRTC: React.FC<ChessVideoStreamProps> = ({
           <Text className="!mb-0 w-full text-center !text-sm font-medium">
             Игрок 1<span className="text-muted-foreground"> · белые</span>
           </Text>
-          <div className="w-full max-w-[min(100%,560px)]">
-            <SquareChessboard options={chessboardOptions} />
-          </div>
+          <BoardWithEvalBar
+            options={chessboardOptions}
+            cpWhite={evaluationCpWhite}
+            mateWhite={mateWhite}
+          />
           <Text className="!mb-0 w-full text-center !text-sm font-medium">
             Игрок 2<span className="text-muted-foreground"> · чёрные</span>
           </Text>
