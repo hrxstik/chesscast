@@ -466,12 +466,45 @@ export class OrganizationService {
       select: { role: true },
     });
     if (!member) {
-      return { isMember: false, role: null as Role | null, isAdmin: false };
+      return {
+        isMember: false,
+        role: null as Role | null,
+        isAdmin: false,
+        isOwner: false,
+      };
     }
     const organization = await this.findById(organizationId);
-    const isAdmin =
-      member.role === Role.ADMIN || organization.ownerUserId === userId;
-    return { isMember: true, role: member.role, isAdmin };
+    const isOwner = organization.ownerUserId === userId;
+    const isAdmin = member.role === Role.ADMIN || isOwner;
+    return { isMember: true, role: member.role, isAdmin, isOwner };
+  }
+
+  async leaveOrganization(organizationId: number, userId: number) {
+    await this.assertUserHasAccess(userId, organizationId);
+    const organization = await this.findById(organizationId);
+    if (organization.ownerUserId === userId) {
+      throw new ForbiddenException(
+        'Владелец не может покинуть организацию. Удалите клуб в настройках.',
+      );
+    }
+    const member = await this.organizationRepository.getMember(
+      userId,
+      organizationId,
+    );
+    if (!member) {
+      throw new NotFoundException('Вы не состоите в этой организации');
+    }
+    if (member.role === Role.ADMIN) {
+      const adminCount = await this.prisma.userOrganization.count({
+        where: { organizationId, role: Role.ADMIN },
+      });
+      if (adminCount <= 1) {
+        throw new ForbiddenException(
+          'Нельзя выйти: вы единственный администратор. Назначьте другого администратора или удалите организацию.',
+        );
+      }
+    }
+    return this.organizationRepository.removeMember(userId, organizationId);
   }
 
   async assertOrganizationActiveForActions(

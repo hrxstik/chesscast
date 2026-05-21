@@ -119,6 +119,7 @@ export type OrganizationMembershipDto = {
   isMember: boolean;
   role: 'PLAYER' | 'ADMIN' | null;
   isAdmin: boolean;
+  isOwner: boolean;
 };
 
 export async function fetchMyOrganizationMembership(
@@ -135,6 +136,12 @@ export async function fetchOrganizationMembers(id: number): Promise<Organization
 
 export async function removeOrganizationMember(organizationId: number, userId: number) {
   return apiFetch(`/organization/${organizationId}/members/${userId}/remove`, {
+    method: 'POST',
+  });
+}
+
+export async function leaveOrganization(organizationId: number) {
+  return apiFetch(`/organization/${organizationId}/leave`, {
     method: 'POST',
   });
 }

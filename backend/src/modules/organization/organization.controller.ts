@@ -186,6 +186,15 @@ export class OrganizationController {
     return rows.slice(0, Number.isFinite(lim) ? lim : 100);
   }
 
+  @Post(':id/leave')
+  @UseGuards(JwtAuthGuard)
+  async leaveOrganization(
+    @Param('id', ParseIntPipe) id: number,
+    @Req() req: Request & { user: { id: number } },
+  ) {
+    return this.organizationService.leaveOrganization(id, req.user.id);
+  }
+
   @Post(':id/members/:userId/remove')
   @UseGuards(JwtAuthGuard)
   async removeMember(

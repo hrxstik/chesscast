@@ -19,6 +19,7 @@ import {
   type OrganizationMemberDto,
 } from "@/lib/api/organizations";
 import { hrefCreateGameModal } from "@/lib/create-game-modal-url";
+import { OrganizationLeaveButton } from "@/components/organization/organization-leave-button";
 import { labelJoinPolicy, labelOrgRole } from "@/lib/game-labels";
 
 type Props = { params: Promise<{ id: string }> };
@@ -27,6 +28,8 @@ export default function OrganizationPage({ params }: Props) {
   const [id, setId] = useState<string>("");
   const [orgId, setOrgId] = useState<number | null>(null);
   const [isAdmin, setIsAdmin] = useState(false);
+  const [isMember, setIsMember] = useState(false);
+  const [isOwner, setIsOwner] = useState(false);
   const [name, setName] = useState("Организация");
   const [joinPolicy, setJoinPolicy] = useState<string>("");
   const [members, setMembers] = useState<OrganizationMemberDto[]>([]);
@@ -55,6 +58,8 @@ export default function OrganizationPage({ params }: Props) {
         setJoinPolicy(org.joinPolicy ?? "");
         setMembers(m);
         setIsAdmin(membership.isAdmin);
+        setIsMember(membership.isMember);
+        setIsOwner(membership.isOwner);
       } catch {
         /* toast из apiFetch */
       }
@@ -81,6 +86,14 @@ export default function OrganizationPage({ params }: Props) {
             ) : null}
           </Text>
         </div>
+        {orgId != null ? (
+          <OrganizationLeaveButton
+            organizationId={orgId}
+            isMember={isMember}
+            isOwner={isOwner}
+            className="w-full gap-2 md:w-auto"
+          />
+        ) : null}
       </div>
       <div className="mt-10 grid gap-6 lg:grid-cols-2">
         <Card className="border-border/80">
