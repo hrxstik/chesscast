@@ -13,16 +13,27 @@ const STREAM_QUALITY_LABEL: Record<PlanLimitsDto['streamQualityLevel'], string> 
 };
 
 /** Человекочитаемые возможности и ограничения тарифа для карточки профиля и т.п. */
-export function describePlanLimits(plan: PlanLimitsDto): {
+export function formatGamesLimitLabel(
+  plan: PlanLimitsDto,
+  planCode?: string,
+): string {
+  if (planCode === 'FREE') {
+    return `До ${plan.maxGamesPerPeriod} игр в сутки`;
+  }
+  return `До ${plan.maxGamesPerPeriod} игр за календарный месяц`;
+}
+
+export function describePlanLimits(
+  plan: PlanLimitsDto,
+  planCode?: string,
+): {
   capabilities: string[];
   limitations: string[];
 } {
   const capabilities: string[] = [];
   const limitations: string[] = [];
 
-  capabilities.push(
-    `До ${plan.maxGamesPerPeriod} игр за календарный месяц`,
-  );
+  capabilities.push(formatGamesLimitLabel(plan, planCode));
 
   if (plan.canStream) {
     capabilities.push(

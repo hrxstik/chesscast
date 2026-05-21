@@ -111,7 +111,11 @@ export default function GamePage({ params }: Props) {
         </div>
       }
       leftInfo={
-        <GameAboutPanel session={session} statusText={statusText} token={token} />
+        <GameAboutPanel
+          session={session}
+          statusText={statusText}
+          token={token}
+        />
       }
       whiteLabel={
         <PlayerSideLabel

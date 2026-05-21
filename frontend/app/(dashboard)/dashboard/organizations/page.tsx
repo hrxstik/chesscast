@@ -128,8 +128,7 @@ export default function DashboardOrganizationsPage() {
                   <div>
                     <div className="font-medium">{r.name}</div>
                     <div className="text-xs text-muted-foreground">
-                      роль:{" "}
-                      {labelOrgRole(r.role)}{" "}
+                      роль: {labelOrgRole(r.role)}{" "}
                     </div>
                   </div>
                   <Button asChild variant="outline" className="h-8 text-xs">

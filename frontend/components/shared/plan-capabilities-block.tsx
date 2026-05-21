@@ -8,10 +8,11 @@ import {
 type Props = {
   features: string[];
   limits: PlanLimitsDto;
+  planCode?: string;
 };
 
-export function PlanCapabilitiesBlock({ features, limits }: Props) {
-  const { capabilities, limitations } = describePlanLimits(limits);
+export function PlanCapabilitiesBlock({ features, limits, planCode }: Props) {
+  const { capabilities, limitations } = describePlanLimits(limits, planCode);
 
   return (
     <div className="space-y-4 text-sm">

@@ -37,7 +37,7 @@ export function CreateGameModal({ open, onClose, organizationId }: Props) {
     try {
       const game = await submitCreateGame(visibility, organizationId);
       onClose();
-      router.push(`/game/watch/${game.token}?viewer=false`);
+      router.push(`/game/watch/${game.token}`);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Не удалось создать игру');
     } finally {

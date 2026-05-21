@@ -9,6 +9,11 @@ export type PublicPlanDto = {
   description: string;
   features: string[];
   price: string;
+  maxGamesPerPeriod: number;
+  maxOrganizations: number;
+  canCreateOrganization: boolean;
+  canStream: boolean;
+  streamQualityLevel: StreamQualityLevel;
 };
 
 export type AdminPlanDto = {
@@ -63,6 +68,11 @@ export class PricingService {
       description: p.description,
       features: p.features,
       price: this.formatPrice(p.priceMonthly, p.currency),
+      maxGamesPerPeriod: p.maxGamesPerPeriod,
+      maxOrganizations: p.maxOrganizations,
+      canCreateOrganization: p.canCreateOrganization,
+      canStream: p.canStream,
+      streamQualityLevel: p.streamQualityLevel,
     }));
   }
 

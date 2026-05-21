@@ -326,6 +326,7 @@ function DashboardProfileInner() {
                   </div>
 
                   <PlanCapabilitiesBlock
+                    planCode={subscription.plan.code}
                     features={subscription.plan.features}
                     limits={{
                       maxGamesPerPeriod: subscription.plan.maxGamesPerPeriod,

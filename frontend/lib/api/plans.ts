@@ -8,6 +8,11 @@ export type PlanDto = {
   price: string;
   description: string;
   features: string[];
+  maxGamesPerPeriod: number;
+  maxOrganizations: number;
+  canCreateOrganization: boolean;
+  canStream: boolean;
+  streamQualityLevel: 'LOW' | 'MEDIUM' | 'HIGH';
 };
 
 export async function fetchPlans(): Promise<PlanDto[]> {

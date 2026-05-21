@@ -340,9 +340,14 @@ export class GameService {
         throw new ForbiddenException('Текущий тариф не позволяет запускать стримы');
       }
 
+      const planCode = activeSubscription.plan.code;
       const periodStart = new Date();
-      periodStart.setDate(1);
-      periodStart.setHours(0, 0, 0, 0);
+      if (planCode === 'FREE') {
+        periodStart.setHours(0, 0, 0, 0);
+      } else {
+        periodStart.setDate(1);
+        periodStart.setHours(0, 0, 0, 0);
+      }
       const gamesThisPeriod = await this.prisma.game.count({
         where: {
           creatorId,
@@ -350,8 +355,13 @@ export class GameService {
           createdAt: { gte: periodStart },
         },
       });
-      if (gamesThisPeriod >= activeSubscription.plan.maxGamesPerPeriod) {
-        throw new ForbiddenException('Достигнут лимит игр для текущего тарифа');
+      const limit = activeSubscription.plan.maxGamesPerPeriod;
+      if (gamesThisPeriod >= limit) {
+        throw new ForbiddenException(
+          planCode === 'FREE'
+            ? `Достигнут дневной лимит: не более ${limit} партий в сутки на бесплатном тарифе`
+            : 'Достигнут лимит игр для текущего тарифа за календарный месяц',
+        );
       }
     }
 

@@ -146,7 +146,7 @@ export function GameAboutPanel({ session, statusText, token }: Props) {
         <AboutError
           action={
             <Link
-              href={`/game/watch/${token}?viewer=true`}
+              href={`/game/watch/${token}`}
               className="inline-flex text-sm font-medium text-primary underline-offset-4 hover:underline"
             >
               Смотреть трансляцию

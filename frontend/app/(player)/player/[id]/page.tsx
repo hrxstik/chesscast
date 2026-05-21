@@ -132,12 +132,14 @@ export default function PlayerPage() {
                 href={
                   g.status === "FINISHED"
                     ? `/game/${g.token}`
-                    : `/game/watch/${g.token}?viewer=true`
+                    : `/game/watch/${g.token}`
                 }
                 className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border/60 bg-muted/15 px-4 py-3 transition-colors hover:bg-muted/30"
               >
                 <div className="min-w-0 space-y-1">
-                  <div className="font-mono text-xs">{g.token.slice(0, 14)}…</div>
+                  <div className="font-mono text-xs">
+                    {g.token.slice(0, 14)}…
+                  </div>
                   <Text className="text-xs text-muted-foreground">
                     {labelGameScope(g.organization?.id)}
                     {g.organization ? ` · ${g.organization.name}` : ""}
