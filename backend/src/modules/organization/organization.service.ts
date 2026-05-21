@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Inject,
   Injectable,
@@ -10,6 +11,7 @@ import {
 import {
   Organization,
   OrganizationJoinPolicy,
+  Prisma,
   Role,
   SubscriptionStatus,
 } from '@prisma/client';
@@ -281,17 +283,22 @@ export class OrganizationService {
     if (!organization) {
       throw new NotFoundException(`Organization with id ${id} not found`);
     }
-    const updated = await this.organizationRepository.updateById(id, data);
-    await this.elastic.indexOrganization({
-      id: updated.id,
-      name: updated.name,
-      description: updated.description,
-      blocked: updated.blocked,
-      blockedReason: updated.blockedReason,
-      inviteCode: updated.inviteCode,
-      joinPolicy: updated.joinPolicy,
-    });
-    return updated;
+    try {
+      const updated = await this.organizationRepository.updateById(id, data);
+      await this.elastic.indexOrganization({
+        id: updated.id,
+        name: updated.name,
+        description: updated.description,
+        blocked: updated.blocked,
+        blockedReason: updated.blockedReason,
+        inviteCode: updated.inviteCode,
+        joinPolicy: updated.joinPolicy,
+      });
+      return updated;
+    } catch (error) {
+      this.throwIfDuplicateOrganizationName(error);
+      throw error;
+    }
   }
 
   async create(
@@ -339,17 +346,35 @@ export class OrganizationService {
         },
       },
     };
-    const created = await this.organizationRepository.create(createData);
-    await this.elastic.indexOrganization({
-      id: created.id,
-      name: created.name,
-      description: created.description,
-      blocked: created.blocked,
-      blockedReason: created.blockedReason,
-      inviteCode: created.inviteCode,
-      joinPolicy: created.joinPolicy,
-    });
-    return created;
+    try {
+      const created = await this.organizationRepository.create(createData);
+      await this.elastic.indexOrganization({
+        id: created.id,
+        name: created.name,
+        description: created.description,
+        blocked: created.blocked,
+        blockedReason: created.blockedReason,
+        inviteCode: created.inviteCode,
+        joinPolicy: created.joinPolicy,
+      });
+      return created;
+    } catch (error) {
+      this.throwIfDuplicateOrganizationName(error);
+      throw error;
+    }
+  }
+
+  private throwIfDuplicateOrganizationName(error: unknown): void {
+    if (
+      error instanceof Prisma.PrismaClientKnownRequestError &&
+      error.code === 'P2002' &&
+      Array.isArray(error.meta?.target) &&
+      (error.meta.target as string[]).includes('name')
+    ) {
+      throw new ConflictException(
+        'Организация с таким названием уже существует',
+      );
+    }
   }
 
   async recreateInviteCode(id: number): Promise<Organization> {
