@@ -1,29 +1,36 @@
-'use client';
+"use client";
 
-import { useEffect, useState } from 'react';
-import Link from 'next/link';
-import { Plus } from 'lucide-react';
-import { Section } from '@/components/ui/section';
-import { H1, Text } from '@/components/ui/typography';
-import { Button } from '@/components/ui/button';
-import { Select } from '@/components/ui/select';
-import { Card, CardContent } from '@/components/ui/card';
-import { Filter } from 'lucide-react';
-import { OrgSubNav } from '@/components/organization/org-sub-nav';
-import { OrganizationGamesList } from '@/components/organization/organization-games-list';
+import { useEffect, useState } from "react";
+import Link from "next/link";
+import { Plus } from "lucide-react";
+import { H1, Text } from "@/components/ui/typography";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent } from "@/components/ui/card";
+import { OrgSubNav } from "@/components/organization/org-sub-nav";
+import { OrganizationGamesList } from "@/components/organization/organization-games-list";
+import {
+  GamesFiltersBar,
+  type GamesFilterValues,
+} from "@/components/dashboard/games-filters";
 import {
   fetchMyOrganizationMembership,
   fetchOrganization,
-} from '@/lib/api/organizations';
-import { hrefCreateGameModal } from '@/lib/create-game-modal-url';
+} from "@/lib/api/organizations";
+import { hrefCreateGameModal } from "@/lib/create-game-modal-url";
 
 type Props = { params: Promise<{ id: string }> };
 
 export default function OrganizationGamesPage({ params }: Props) {
   const [orgId, setOrgId] = useState<number | null>(null);
-  const [name, setName] = useState('Организация');
+  const [name, setName] = useState("Организация");
   const [isAdmin, setIsAdmin] = useState(false);
-  const [status, setStatus] = useState('');
+  const [filters, setFilters] = useState<GamesFilterValues>({
+    status: "",
+    result: "",
+    token: "",
+    from: "",
+    to: "",
+  });
 
   useEffect(() => {
     (async () => {
@@ -45,8 +52,8 @@ export default function OrganizationGamesPage({ params }: Props) {
   }, [params]);
 
   return (
-    <Section>
-      <OrgSubNav orgId={String(orgId ?? '')} />
+    <>
+      <OrgSubNav orgId={String(orgId ?? "")} />
 
       <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
         <div>
@@ -56,9 +63,6 @@ export default function OrganizationGamesPage({ params }: Props) {
             </Link>
           </Text>
           <H1 className="mt-2">Игры организации</H1>
-          <Text className="mt-2 max-w-2xl text-muted-foreground">
-            Все партии, привязанные к этой организации. Фильтры применяются только к ней.
-          </Text>
         </div>
         {isAdmin && orgId != null ? (
           <Button asChild className="w-full gap-2 md:w-auto">
@@ -71,18 +75,10 @@ export default function OrganizationGamesPage({ params }: Props) {
       </div>
 
       <Card className="mt-8 border-border/80 bg-muted/20">
-        <CardContent className="flex flex-wrap items-end gap-2 pt-6">
-          <Filter className="mb-2 size-4 text-muted-foreground" aria-hidden />
-          <Select
-            value={status}
-            onValueChange={setStatus}
-            options={[
-              { value: '', label: 'Все статусы' },
-              { value: 'PENDING', label: 'Ожидает начала' },
-              { value: 'IN_PROGRESS', label: 'Идёт трансляция' },
-              { value: 'FINISHED', label: 'Завершена' },
-            ]}
-            aria-label="Статус"
+        <CardContent className="pt-6">
+          <GamesFiltersBar
+            values={filters}
+            onChange={(patch) => setFilters((f) => ({ ...f, ...patch }))}
           />
         </CardContent>
       </Card>
@@ -91,12 +87,16 @@ export default function OrganizationGamesPage({ params }: Props) {
         <div className="mt-6">
           <OrganizationGamesList
             organizationId={orgId}
-            status={status || undefined}
+            status={filters.status || undefined}
+            result={filters.result || undefined}
+            token={filters.token || undefined}
+            from={filters.from || undefined}
+            to={filters.to || undefined}
             title="Нет партий в организации"
             emptyHint="Администратор организации может создать первую игру."
           />
         </div>
       ) : null}
-    </Section>
+    </>
   );
 }

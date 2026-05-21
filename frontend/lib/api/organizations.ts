@@ -1,5 +1,5 @@
 import { apiFetch } from './client';
-import type { GameListItem } from './types';
+import type { GameListItem, GamesCursorResponse } from './types';
 
 export type MyOrganizationDto = {
   id: number;
@@ -139,15 +139,28 @@ export async function removeOrganizationMember(organizationId: number, userId: n
   });
 }
 
-export async function fetchOrganizationGames(
-  id: number,
-  filters?: { status?: string; from?: string; to?: string },
-): Promise<OrganizationGameDto[]> {
+export async function fetchOrganizationGamesPage(params: {
+  organizationId: number;
+  cursor?: number;
+  limit?: number;
+  status?: string;
+  result?: string;
+  token?: string;
+  from?: string;
+  to?: string;
+}): Promise<GamesCursorResponse> {
   const q = new URLSearchParams();
-  if (filters?.status) q.set('status', filters.status);
-  if (filters?.from) q.set('from', filters.from);
-  if (filters?.to) q.set('to', filters.to);
-  return apiFetch<OrganizationGameDto[]>(`/organization/${id}/games${q.size ? `?${q}` : ''}`);
+  if (params.cursor != null) q.set('cursor', String(params.cursor));
+  if (params.limit != null) q.set('limit', String(params.limit));
+  if (params.status) q.set('status', params.status);
+  if (params.result) q.set('result', params.result);
+  if (params.token) q.set('token', params.token);
+  if (params.from) q.set('from', params.from);
+  if (params.to) q.set('to', params.to);
+  const query = q.toString();
+  return apiFetch<GamesCursorResponse>(
+    `/organization/${params.organizationId}/games${query ? `?${query}` : ''}`,
+  );
 }
 
 export async function fetchOrganizationLogs(
@@ -164,7 +177,11 @@ export async function fetchOrganizationLogs(
 
 export async function updateOrganization(
   id: number,
-  body: Partial<{ name: string; description: string }>,
+  body: Partial<{
+    name: string;
+    description: string;
+    joinPolicy: 'OPEN' | 'INVITE_ONLY';
+  }>,
 ) {
   return apiFetch(`/organization/${id}`, {
     method: 'PATCH',

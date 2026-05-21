@@ -1,39 +1,52 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef } from 'react';
 import { GameListCard } from '@/components/dashboard/game-list-card';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Loader2 } from 'lucide-react';
-import { fetchOrganizationGames } from '@/lib/api/organizations';
+import { useOrganizationGamesInfinite } from '@/lib/hooks/use-organization-games-infinite';
+
 export function OrganizationGamesList(props: {
   organizationId: number;
   status?: string;
+  result?: string;
+  token?: string;
+  from?: string;
+  to?: string;
   title?: string;
   emptyHint?: string;
+  /** На обзоре — только первые N карточек без подгрузки */
+  previewLimit?: number;
+  enableInfiniteScroll?: boolean;
 }) {
-  const [games, setGames] = useState<Awaited<ReturnType<typeof fetchOrganizationGames>>>([]);
-  const [loading, setLoading] = useState(true);
-  useEffect(() => {
-    let mounted = true;
-    setLoading(true);
-    void (async () => {
-      try {
-        const g = await fetchOrganizationGames(props.organizationId, {
-          status: props.status,
-        });
-        if (mounted) setGames(g);
-      } catch {
-        if (mounted) setGames([]);
-      } finally {
-        if (mounted) setLoading(false);
-      }
-    })();
-    return () => {
-      mounted = false;
-    };
-  }, [props.organizationId, props.status]);
+  const { data, fetchNextPage, hasNextPage, isFetchingNextPage, status, error } =
+    useOrganizationGamesInfinite(props.organizationId, 15, {
+      status: props.status,
+      result: props.result,
+      token: props.token,
+      from: props.from,
+      to: props.to,
+    });
+  const sentinelRef = useRef<HTMLDivElement>(null);
+  const infinite = props.enableInfiniteScroll !== false && props.previewLimit == null;
 
-  if (loading) {
+  useEffect(() => {
+    if (!infinite) return;
+    const el = sentinelRef.current;
+    if (!el || !hasNextPage) return;
+    const obs = new IntersectionObserver(
+      (entries) => {
+        if (entries[0]?.isIntersecting && hasNextPage && !isFetchingNextPage) {
+          void fetchNextPage();
+        }
+      },
+      { rootMargin: '120px' },
+    );
+    obs.observe(el);
+    return () => obs.disconnect();
+  }, [fetchNextPage, hasNextPage, isFetchingNextPage, infinite]);
+
+  if (status === 'pending') {
     return (
       <div className="flex justify-center py-12">
         <Loader2 className="size-8 animate-spin text-muted-foreground" />
@@ -41,7 +54,23 @@ export function OrganizationGamesList(props: {
     );
   }
 
-  if (games.length === 0) {
+  if (status === 'error') {
+    return (
+      <Card>
+        <CardContent className="pt-6">
+          <p className="text-destructive">
+            {error instanceof Error ? error.message : 'Не удалось загрузить игры'}
+          </p>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  const games = data.pages.flatMap((p) => p.items);
+  const visible =
+    props.previewLimit != null ? games.slice(0, props.previewLimit) : games;
+
+  if (visible.length === 0) {
     return (
       <Card>
         <CardHeader>
@@ -58,9 +87,19 @@ export function OrganizationGamesList(props: {
 
   return (
     <div className="space-y-3">
-      {games.map((g) => (
+      {visible.map((g) => (
         <GameListCard key={g.id} game={g} />
       ))}
+      {infinite ? (
+        <>
+          <div ref={sentinelRef} className="h-4" />
+          {isFetchingNextPage ? (
+            <div className="flex justify-center py-4">
+              <Loader2 className="size-6 animate-spin text-muted-foreground" />
+            </div>
+          ) : null}
+        </>
+      ) : null}
     </div>
   );
 }

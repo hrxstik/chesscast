@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import {
+  GameResult,
   GameStatus,
   GameVisibility,
   Organization,
@@ -70,11 +71,14 @@ export class OrganizationRepository {
     });
   }
 
-  async getGames(
+  async getGamesCursor(
     organizationId: number,
-    requesterUserId: number,
+    take: number,
+    cursorId?: number,
     filters?: {
       status?: string;
+      result?: string;
+      token?: string;
       from?: Date;
       to?: Date;
     },
@@ -82,9 +86,22 @@ export class OrganizationRepository {
     const where: Prisma.GameWhereInput = {
       organizationId,
       deletedAt: null,
+      ...(cursorId != null ? { id: { lt: cursorId } } : {}),
     };
-    if (filters?.status && Object.values(GameStatus).includes(filters.status as GameStatus)) {
+    if (
+      filters?.status &&
+      Object.values(GameStatus).includes(filters.status as GameStatus)
+    ) {
       where.status = filters.status as GameStatus;
+    }
+    if (
+      filters?.result &&
+      Object.values(GameResult).includes(filters.result as GameResult)
+    ) {
+      where.result = filters.result as GameResult;
+    }
+    if (filters?.token?.trim()) {
+      where.token = { contains: filters.token.trim(), mode: 'insensitive' };
     }
     if (filters?.from || filters?.to) {
       where.createdAt = {
@@ -94,8 +111,8 @@ export class OrganizationRepository {
     }
     return this.prisma.game.findMany({
       where,
-      orderBy: { createdAt: 'desc' },
-      take: 100,
+      orderBy: { id: 'desc' },
+      take,
       include: {
         organization: true,
         users: { include: { user: true } },

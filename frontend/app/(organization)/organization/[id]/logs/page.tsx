@@ -1,7 +1,6 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { Section } from '@/components/ui/section';
 import { H1, Text } from '@/components/ui/typography';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { OrgSubNav } from '@/components/organization/org-sub-nav';
@@ -116,7 +115,7 @@ export default function OrganizationLogsPage({ params }: Props) {
   }, [params]);
 
   return (
-    <Section>
+    <>
       <OrgSubNav orgId={id} />
       {id ? (
         <OrgAdminGate orgId={id}>
@@ -125,6 +124,6 @@ export default function OrganizationLogsPage({ params }: Props) {
       ) : (
         <Text className="text-muted-foreground">Загрузка…</Text>
       )}
-    </Section>
+    </>
   );
 }

@@ -146,11 +146,29 @@ export class OrganizationController {
   async getGames(
     @Param('id', ParseIntPipe) id: number,
     @Req() req: Request & { user: { id: number } },
+    @Query('cursor') cursor?: string,
+    @Query('limit') limit?: string,
     @Query('status') status?: string,
+    @Query('result') result?: string,
+    @Query('token') token?: string,
     @Query('from') from?: string,
     @Query('to') to?: string,
   ) {
-    return this.organizationService.getGames(id, req.user.id, { status, from, to });
+    const limitNum = limit ? parseInt(limit, 10) : 20;
+    const cursorId =
+      cursor !== undefined && cursor !== ''
+        ? parseInt(cursor, 10)
+        : undefined;
+    if (cursorId !== undefined && Number.isNaN(cursorId)) {
+      return { items: [], nextCursor: null };
+    }
+    return this.organizationService.getGamesCursor(
+      id,
+      req.user.id,
+      limitNum,
+      cursorId,
+      { status, result, token, from, to },
+    );
   }
 
   @Get(':id/logs')

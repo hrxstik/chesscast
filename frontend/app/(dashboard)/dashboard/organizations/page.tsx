@@ -150,7 +150,9 @@ export default function DashboardOrganizationsPage() {
           <CardContent className="space-y-6">
             <div className="space-y-2">
               <Text className="text-sm text-muted-foreground">
-                Введите код приглашения организации.
+                Введите код приглашения организации. Клубы «по приглашению» не
+                отображаются в поиске и по прямой ссылке, пока вы в них не
+                состоите — только вступление по коду.
               </Text>
               <div className="flex flex-col gap-2 sm:flex-row">
                 <input

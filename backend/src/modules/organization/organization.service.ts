@@ -120,7 +120,13 @@ export class OrganizationService {
     const activeOwners = new Set(activeOwnerSubs.map((s) => s.userId));
 
     return rows
-      .filter((r) => metaById.has(r.id))
+      .filter((r) => {
+        const meta = metaById.get(r.id);
+        if (!meta) return false;
+        const role = roleByOrg.get(r.id) ?? null;
+        if (role != null) return true;
+        return meta.joinPolicy !== OrganizationJoinPolicy.INVITE_ONLY;
+      })
       .map((row) => {
         const meta = metaById.get(row.id)!;
         const role = roleByOrg.get(row.id) ?? null;
@@ -158,7 +164,9 @@ export class OrganizationService {
           joinPolicy: true,
         },
       });
-      return row ? this.enrichSearchRows(userId, [row]) : [];
+      if (!row) return [];
+      const enriched = await this.enrichSearchRows(userId, [row]);
+      return enriched;
     }
     if (!trimmed) {
       return [];
@@ -223,7 +231,7 @@ export class OrganizationService {
     return organization;
   }
 
-  /** Карточка для неучастников: при INVITE_ONLY — минимум полей; при OPEN — описание без кода. */
+  /** Участникам — полная карточка. OPEN — краткая для неучастников. INVITE_ONLY — только участникам. */
   async getOrganizationVisible(id: number, viewerUserId?: number) {
     const organization = await this.organizationRepository.findById(id);
     if (!organization || organization.deletedAt) {
@@ -237,13 +245,7 @@ export class OrganizationService {
       return organization;
     }
     if (organization.joinPolicy === OrganizationJoinPolicy.INVITE_ONLY) {
-      return {
-        id: organization.id,
-        name: organization.name,
-        avatar: organization.avatar,
-        joinPolicy: organization.joinPolicy,
-        blocked: organization.blocked,
-      };
+      throw new NotFoundException(`Organization with id ${id} not found`);
     }
     return {
       id: organization.id,
@@ -418,6 +420,16 @@ export class OrganizationService {
       organizationId,
     );
     if (!isMember) {
+      const org = await this.organizationRepository.findById(organizationId);
+      if (
+        !org ||
+        org.deletedAt ||
+        org.joinPolicy === OrganizationJoinPolicy.INVITE_ONLY
+      ) {
+        throw new NotFoundException(
+          `Organization with id ${organizationId} not found`,
+        );
+      }
       throw new ForbiddenException('Нет доступа к организации');
     }
   }
@@ -522,10 +534,18 @@ export class OrganizationService {
     }));
   }
 
-  async getGames(
+  async getGamesCursor(
     organizationId: number,
     requesterUserId: number,
-    filters?: { status?: string; from?: string; to?: string },
+    limit: number,
+    cursorId?: number,
+    filters?: {
+      status?: string;
+      result?: string;
+      token?: string;
+      from?: string;
+      to?: string;
+    },
   ) {
     await this.assertUserHasAccess(requesterUserId, organizationId);
     const exists = await this.findById(organizationId);
@@ -534,20 +554,29 @@ export class OrganizationService {
         `Organization with id ${organizationId} not found`,
       );
     }
+    const take = Math.min(Math.max(limit, 1), 50);
     const from = filters?.from ? new Date(filters.from) : undefined;
     const to = filters?.to ? new Date(filters.to) : undefined;
-    const rows = await this.organizationRepository.getGames(
+    const rows = await this.organizationRepository.getGamesCursor(
       organizationId,
-      requesterUserId,
+      take + 1,
+      cursorId,
       {
         status: filters?.status,
+        result: filters?.result,
+        token: filters?.token,
         from: from && !Number.isNaN(from.getTime()) ? from : undefined,
         to: to && !Number.isNaN(to.getTime()) ? to : undefined,
       },
     );
-    return Promise.all(
-      rows.map((g) => this.gameService.toListItemDto(g, requesterUserId)),
+    const hasMore = rows.length > take;
+    const page = hasMore ? rows.slice(0, take) : rows;
+    const items = await Promise.all(
+      page.map((g) => this.gameService.toListItemDto(g, requesterUserId)),
     );
+    const nextCursor =
+      hasMore && page.length > 0 ? page[page.length - 1].id : null;
+    return { items, nextCursor };
   }
 
   async getLogs(
@@ -557,9 +586,10 @@ export class OrganizationService {
   ) {
     await this.assertUserIsAdmin(requesterUserId, organizationId);
     const org = await this.findById(organizationId);
-    const games = await this.organizationRepository.getGames(
+    const games = await this.organizationRepository.getGamesCursor(
       organizationId,
-      requesterUserId,
+      500,
+      undefined,
       {
         from: filters?.from ? new Date(filters.from) : undefined,
         to: filters?.to ? new Date(filters.to) : undefined,

@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Section } from "@/components/ui/section";
 import { H1, Text } from "@/components/ui/typography";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { OrgSubNav } from "@/components/organization/org-sub-nav";
@@ -17,7 +16,8 @@ import {
   updateOrganization,
   type OrganizationMemberDto,
 } from "@/lib/api/organizations";
-import { labelOrgRole } from "@/lib/game-labels";
+import { Select } from "@/components/ui/select";
+import { labelJoinPolicy, labelOrgRole } from "@/lib/game-labels";
 import { useRouter } from "next/navigation";
 import toast from "react-hot-toast";
 
@@ -27,6 +27,9 @@ function OrganizationSettingsContent({ orgId }: { orgId: string }) {
   const router = useRouter();
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
+  const [joinPolicy, setJoinPolicy] = useState<"OPEN" | "INVITE_ONLY">(
+    "INVITE_ONLY",
+  );
   const [inviteCode, setInviteCode] = useState("");
   const [members, setMembers] = useState<OrganizationMemberDto[]>([]);
   const [saving, setSaving] = useState(false);
@@ -39,6 +42,9 @@ function OrganizationSettingsContent({ orgId }: { orgId: string }) {
         const orgMembers = await fetchOrganizationMembers(Number(orgId));
         setName(org.name);
         setDescription(org.description || "");
+        setJoinPolicy(
+          org.joinPolicy === "OPEN" ? "OPEN" : "INVITE_ONLY",
+        );
         setInviteCode(org.inviteCode || "");
         setMembers(orgMembers);
       } finally {
@@ -50,7 +56,11 @@ function OrganizationSettingsContent({ orgId }: { orgId: string }) {
   async function onSave() {
     setSaving(true);
     try {
-      await updateOrganization(Number(orgId), { name, description });
+      await updateOrganization(Number(orgId), {
+        name,
+        description,
+        joinPolicy,
+      });
       toast.success("Изменения сохранены");
     } finally {
       setSaving(false);
@@ -145,6 +155,27 @@ function OrganizationSettingsContent({ orgId }: { orgId: string }) {
                 onChange={(e) => setDescription(e.target.value)}
               />
             </div>
+            <div className="space-y-2">
+              <Text className="text-xs font-medium uppercase text-muted-foreground">
+                Политика вступления
+              </Text>
+              <Select
+                value={joinPolicy}
+                onValueChange={(v) =>
+                  setJoinPolicy(v === "OPEN" ? "OPEN" : "INVITE_ONLY")
+                }
+                options={[
+                  { value: "INVITE_ONLY", label: labelJoinPolicy("INVITE_ONLY") },
+                  { value: "OPEN", label: labelJoinPolicy("OPEN") },
+                ]}
+                aria-label="Политика вступления"
+              />
+              <Text className="text-xs text-muted-foreground">
+                {joinPolicy === "OPEN"
+                  ? "Любой пользователь может вступить без кода — на карточке открытой организации по прямой ссылке."
+                  : "Вступление только по коду приглашения ниже."}
+              </Text>
+            </div>
             <Button onClick={() => void onSave()} disabled={saving}>
               {saving ? "Сохранение…" : "Сохранить"}
             </Button>
@@ -160,7 +191,9 @@ function OrganizationSettingsContent({ orgId }: { orgId: string }) {
           </CardHeader>
           <CardContent className="space-y-4">
             <Text className="text-sm text-muted-foreground">
-              Код приглашения и ссылка для вступления.
+              {joinPolicy === "OPEN"
+                ? "Код не обязателен для вступления, но его можно передать участникам вручную."
+                : "Код приглашения обязателен для вступления в закрытый клуб."}
             </Text>
             <div className="flex items-center gap-2 rounded-lg border border-border bg-muted/30 px-3 py-2 font-mono text-sm">
               <span className="flex-1 truncate text-muted-foreground">
@@ -252,7 +285,7 @@ export default function OrganizationSettingsPage({ params }: Props) {
   }, [params]);
 
   return (
-    <Section>
+    <>
       <OrgSubNav orgId={id} />
       {id ? (
         <OrgAdminGate orgId={id}>
@@ -261,6 +294,6 @@ export default function OrganizationSettingsPage({ params }: Props) {
       ) : (
         <Text className="text-muted-foreground">Загрузка…</Text>
       )}
-    </Section>
+    </>
   );
 }

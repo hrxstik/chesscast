@@ -4,9 +4,11 @@ import { useEffect, useId, useRef, useState } from "react";
 import Link from "next/link";
 import { Loader2, Search, X } from "lucide-react";
 import {
+  joinOpenOrganization,
   searchOrganizations,
   type OrganizationSearchDto,
 } from "@/lib/api/organizations";
+import toast from "react-hot-toast";
 import { labelOrgRoleShort } from "@/lib/game-labels";
 import { cn } from "@/lib/utils";
 import { Text } from "@/components/ui/typography";
@@ -21,6 +23,7 @@ export function OrganizationSearchCombobox() {
   const [rows, setRows] = useState<OrganizationSearchDto[]>([]);
   const [loading, setLoading] = useState(false);
   const [open, setOpen] = useState(false);
+  const [joiningId, setJoiningId] = useState<number | null>(null);
 
   useEffect(() => {
     const q = query.trim();
@@ -69,8 +72,11 @@ export function OrganizationSearchCombobox() {
   return (
     <div ref={wrapRef} className="space-y-1">
       <label htmlFor={`${listId}-input`} className="text-sm font-medium">
-        Поиск организации
+        Поиск открытых организаций
       </label>
+      <Text className="text-xs text-muted-foreground">
+        В результатах — только открытые клубы и те, где вы уже участник.
+      </Text>
       <div className="relative">
         <Search
           className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"
@@ -130,27 +136,54 @@ export function OrganizationSearchCombobox() {
             ) : null}
             {rows.map((r) => (
               <li key={r.id} role="option">
-                <Link
-                  href={`/organization/${r.id}`}
-                  className="flex items-center justify-between gap-2 px-3 py-2 text-sm hover:bg-muted/80"
-                  onClick={() => {
-                    setOpen(false);
-                    setQuery("");
-                    setRows([]);
-                  }}
-                >
-                  <span className="min-w-0">
+                <div className="flex items-center justify-between gap-2 px-3 py-2 text-sm hover:bg-muted/80">
+                  <Link
+                    href={`/organization/${r.id}`}
+                    className="min-w-0 flex-1"
+                    onClick={() => {
+                      setOpen(false);
+                      setQuery("");
+                      setRows([]);
+                    }}
+                  >
                     <span className="block truncate font-medium">{r.name}</span>
                     <span className="block text-xs text-muted-foreground">
                       ID {r.id}
-                      {r.isMember
+                      {r.isMember && r.role
                         ? ` · вы ${labelOrgRoleShort(r.role)}`
-                        : ""}
+                        : " · открытая"}
                       {!r.isActive ? " · неактивна" : ""}
                     </span>
-                  </span>
-                  <span className="shrink-0 text-xs text-primary">Открыть</span>
-                </Link>
+                  </Link>
+                  {r.isMember ? (
+                    <span className="shrink-0 text-xs text-primary">Открыть</span>
+                  ) : r.joinPolicy === "OPEN" ? (
+                    <button
+                      type="button"
+                      className="shrink-0 rounded-md border border-border px-2 py-1 text-xs font-medium hover:bg-muted"
+                      disabled={joiningId === r.id}
+                      onClick={(e) => {
+                        e.preventDefault();
+                        setJoiningId(r.id);
+                        void (async () => {
+                          try {
+                            await joinOpenOrganization(r.id);
+                            toast.success("Вы вступили в организацию");
+                            setOpen(false);
+                            setQuery("");
+                            setRows([]);
+                          } finally {
+                            setJoiningId(null);
+                          }
+                        })();
+                      }}
+                    >
+                      {joiningId === r.id ? "…" : "Вступить"}
+                    </button>
+                  ) : (
+                    <span className="shrink-0 text-xs text-primary">Открыть</span>
+                  )}
+                </div>
               </li>
             ))}
           </ul>

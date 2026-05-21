@@ -286,7 +286,7 @@ async function main() {
   }
   const [orgInvite, orgOpen, orgMoscow, orgYouth, orgElite, orgAcademy] = orgs;
 
-  /** В каждой организации ровно один ADMIN (владелец школы); остальные — PLAYER. */
+  /** В каждой орге ровно один ADMIN. school_admin — владелец всех орг., ADMIN в 4 закрытых/открытых (кроме двух демо у player). */
   const membershipKey = (userId: number, organizationId: number) =>
     `${userId}:${organizationId}`;
   const seenMemberships = new Set<string>();
@@ -311,14 +311,12 @@ async function main() {
     organizationId: number;
     role: Role;
   }[] = [
-    { userId: schoolAdmin.id, organizationId: orgInvite.id, role: Role.ADMIN },
-    { userId: schoolAdmin.id, organizationId: orgOpen.id, role: Role.ADMIN },
     { userId: schoolAdmin.id, organizationId: orgMoscow.id, role: Role.ADMIN },
     { userId: schoolAdmin.id, organizationId: orgYouth.id, role: Role.ADMIN },
     { userId: schoolAdmin.id, organizationId: orgElite.id, role: Role.ADMIN },
     { userId: schoolAdmin.id, organizationId: orgAcademy.id, role: Role.ADMIN },
-    { userId: player.id, organizationId: orgInvite.id, role: Role.PLAYER },
-    { userId: player.id, organizationId: orgOpen.id, role: Role.PLAYER },
+    { userId: player.id, organizationId: orgInvite.id, role: Role.ADMIN },
+    { userId: player.id, organizationId: orgOpen.id, role: Role.ADMIN },
     { userId: player.id, organizationId: orgMoscow.id, role: Role.PLAYER },
     { userId: player.id, organizationId: orgYouth.id, role: Role.PLAYER },
     { userId: player.id, organizationId: orgElite.id, role: Role.PLAYER },
@@ -560,7 +558,9 @@ async function main() {
   for (const u of createdExtras.slice(8)) {
     console.log(`  ${u.email}  |  ${u.name}`);
   }
-  console.log('\n— Организации (ADMIN: schooladmin@chesscast.local) —');
+  console.log('\n— Организации (1 ADMIN на оргу) —');
+  console.log('  schooladmin — владелец всех, ADMIN: Moscow, Youth, Elite, Academy');
+  console.log('  demo_player — ADMIN: Демо-школа, Открытый клуб');
   for (const o of orgs) {
     console.log(
       `  [${o.joinPolicy}] ${o.name} | код: ${o.inviteCode} | id: ${o.id}`,
@@ -569,7 +569,8 @@ async function main() {
   console.log('\n— Публичный профиль —');
   console.log(`  /player/${player.id}  (demo_player)`);
   console.log(`  /player/${schoolAdmin.id}  (school_admin)`);
-  console.log('\n— Демо для player@chesscast.local —');
+  console.log('\n— Демо для player@chesscast.local (demo_player) —');
+  console.log('  ADMIN в: «Демо-школа ChessCast», «Открытый клуб Seed»');
   console.log('  Игры: ~55+ в «Мои игры», фильтр по token: filter-demo');
   console.log('  Вступление по коду: SEED-YOUTH-LIGA или SEED-ELITE-TACT');
   console.log('  Поиск: «Moscow», «Elite», id организации из списка выше');

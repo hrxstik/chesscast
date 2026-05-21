@@ -1,64 +1,68 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Section } from "@/components/ui/section";
 import { H1, Text } from "@/components/ui/typography";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { OrgSubNav } from "@/components/organization/org-sub-nav";
 import { Button } from "@/components/ui/button";
 import Link from "next/link";
-import { Gamepad2, Plus, Settings, Users } from "lucide-react";
-import { Select } from "@/components/ui/select";
-import { GameListCard } from "@/components/dashboard/game-list-card";
+import { Gamepad2, Plus, Users } from "lucide-react";
+import { OrganizationGamesList } from "@/components/organization/organization-games-list";
+import {
+  GamesFiltersBar,
+  type GamesFilterValues,
+} from "@/components/dashboard/games-filters";
 import {
   fetchMyOrganizationMembership,
   fetchOrganization,
-  fetchOrganizationGames,
   fetchOrganizationMembers,
-  fetchOrganizationStatus,
-  type OrganizationGameDto,
   type OrganizationMemberDto,
 } from "@/lib/api/organizations";
 import { hrefCreateGameModal } from "@/lib/create-game-modal-url";
-import { labelOrgRole } from "@/lib/game-labels";
+import { labelJoinPolicy, labelOrgRole } from "@/lib/game-labels";
+
 type Props = { params: Promise<{ id: string }> };
 
 export default function OrganizationPage({ params }: Props) {
   const [id, setId] = useState<string>("");
+  const [orgId, setOrgId] = useState<number | null>(null);
   const [isAdmin, setIsAdmin] = useState(false);
   const [name, setName] = useState("Организация");
+  const [joinPolicy, setJoinPolicy] = useState<string>("");
   const [members, setMembers] = useState<OrganizationMemberDto[]>([]);
-  const [games, setGames] = useState<OrganizationGameDto[]>([]);
-  const [isActive, setIsActive] = useState<boolean | null>(null);
-  const [statusFilter, setStatusFilter] = useState("");
+  const [filters, setFilters] = useState<GamesFilterValues>({
+    status: "",
+    result: "",
+    token: "",
+    from: "",
+    to: "",
+  });
+
   useEffect(() => {
     (async () => {
       const p = await params;
       setId(p.id);
-      const orgId = Number(p.id);
+      const numericId = Number(p.id);
+      if (Number.isNaN(numericId)) return;
+      setOrgId(numericId);
       try {
-        const [org, m, g, st, membership] = await Promise.all([
-          fetchOrganization(orgId),
-          fetchOrganizationMembers(orgId),
-          fetchOrganizationGames(orgId, {
-            status: statusFilter || undefined,
-          }),
-          fetchOrganizationStatus(orgId),
-          fetchMyOrganizationMembership(orgId),
+        const [org, m, membership] = await Promise.all([
+          fetchOrganization(numericId),
+          fetchOrganizationMembers(numericId),
+          fetchMyOrganizationMembership(numericId),
         ]);
         setName(org.name);
+        setJoinPolicy(org.joinPolicy ?? "");
         setMembers(m);
-        setGames(g);
-        setIsActive(st.isActive);
         setIsAdmin(membership.isAdmin);
       } catch {
         /* toast из apiFetch */
       }
     })();
-  }, [params, statusFilter]);
+  }, [params]);
 
   return (
-    <Section>
+    <>
       <OrgSubNav orgId={id} />
 
       <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
@@ -69,6 +73,12 @@ export default function OrganizationPage({ params }: Props) {
           <H1 className="mt-1">{name}</H1>
           <Text className="mt-2 max-w-2xl text-muted-foreground">
             Обзор клуба
+            {joinPolicy ? (
+              <>
+                {" "}
+                · вступление: {labelJoinPolicy(joinPolicy)}
+              </>
+            ) : null}
           </Text>
         </div>
       </div>
@@ -128,22 +138,23 @@ export default function OrganizationPage({ params }: Props) {
                 </Link>
               </Button>
             ) : null}
-            <Select
-              value={statusFilter}
-              onValueChange={setStatusFilter}
-              options={[
-                { value: "", label: "Все статусы" },
-                { value: "PENDING", label: "Ожидает начала" },
-                { value: "IN_PROGRESS", label: "Идёт трансляция" },
-                { value: "FINISHED", label: "Завершена" },
-              ]}
-              aria-label="Статус партии"
+            <GamesFiltersBar
+              compact
+              values={filters}
+              onChange={(patch) => setFilters((f) => ({ ...f, ...patch }))}
             />
-            <div className="space-y-2">
-              {games.slice(0, 8).map((g) => (
-                <GameListCard key={g.id} game={g} />
-              ))}
-            </div>
+            {orgId != null ? (
+              <OrganizationGamesList
+                organizationId={orgId}
+                status={filters.status || undefined}
+                result={filters.result || undefined}
+                token={filters.token || undefined}
+                from={filters.from || undefined}
+                to={filters.to || undefined}
+                previewLimit={8}
+                enableInfiniteScroll={false}
+              />
+            ) : null}
             <Button asChild variant="secondary" className="w-full">
               <Link href={`/organization/${id}/games`}>
                 Все игры организации
@@ -152,6 +163,6 @@ export default function OrganizationPage({ params }: Props) {
           </CardContent>
         </Card>
       </div>
-    </Section>
+    </>
   );
 }
