@@ -92,9 +92,13 @@ export class UserService {
     userId: number,
     currentPassword: string,
     newPassword: string,
+    confirmPassword?: string,
   ): Promise<{ success: true }> {
     if (!currentPassword || !newPassword) {
       throw new BadRequestException('Нужно указать текущий и новый пароль');
+    }
+    if (confirmPassword != null && newPassword !== confirmPassword) {
+      throw new BadRequestException('Новый пароль и повтор не совпадают');
     }
     if (newPassword.length < 6) {
       throw new BadRequestException('Новый пароль слишком короткий');

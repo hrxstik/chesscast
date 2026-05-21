@@ -29,7 +29,11 @@ export async function uploadMyAvatar(file: File): Promise<MeResponse> {
   });
 }
 
-export async function changeMyPassword(body: { currentPassword: string; newPassword: string }) {
+export async function changeMyPassword(body: {
+  currentPassword: string;
+  newPassword: string;
+  confirmPassword: string;
+}) {
   return apiFetch<{ success: true }>('/user/me/change-password', {
     method: 'POST',
     body,

@@ -18,7 +18,8 @@ import {
   fetchMyCurrentSubscription,
   type CurrentSubscriptionDto,
 } from "@/lib/api/subscription";
-import { ApiError } from "@/lib/api/types";
+import { SUBSCRIPTION_STATUS_LABEL } from "@/lib/plan-capabilities";
+import { PlanCapabilitiesBlock } from "@/components/shared/plan-capabilities-block";
 import { useRouter, useSearchParams } from "next/navigation";
 import toast from "react-hot-toast";
 import { useAuthStore } from "@/store/auth-store";
@@ -47,11 +48,11 @@ function DashboardProfileInner() {
   const [pendingAvatar, setPendingAvatar] = useState<File | null>(null);
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
   const [deletePassword, setDeletePassword] = useState("");
-  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    (async () => {
+    void (async () => {
       try {
         const [user, sub] = await Promise.all([
           getCurrentUser(),
@@ -60,23 +61,21 @@ function DashboardProfileInner() {
         setMe(user);
         setName(user.name);
         setSubscription(sub);
-      } catch (e) {
-        setError(
-          e instanceof ApiError ? e.message : "Не удалось загрузить профиль",
-        );
+      } catch {
+        /* toast из apiFetch */
       }
     })();
   }, []);
 
   useEffect(() => {
     if (searchParams.get("payment") !== "success") return;
-    toast.success("Возврат с оплаты. Обновляем данные подписки…");
+    toast.success("Оплата прошла. Обновляем подписку…");
     void (async () => {
       try {
         const sub = await fetchMyCurrentSubscription();
         setSubscription(sub);
       } catch {
-        /* ignore */
+        /* toast из apiFetch */
       }
     })();
     router.replace("/dashboard/profile", { scroll: false });
@@ -85,7 +84,6 @@ function DashboardProfileInner() {
   async function onSave() {
     if (!me) return;
     setSaving(true);
-    setError(null);
     try {
       let updated = me;
       if (pendingAvatar) {
@@ -104,10 +102,6 @@ function DashboardProfileInner() {
       setName(updated.name);
       setUser(updated);
       toast.success("Изменения сохранены");
-    } catch (e) {
-      setError(
-        e instanceof ApiError ? e.message : "Не удалось сохранить профиль",
-      );
     } finally {
       setSaving(false);
     }
@@ -118,20 +112,24 @@ function DashboardProfileInner() {
     if (avatarPreview) URL.revokeObjectURL(avatarPreview);
     setPendingAvatar(file);
     setAvatarPreview(URL.createObjectURL(file));
-    setError(null);
   }
 
   async function onChangePassword() {
+    if (newPassword.length < 6) {
+      toast.error("Новый пароль — не короче 6 символов");
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      toast.error("Новый пароль и повтор не совпадают");
+      return;
+    }
     setSaving(true);
-    setError(null);
     try {
-      await changeMyPassword({ currentPassword, newPassword });
+      await changeMyPassword({ currentPassword, newPassword, confirmPassword });
       setCurrentPassword("");
       setNewPassword("");
-    } catch (e) {
-      setError(
-        e instanceof ApiError ? e.message : "Не удалось изменить пароль",
-      );
+      setConfirmPassword("");
+      toast.success("Пароль изменён");
     } finally {
       setSaving(false);
     }
@@ -139,31 +137,28 @@ function DashboardProfileInner() {
 
   async function onDeleteAccount() {
     setSaving(true);
-    setError(null);
     try {
       await deleteMyAccount({ password: deletePassword });
       await logout();
       router.replace("/");
-    } catch (e) {
-      setError(
-        e instanceof ApiError ? e.message : "Не удалось удалить аккаунт",
-      );
     } finally {
       setSaving(false);
     }
   }
 
   const avatarSrc = avatarPreview ?? resolveAvatarSrc(me?.avatar);
+  const statusLabel = subscription
+    ? (SUBSCRIPTION_STATUS_LABEL[subscription.status] ?? subscription.status)
+    : null;
 
   return (
     <div className="space-y-8">
       <div>
         <H2>Профиль</H2>
         <Text className="mt-2 max-w-2xl text-muted-foreground">
-          Данные аккаунта и подписка.
+          Данные аккаунта, подписка и безопасность.
         </Text>
       </div>
-      {error ? <Text className="text-sm text-destructive">{error}</Text> : null}
 
       <div className="grid gap-6 lg:grid-cols-3">
         <Card className="border-border/80 lg:col-span-2">
@@ -228,12 +223,37 @@ function DashboardProfileInner() {
                 </div>
               </div>
             </div>
-            <Button
-              onClick={() => void onSave()}
-              disabled={saving || !me}
-            >
+            <Button onClick={() => void onSave()} disabled={saving || !me}>
               {saving ? "Сохранение…" : "Сохранить изменения"}
             </Button>
+            <Card className="border-destructive/30 bg-destructive/5">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2 text-base text-destructive">
+                  <Shield className="size-4" aria-hidden />
+                  Опасная зона
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-2">
+                <Text className="text-sm text-muted-foreground">
+                  Подтвердите пароль для удаления аккаунта.
+                </Text>
+                <input
+                  type="password"
+                  autoComplete="current-password"
+                  className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
+                  placeholder="Пароль"
+                  value={deletePassword}
+                  onChange={(e) => setDeletePassword(e.target.value)}
+                />
+                <Button
+                  variant="destructive"
+                  onClick={() => void onDeleteAccount()}
+                  disabled={saving || !deletePassword}
+                >
+                  Удалить аккаунт
+                </Button>
+              </CardContent>
+            </Card>
           </CardContent>
         </Card>
 
@@ -242,19 +262,25 @@ function DashboardProfileInner() {
             <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_top_right,_var(--tw-gradient-stops))] from-primary/10 via-transparent to-transparent" />
             <CardHeader className="relative pb-2">
               <CardTitle className="flex items-center gap-2 text-base">
-                Текущий план
+                <CreditCard className="size-4 text-primary" aria-hidden />
+                Подписка и тарифы
               </CardTitle>
             </CardHeader>
             <CardContent className="relative space-y-4">
               {subscription ? (
                 <>
                   <div>
-                    <p className="mt-1 text-lg font-semibold tracking-tight">
+                    <p className="text-lg font-semibold tracking-tight">
                       {subscription.plan.title}
                     </p>
+                    {subscription.plan.description ? (
+                      <p className="mt-1 text-sm text-muted-foreground">
+                        {subscription.plan.description}
+                      </p>
+                    ) : null}
                     <div className="mt-2 flex flex-wrap gap-2 text-xs text-muted-foreground">
                       <span className="rounded-full bg-muted/80 px-2 py-0.5 font-medium text-foreground/80">
-                        {subscription.status}
+                        {statusLabel}
                       </span>
                       <span>
                         Действует до{" "}
@@ -271,7 +297,7 @@ function DashboardProfileInner() {
                       </span>
                       {subscription.autoRenew ? (
                         <span className="rounded-full bg-primary/15 px-2 py-0.5 text-primary">
-                          Автопродление включено
+                          Автопродление
                         </span>
                       ) : (
                         <span className="rounded-full bg-muted px-2 py-0.5">
@@ -280,14 +306,26 @@ function DashboardProfileInner() {
                       )}
                     </div>
                   </div>
+
+                  <PlanCapabilitiesBlock
+                    features={subscription.plan.features}
+                    limits={{
+                      maxGamesPerPeriod: subscription.plan.maxGamesPerPeriod,
+                      maxOrganizations: subscription.plan.maxOrganizations,
+                      canCreateOrganization:
+                        subscription.plan.canCreateOrganization,
+                      canStream: subscription.plan.canStream,
+                      streamQualityLevel: subscription.plan.streamQualityLevel,
+                    }}
+                  />
+
                   <Button
                     asChild
                     className="group w-full justify-between gap-2"
                   >
                     <Link href="/pricing">
                       <span className="flex items-center gap-2">
-                        <CreditCard className="size-4 opacity-80" aria-hidden />
-                        Перейти к тарифам и оплате
+                        Тарифы и оплата
                       </span>
                       <ChevronRight
                         className="size-4 shrink-0 opacity-60 transition group-hover:translate-x-0.5 group-hover:opacity-100"
@@ -299,15 +337,15 @@ function DashboardProfileInner() {
               ) : (
                 <>
                   <Text className="text-sm text-muted-foreground">
-                    Нет активной подписки в ответе API — выберите тариф, чтобы
-                    открыть стриминг и лимиты.
+                    Нет активной подписки. Выберите тариф на странице оплаты —
+                    после успешного платежа в ЮKassa подписка появится здесь.
                   </Text>
                   <Button
                     asChild
                     className="group w-full justify-between gap-2"
                   >
                     <Link href="/pricing">
-                      <span>Посмотреть тарифы</span>
+                      <span>Тарифы и оплата</span>
                       <ChevronRight
                         className="size-4 shrink-0 opacity-60 transition group-hover:translate-x-0.5 group-hover:opacity-100"
                         aria-hidden
@@ -329,6 +367,7 @@ function DashboardProfileInner() {
             <CardContent className="space-y-2">
               <input
                 type="password"
+                autoComplete="current-password"
                 className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
                 placeholder="Текущий пароль"
                 value={currentPassword}
@@ -336,45 +375,28 @@ function DashboardProfileInner() {
               />
               <input
                 type="password"
+                autoComplete="new-password"
                 className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
                 placeholder="Новый пароль"
                 value={newPassword}
                 onChange={(e) => setNewPassword(e.target.value)}
               />
+              <input
+                type="password"
+                autoComplete="new-password"
+                className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
+                placeholder="Повторите новый пароль"
+                value={confirmPassword}
+                onChange={(e) => setConfirmPassword(e.target.value)}
+              />
               <Button
                 variant="outline"
                 onClick={() => void onChangePassword()}
-                disabled={saving}
+                disabled={
+                  saving || !currentPassword || !newPassword || !confirmPassword
+                }
               >
                 Сменить пароль
-              </Button>
-            </CardContent>
-          </Card>
-
-          <Card className="border-destructive/30 bg-destructive/5">
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2 text-base text-destructive">
-                <Shield className="size-4" aria-hidden />
-                Опасная зона
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-2">
-              <Text className="text-sm text-muted-foreground">
-                Подтвердите пароль для удаления аккаунта.
-              </Text>
-              <input
-                type="password"
-                className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
-                placeholder="Пароль"
-                value={deletePassword}
-                onChange={(e) => setDeletePassword(e.target.value)}
-              />
-              <Button
-                variant="destructive"
-                onClick={() => void onDeleteAccount()}
-                disabled={saving}
-              >
-                Удалить аккаунт
               </Button>
             </CardContent>
           </Card>

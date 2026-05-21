@@ -13,6 +13,11 @@ export type CurrentSubscriptionDto = {
     title: string;
     description: string;
     features: string[];
+    maxGamesPerPeriod: number;
+    maxOrganizations: number;
+    canCreateOrganization: boolean;
+    canStream: boolean;
+    streamQualityLevel: 'LOW' | 'MEDIUM' | 'HIGH';
   };
 };
 

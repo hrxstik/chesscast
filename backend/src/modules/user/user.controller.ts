@@ -71,8 +71,14 @@ export class UserController {
     @Req() req: Request & { user: { id: number } },
     @Body('currentPassword') currentPassword: string,
     @Body('newPassword') newPassword: string,
+    @Body('confirmPassword') confirmPassword?: string,
   ) {
-    return this.userService.changePassword(req.user.id, currentPassword, newPassword);
+    return this.userService.changePassword(
+      req.user.id,
+      currentPassword,
+      newPassword,
+      confirmPassword,
+    );
   }
 
   @UseGuards(JwtAuthGuard)
