@@ -7,6 +7,16 @@ import {
 } from 'lucide-react';
 import type { NavItem } from '@/components/layout/app-shell';
 
+export function isDashboardNavActive(pathname: string, href: string): boolean {
+  if (pathname === href || pathname.startsWith(`${href}/`)) {
+    return true;
+  }
+  if (href === '/dashboard/organizations' && pathname.startsWith('/organization')) {
+    return true;
+  }
+  return false;
+}
+
 export function getDashboardNavItems(role: 'USER' | 'SUPERADMIN'): NavItem[] {
   const base: NavItem[] = [
     {

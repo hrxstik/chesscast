@@ -1,7 +1,10 @@
 'use client';
 
 import { AppShell } from '@/components/layout/app-shell';
-import { getDashboardNavItems } from '@/components/layout/dashboard-nav-items';
+import {
+  getDashboardNavItems,
+  isDashboardNavActive,
+} from '@/components/layout/dashboard-nav-items';
 import { useAuthStore } from '@/store/auth-store';
 import type { ReactNode } from 'react';
 import Link from 'next/link';
@@ -29,7 +32,7 @@ export function DashboardShell({ children, title }: Props) {
         aria-label="Разделы дашборда">
         <div className="mx-auto flex w-full max-w-lg justify-around gap-1">
           {navItems.slice(0, 5).map((item) => {
-            const active = pathname === item.href || pathname.startsWith(`${item.href}/`);
+            const active = isDashboardNavActive(pathname, item.href);
             return (
               <Link
                 key={item.href}

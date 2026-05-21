@@ -1,6 +1,10 @@
+'use client';
+
 import { cn } from '@/lib/utils';
 import { CONTENT_MAX_WIDTH_CLASS } from '@/lib/layout-classes';
+import { isDashboardNavActive } from '@/components/layout/dashboard-nav-items';
 import Link from 'next/link';
+import { usePathname } from 'next/navigation';
 import type { ReactNode } from 'react';
 
 export type NavItem = { href: string; label: string; icon?: ReactNode };
@@ -13,6 +17,8 @@ type AppShellProps = {
 };
 
 export function AppShell({ navItems, children, title, className }: AppShellProps) {
+  const pathname = usePathname();
+
   return (
     <div className={cn('min-h-screen bg-background', className)}>
       <div
@@ -21,16 +27,24 @@ export function AppShell({ navItems, children, title, className }: AppShellProps
           CONTENT_MAX_WIDTH_CLASS,
         )}>
         <aside className="hidden w-56 shrink-0 md:block">
-          <nav className="sticky top-24 space-y-1">
-            {navItems.map((item) => (
-              <Link
-                key={item.href}
-                href={item.href}
-                className="flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium text-muted-foreground transition hover:bg-muted hover:text-foreground">
-                {item.icon}
-                {item.label}
-              </Link>
-            ))}
+          <nav className="sticky top-24 space-y-1" aria-label="Разделы дашборда">
+            {navItems.map((item) => {
+              const active = isDashboardNavActive(pathname, item.href);
+              return (
+                <Link
+                  key={item.href}
+                  href={item.href}
+                  className={cn(
+                    'flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium transition',
+                    active
+                      ? 'bg-primary/10 text-primary'
+                      : 'text-muted-foreground hover:bg-muted hover:text-foreground',
+                  )}>
+                  {item.icon}
+                  {item.label}
+                </Link>
+              );
+            })}
           </nav>
         </aside>
         <div className="min-w-0 flex-1">

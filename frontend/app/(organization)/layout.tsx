@@ -1,8 +1,9 @@
-import { Container } from '@/components/shared/container';
+import React, { Suspense } from 'react';
 import Header from '@/components/shared/header';
-import type { ReactNode } from 'react';
-import { Suspense } from 'react';
+import { DashboardAuthGate } from '@/components/layout/dashboard-auth-gate';
+import { DashboardShell } from '@/components/layout/dashboard-shell';
 import { CreateGameModalHost } from '@/components/dashboard/create-game-modal-host';
+import type { ReactNode } from 'react';
 
 export default function OrganizationLayout({ children }: { children: ReactNode }) {
   return (
@@ -10,7 +11,9 @@ export default function OrganizationLayout({ children }: { children: ReactNode }
       <Suspense fallback={null}>
         <Header />
       </Suspense>
-      <Container className="py-8 md:py-10">{children}</Container>
+      <DashboardAuthGate>
+        <DashboardShell>{children}</DashboardShell>
+      </DashboardAuthGate>
       <Suspense fallback={null}>
         <CreateGameModalHost />
       </Suspense>
