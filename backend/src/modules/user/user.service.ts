@@ -5,7 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { UserRepository } from './user.repository';
-import { User } from '@prisma/client';
+import { GameVisibility, User } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 import { AppElasticsearchService } from '../elasticsearch/elasticsearch.service';
 
@@ -55,11 +55,58 @@ export class UserService {
     return updated;
   }
 
-  async getPublicProfileById(id: number) {
-    const user = await this.userRepository.findPublicProfileById(id);
+  async getPublicProfileById(profileUserId: number, viewerUserId?: number) {
+    const user = await this.userRepository.findPublicProfileById(profileUserId);
     if (!user) {
-      throw new NotFoundException(`User with id ${id} not found`);
+      throw new NotFoundException(`User with id ${profileUserId} not found`);
     }
+
+    const profileOrgIds = user.userOrganizations.map((m) => m.organization.id);
+    const viewerOrgIds =
+      viewerUserId != null
+        ? await this.userRepository.findOrganizationIdsForUser(viewerUserId)
+        : [];
+    const viewerOrgSet = new Set(viewerOrgIds);
+    const profileOrgSet = new Set(profileOrgIds);
+    const sharedOrgIds = profileOrgIds.filter((id) => viewerOrgSet.has(id));
+
+    const recentGames: Array<{
+      id: number;
+      token: string;
+      status: string;
+      result: string;
+      createdAt: Date;
+      color: string;
+      organization: { id: number; name: string } | null;
+    }> = [];
+
+    for (const row of user.userGames) {
+      const g = row.game;
+      if (
+        !this.canShowGameOnPublicProfile(
+          g,
+          profileUserId,
+          viewerUserId,
+          sharedOrgIds,
+          profileOrgSet,
+        )
+      ) {
+        continue;
+      }
+      recentGames.push({
+        id: g.id,
+        token: g.token,
+        status: g.status,
+        result: g.result,
+        createdAt: g.createdAt,
+        color: row.color,
+        organization: g.organization,
+      });
+      if (recentGames.length >= 10) {
+        break;
+      }
+    }
+
     return {
       id: user.id,
       name: user.name,
@@ -71,16 +118,46 @@ export class UserService {
         role: m.role,
         blocked: m.organization.blocked,
       })),
-      recentGames: user.userGames.map((x) => ({
-        id: x.game.id,
-        token: x.game.token,
-        status: x.game.status,
-        result: x.game.result,
-        createdAt: x.game.createdAt,
-        color: x.color,
-        organization: x.game.organization,
-      })),
+      recentGames,
     };
+  }
+
+  /** Видимость партии в публичном профиле для текущего зрителя. */
+  private canShowGameOnPublicProfile(
+    game: {
+      visibility: GameVisibility;
+      creatorId: number | null;
+      organizationId: number | null;
+      users: { userId: number }[];
+    },
+    profileUserId: number,
+    viewerUserId: number | undefined,
+    sharedOrgIds: number[],
+    profileOrgSet: Set<number>,
+  ): boolean {
+    if (viewerUserId === profileUserId) {
+      return true;
+    }
+    if (game.visibility === GameVisibility.PUBLIC) {
+      return true;
+    }
+    if (viewerUserId == null) {
+      return false;
+    }
+    if (game.creatorId != null && game.creatorId === viewerUserId) {
+      return true;
+    }
+    if (game.users.some((u) => u.userId === viewerUserId)) {
+      return true;
+    }
+    if (
+      game.organizationId != null &&
+      profileOrgSet.has(game.organizationId) &&
+      sharedOrgIds.includes(game.organizationId)
+    ) {
+      return true;
+    }
+    return false;
   }
 
   async getDashboardSummary(userId: number) {

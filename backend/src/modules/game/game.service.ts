@@ -12,6 +12,7 @@ import {
   GameResult,
   GameStatus,
   GameVisibility,
+  PlatformRole,
   Prisma,
 } from '@prisma/client';
 import { CreateGameDto } from 'src/dtos/create/create-game.dto';
@@ -152,6 +153,56 @@ export class GameService {
     return this.canUserViewGame(game, viewerUserId);
   }
 
+  private async isSubscriptionExempt(userId: number): Promise<boolean> {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { platformRole: true },
+    });
+    return user?.platformRole === PlatformRole.SUPERADMIN;
+  }
+
+  /** Создатель партии: активная подписка с canStream (суперадмин — без проверки). */
+  async assertCreatorCanStream(userId: number, token: string): Promise<void> {
+    const game = await this.gameRepository.findByToken(token);
+    if (!game || game.deletedAt) {
+      throw new ForbiddenException('Партия не найдена');
+    }
+    if (game.creatorId !== userId) {
+      throw new ForbiddenException(
+        'Вести трансляцию может только создатель партии',
+      );
+    }
+    if (game.status === GameStatus.FINISHED) {
+      throw new ForbiddenException('Партия уже завершена');
+    }
+    if (await this.isSubscriptionExempt(userId)) {
+      return;
+    }
+    const sub =
+      await this.organizationService.getActiveSubscriptionWithPlan(userId);
+    if (!sub) {
+      throw new ForbiddenException(
+        'Нужна активная подписка для проведения трансляции',
+      );
+    }
+    if (!sub.plan.canStream) {
+      throw new ForbiddenException(
+        'Текущий тариф не позволяет запускать трансляции',
+      );
+    }
+  }
+
+  /** Запись подтверждённого хода в SAN (только пока партия IN_PROGRESS). */
+  async appendSanMoveByToken(token: string, san: string): Promise<void> {
+    const normalized = san?.trim();
+    if (!normalized) return;
+    const game = await this.gameRepository.findByToken(token);
+    if (!game || game.deletedAt || game.status !== GameStatus.IN_PROGRESS) {
+      return;
+    }
+    await this.gameRepository.appendSanMoveByToken(token, normalized);
+  }
+
   async markInProgressByToken(token: string): Promise<void> {
     const game = await this.gameRepository.findByToken(token);
     if (!game || game.deletedAt) {
@@ -163,7 +214,13 @@ export class GameService {
     if (game.status === GameStatus.IN_PROGRESS) {
       return;
     }
-    await this.gameRepository.updateStatusByToken(token, GameStatus.IN_PROGRESS);
+    await this.prisma.game.updateMany({
+      where: { token, deletedAt: null },
+      data: {
+        status: GameStatus.IN_PROGRESS,
+        ...(game.status === GameStatus.PENDING ? { moves: [] } : {}),
+      },
+    });
   }
 
   async markFinishedByToken(token: string): Promise<void> {
@@ -272,27 +329,30 @@ export class GameService {
   }
 
   async createGame(data: CreateGameDto, creatorId: number): Promise<Game> {
-    const activeSubscription =
-      await this.organizationService.getActiveSubscriptionWithPlan(creatorId);
-    if (!activeSubscription) {
-      throw new ForbiddenException('Нужна активная подписка для создания игры');
-    }
-    if (!activeSubscription.plan.canStream) {
-      throw new ForbiddenException('Текущий тариф не позволяет запускать стримы');
-    }
+    const exempt = await this.isSubscriptionExempt(creatorId);
+    if (!exempt) {
+      const activeSubscription =
+        await this.organizationService.getActiveSubscriptionWithPlan(creatorId);
+      if (!activeSubscription) {
+        throw new ForbiddenException('Нужна активная подписка для создания игры');
+      }
+      if (!activeSubscription.plan.canStream) {
+        throw new ForbiddenException('Текущий тариф не позволяет запускать стримы');
+      }
 
-    const periodStart = new Date();
-    periodStart.setDate(1);
-    periodStart.setHours(0, 0, 0, 0);
-    const gamesThisPeriod = await this.prisma.game.count({
-      where: {
-        creatorId,
-        deletedAt: null,
-        createdAt: { gte: periodStart },
-      },
-    });
-    if (gamesThisPeriod >= activeSubscription.plan.maxGamesPerPeriod) {
-      throw new ForbiddenException('Достигнут лимит игр для текущего тарифа');
+      const periodStart = new Date();
+      periodStart.setDate(1);
+      periodStart.setHours(0, 0, 0, 0);
+      const gamesThisPeriod = await this.prisma.game.count({
+        where: {
+          creatorId,
+          deletedAt: null,
+          createdAt: { gte: periodStart },
+        },
+      });
+      if (gamesThisPeriod >= activeSubscription.plan.maxGamesPerPeriod) {
+        throw new ForbiddenException('Достигнут лимит игр для текущего тарифа');
+      }
     }
 
     if (data.organizationId) {

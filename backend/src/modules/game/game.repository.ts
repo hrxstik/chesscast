@@ -47,6 +47,22 @@ export class GameRepository {
     });
   }
 
+  /** Добавляет SAN-ход, если он отличается от последнего записанного. */
+  async appendSanMoveByToken(token: string, san: string): Promise<boolean> {
+    const game = await this.prisma.game.findFirst({
+      where: { token, deletedAt: null },
+      select: { id: true, moves: true },
+    });
+    if (!game) return false;
+    const last = game.moves[game.moves.length - 1];
+    if (last === san) return false;
+    await this.prisma.game.update({
+      where: { id: game.id },
+      data: { moves: { push: san } },
+    });
+    return true;
+  }
+
   async findManyByUserIdPaginated(
     userId: number,
     skip = 0,

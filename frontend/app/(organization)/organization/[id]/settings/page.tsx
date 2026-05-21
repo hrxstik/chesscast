@@ -17,6 +17,7 @@ import {
   updateOrganization,
   type OrganizationMemberDto,
 } from "@/lib/api/organizations";
+import { labelOrgRole } from "@/lib/game-labels";
 import { useRouter } from "next/navigation";
 import toast from "react-hot-toast";
 
@@ -199,7 +200,7 @@ function OrganizationSettingsContent({ orgId }: { orgId: string }) {
                 {m.user.email}
               </Text>
               <Text className="text-xs text-muted-foreground">
-                Роль: {m.role === "ADMIN" ? "Администратор" : "Участник"}
+                Роль: {labelOrgRole(m.role)}
               </Text>
               <Button
                 className="ml-auto h-8 text-xs"

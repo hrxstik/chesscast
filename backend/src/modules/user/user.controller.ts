@@ -18,6 +18,10 @@ import {
 import { UserService } from './user.service';
 import { User } from '@prisma/client';
 import { JwtAuthGuard } from 'src/guards/jwt-auth.guard';
+import {
+  OptionalJwtAuthGuard,
+  type AuthRequestUser,
+} from 'src/guards/optional-jwt-auth.guard';
 import type { Request } from 'express';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { UploadService } from '../upload/upload.service';
@@ -48,9 +52,13 @@ export class UserController {
     return this.userService.getDashboardSummary(req.user.id);
   }
 
+  @UseGuards(OptionalJwtAuthGuard)
   @Get(':id')
-  async getUserById(@Param('id', ParseIntPipe) id: number) {
-    return this.userService.getPublicProfileById(id);
+  async getUserById(
+    @Param('id', ParseIntPipe) id: number,
+    @Req() req: Request & { user?: AuthRequestUser },
+  ) {
+    return this.userService.getPublicProfileById(id, req.user?.id);
   }
 
   @UseGuards(JwtAuthGuard)

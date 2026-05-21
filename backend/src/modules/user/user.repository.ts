@@ -57,7 +57,7 @@ export class UserRepository {
         },
         userGames: {
           where: { game: { deletedAt: null } },
-          take: 10,
+          take: 40,
           orderBy: { game: { createdAt: 'desc' } },
           select: {
             color: true,
@@ -67,14 +67,26 @@ export class UserRepository {
                 token: true,
                 status: true,
                 result: true,
+                visibility: true,
+                creatorId: true,
+                organizationId: true,
                 createdAt: true,
                 organization: { select: { id: true, name: true } },
+                users: { select: { userId: true } },
               },
             },
           },
         },
       },
     });
+  }
+
+  async findOrganizationIdsForUser(userId: number): Promise<number[]> {
+    const rows = await this.prisma.userOrganization.findMany({
+      where: { userId, organization: { deletedAt: null } },
+      select: { organizationId: true },
+    });
+    return rows.map((r) => r.organizationId);
   }
 
   async getDashboardSummary(userId: number) {

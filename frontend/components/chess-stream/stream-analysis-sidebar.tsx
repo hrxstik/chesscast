@@ -5,7 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Text } from "@/components/ui/typography";
 import type { EnginePvRow } from "@/lib/hooks/useEngine";
 
-type MoveItem = { san: string; uci: string };
+import type { MoveItem } from '@/components/shared/moves-list';
 
 type Props = {
   moves: MoveItem[];

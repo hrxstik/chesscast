@@ -148,7 +148,7 @@ function DashboardProfileInner() {
 
   const avatarSrc = avatarPreview ?? resolveAvatarSrc(me?.avatar);
   const statusLabel = subscription
-    ? (SUBSCRIPTION_STATUS_LABEL[subscription.status] ?? subscription.status)
+    ? (SUBSCRIPTION_STATUS_LABEL[subscription.status] ?? "Статус неизвестен")
     : null;
 
   return (
@@ -226,31 +226,49 @@ function DashboardProfileInner() {
             <Button onClick={() => void onSave()} disabled={saving || !me}>
               {saving ? "Сохранение…" : "Сохранить изменения"}
             </Button>
-            <Card className="border-destructive/30 bg-destructive/5">
+            <Card className="border-border/80">
               <CardHeader>
-                <CardTitle className="flex items-center gap-2 text-base text-destructive">
-                  <Shield className="size-4" aria-hidden />
-                  Опасная зона
+                <CardTitle className="flex items-center gap-2 text-base">
+                  <Bell className="size-4 text-primary" aria-hidden />
+                  Смена пароля
                 </CardTitle>
               </CardHeader>
               <CardContent className="space-y-2">
-                <Text className="text-sm text-muted-foreground">
-                  Подтвердите пароль для удаления аккаунта.
-                </Text>
                 <input
                   type="password"
                   autoComplete="current-password"
                   className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
-                  placeholder="Пароль"
-                  value={deletePassword}
-                  onChange={(e) => setDeletePassword(e.target.value)}
+                  placeholder="Текущий пароль"
+                  value={currentPassword}
+                  onChange={(e) => setCurrentPassword(e.target.value)}
+                />
+                <input
+                  type="password"
+                  autoComplete="new-password"
+                  className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
+                  placeholder="Новый пароль"
+                  value={newPassword}
+                  onChange={(e) => setNewPassword(e.target.value)}
+                />
+                <input
+                  type="password"
+                  autoComplete="new-password"
+                  className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
+                  placeholder="Повторите новый пароль"
+                  value={confirmPassword}
+                  onChange={(e) => setConfirmPassword(e.target.value)}
                 />
                 <Button
-                  variant="destructive"
-                  onClick={() => void onDeleteAccount()}
-                  disabled={saving || !deletePassword}
+                  variant="outline"
+                  onClick={() => void onChangePassword()}
+                  disabled={
+                    saving ||
+                    !currentPassword ||
+                    !newPassword ||
+                    !confirmPassword
+                  }
                 >
-                  Удалить аккаунт
+                  Сменить пароль
                 </Button>
               </CardContent>
             </Card>
@@ -357,46 +375,31 @@ function DashboardProfileInner() {
             </CardContent>
           </Card>
 
-          <Card className="border-border/80">
+          <Card className="border-destructive/30 bg-destructive/5">
             <CardHeader>
-              <CardTitle className="flex items-center gap-2 text-base">
-                <Bell className="size-4 text-primary" aria-hidden />
-                Смена пароля
+              <CardTitle className="flex items-center gap-2 text-base text-destructive">
+                <Shield className="size-4" aria-hidden />
+                Опасная зона
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-2">
+              <Text className="text-sm text-muted-foreground">
+                Подтвердите пароль для удаления аккаунта.
+              </Text>
               <input
                 type="password"
                 autoComplete="current-password"
                 className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
-                placeholder="Текущий пароль"
-                value={currentPassword}
-                onChange={(e) => setCurrentPassword(e.target.value)}
-              />
-              <input
-                type="password"
-                autoComplete="new-password"
-                className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
-                placeholder="Новый пароль"
-                value={newPassword}
-                onChange={(e) => setNewPassword(e.target.value)}
-              />
-              <input
-                type="password"
-                autoComplete="new-password"
-                className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
-                placeholder="Повторите новый пароль"
-                value={confirmPassword}
-                onChange={(e) => setConfirmPassword(e.target.value)}
+                placeholder="Пароль"
+                value={deletePassword}
+                onChange={(e) => setDeletePassword(e.target.value)}
               />
               <Button
-                variant="outline"
-                onClick={() => void onChangePassword()}
-                disabled={
-                  saving || !currentPassword || !newPassword || !confirmPassword
-                }
+                variant="destructive"
+                onClick={() => void onDeleteAccount()}
+                disabled={saving || !deletePassword}
               >
-                Сменить пароль
+                Удалить аккаунт
               </Button>
             </CardContent>
           </Card>

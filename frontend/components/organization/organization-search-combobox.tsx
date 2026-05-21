@@ -7,6 +7,7 @@ import {
   searchOrganizations,
   type OrganizationSearchDto,
 } from "@/lib/api/organizations";
+import { labelOrgRoleShort } from "@/lib/game-labels";
 import { cn } from "@/lib/utils";
 import { Text } from "@/components/ui/typography";
 
@@ -143,7 +144,7 @@ export function OrganizationSearchCombobox() {
                     <span className="block text-xs text-muted-foreground">
                       ID {r.id}
                       {r.isMember
-                        ? ` · вы ${r.role === "ADMIN" ? "админ" : "участник"}`
+                        ? ` · вы ${labelOrgRoleShort(r.role)}`
                         : ""}
                       {!r.isActive ? " · неактивна" : ""}
                     </span>

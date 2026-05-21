@@ -9,7 +9,9 @@ import {
 } from '@nestjs/websockets';
 import { Server, Socket } from 'socket.io';
 import { Logger } from '@nestjs/common';
+import { JwtService } from '@nestjs/jwt';
 import { join } from 'path';
+import { AUTH_COOKIE_NAMES } from '../../auth/auth-cookie.constants';
 import {
   ChessRecognitionService,
   type FrameProcessedResult,
@@ -47,9 +49,38 @@ export class ChessRecognitionGateway
     private readonly chessRecognitionService: ChessRecognitionService,
     private readonly mediasoupService: MediasoupService,
     private readonly gameService: GameService,
+    private readonly jwtService: JwtService,
   ) {
     // Инициализация mediasoup worker
     this.mediasoupService.initializeWorker();
+  }
+
+  private async resolveSocketUserId(client: Socket): Promise<number | null> {
+    try {
+      const raw = client.handshake.headers.cookie;
+      if (!raw) return null;
+      const cookies = Object.fromEntries(
+        raw.split(';').map((part) => {
+          const [key, ...rest] = part.trim().split('=');
+          return [key, decodeURIComponent(rest.join('='))];
+        }),
+      );
+      const access = cookies[AUTH_COOKIE_NAMES.access];
+      if (!access) return null;
+      const payload = await this.jwtService.verifyAsync<{ sub: number }>(access);
+      return typeof payload.sub === 'number' ? payload.sub : null;
+    } catch {
+      return null;
+    }
+  }
+
+  private persistDetectedSanMove(
+    token: string,
+    result: FrameProcessedResult,
+  ): void {
+    const san = result.move_san?.trim();
+    if (!san) return;
+    void this.gameService.appendSanMoveByToken(token, san);
   }
 
   handleConnection(client: Socket) {
@@ -154,6 +185,20 @@ export class ChessRecognitionGateway
       return;
     }
 
+    const userId = await this.resolveSocketUserId(client);
+    if (userId == null) {
+      client.emit('error', { message: 'Требуется авторизация для трансляции' });
+      return;
+    }
+    try {
+      await this.gameService.assertCreatorCanStream(userId, token);
+    } catch (e) {
+      client.emit('error', {
+        message: e instanceof Error ? e.message : 'Нет доступа к трансляции',
+      });
+      return;
+    }
+
     this.logger.log(
       `📹 [STREAMER] Client ${client.id} starting stream for token ${token}`,
     );
@@ -207,13 +252,40 @@ export class ChessRecognitionGateway
       // Игнорируем ошибку
     }
 
-    void this.gameService.markInProgressByToken(token);
-
     this.logger.log(
       `📹 [STREAMER] Client ${client.id} started streaming for token ${token} (${clientsInRoom} clients in room)`,
     );
 
     client.emit('stream-started', { token });
+  }
+
+  @SubscribeMessage('start-game')
+  async handleStartGame(
+    @MessageBody() data: { token: string },
+    @ConnectedSocket() client: Socket,
+  ) {
+    const { token } = data;
+    if (!token) {
+      client.emit('error', { message: 'Token is required' });
+      return;
+    }
+    const userId = await this.resolveSocketUserId(client);
+    if (userId == null) {
+      client.emit('error', { message: 'Требуется авторизация' });
+      return;
+    }
+    try {
+      await this.gameService.assertCreatorCanStream(userId, token);
+      await this.gameService.markInProgressByToken(token);
+    } catch (e) {
+      client.emit('error', {
+        message: e instanceof Error ? e.message : 'Не удалось начать партию',
+      });
+      return;
+    }
+    const roomId = `stream:${token}`;
+    this.server.to(roomId).emit('game-started', { token });
+    client.emit('game-started', { token });
   }
 
   @SubscribeMessage('get-router-rtp-capabilities')
@@ -388,9 +460,10 @@ export class ChessRecognitionGateway
               client.to(roomId).emit('frame-processed', result);
             }
 
-            if (result?.move) {
+            if (result?.move_san) {
+              this.persistDetectedSanMove(token, result);
               this.logger.log(
-                `♟️ Move detected for token ${token}: ${result.move} (${result.move_san || 'SAN?'})`,
+                `♟️ Move detected for token ${token}: ${result.move_san} (${result.move ?? 'uci'})`,
               );
             }
           },
@@ -804,9 +877,10 @@ export class ChessRecognitionGateway
             const roomId = `stream:${token}`;
             client.to(roomId).emit('frame-processed', result);
 
-            if (result?.move) {
+            if (result?.move_san) {
+              this.persistDetectedSanMove(token, result);
               this.logger.log(
-                `♟️ Move detected for token ${token}: ${result.move} (${result.move_san || 'SAN?'})`,
+                `♟️ Move detected for token ${token}: ${result.move_san} (${result.move ?? 'uci'})`,
               );
             }
           },
@@ -1000,9 +1074,10 @@ export class ChessRecognitionGateway
               const roomId = `stream:${token}`;
               this.server.to(roomId).emit('frame-processed', result);
 
-              if (result?.move) {
+              if (result?.move_san) {
+                this.persistDetectedSanMove(token, result);
                 this.logger.log(
-                  `♟️ Move detected for token ${token}: ${result.move} (${result.move_san || 'SAN?'})`,
+                  `♟️ Move detected for token ${token}: ${result.move_san} (${result.move ?? 'uci'})`,
                 );
               }
             },

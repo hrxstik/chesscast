@@ -20,6 +20,7 @@ import {
   type OrganizationMemberDto,
 } from "@/lib/api/organizations";
 import { hrefCreateGameModal } from "@/lib/create-game-modal-url";
+import { labelOrgRole } from "@/lib/game-labels";
 type Props = { params: Promise<{ id: string }> };
 
 export default function OrganizationPage({ params }: Props) {
@@ -80,17 +81,21 @@ export default function OrganizationPage({ params }: Props) {
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-3">
-            <Text className="text-sm text-muted-foreground">
-              Список с ролями (игрок / админ организации), приглашения.
-            </Text>
             <div className="space-y-2">
               {members.map((m) => (
                 <div
                   key={m.userId}
-                  className="flex items-center justify-between rounded-lg border border-border/60 bg-muted/20 px-3 py-2"
+                  className="flex flex-wrap items-center gap-2 rounded-md border border-border p-2"
                 >
-                  <div className="text-sm">{m.user.name}</div>
-                  <div className="text-xs text-muted-foreground">{m.role}</div>
+                  <Link
+                    href={`/player/${m.userId}`}
+                    className="text-sm font-medium underline-offset-4 hover:underline"
+                  >
+                    {m.user.name}
+                  </Link>
+                  <div className="text-xs text-muted-foreground">
+                    {labelOrgRole(m.role)}
+                  </div>
                 </div>
               ))}
               {members.length === 0 ? (

@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { Crown, Minus } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import {
@@ -10,6 +11,7 @@ import {
 
 type Props = {
   name: string;
+  userId?: number;
   color: 'WHITE' | 'BLACK';
   gameResult?: string | null;
   className?: string;
@@ -45,9 +47,18 @@ function OutcomeIcon({ outcome }: { outcome: SideOutcome }) {
   );
 }
 
-export function PlayerSideLabel({ name, color, gameResult, className }: Props) {
+export function PlayerSideLabel({ name, userId, color, gameResult, className }: Props) {
   const outcome = getSideOutcome(gameResult, color);
   const colorLabel = color === 'WHITE' ? 'белые' : 'чёрные';
+  const nameNode = userId ? (
+    <Link
+      href={`/player/${userId}`}
+      className="truncate underline-offset-4 hover:underline">
+      {name}
+    </Link>
+  ) : (
+    <span className="truncate">{name}</span>
+  );
 
   return (
     <div
@@ -56,8 +67,8 @@ export function PlayerSideLabel({ name, color, gameResult, className }: Props) {
         className,
       )}>
       <OutcomeIcon outcome={outcome} />
-      <span className="truncate">
-        {name}
+      <span className="flex min-w-0 items-center gap-1 truncate">
+        {nameNode}
         <span className="text-muted-foreground"> · {colorLabel}</span>
       </span>
       {outcome === 'win' ? (

@@ -140,7 +140,7 @@ async function main() {
         'Более высокий приоритет',
       ],
       maxGamesPerPeriod: 300,
-      maxOrganizations: 1,
+      maxOrganizations: 5,
       canCreateOrganization: true,
       canStream: true,
       streamQualityLevel: StreamQualityLevel.MEDIUM,
@@ -282,42 +282,64 @@ async function main() {
   }
   const [orgInvite, orgOpen, orgMoscow, orgYouth, orgElite, orgAcademy] = orgs;
 
-  await prisma.userOrganization.createMany({
-    data: [
-      {
-        userId: schoolAdmin.id,
-        organizationId: orgInvite.id,
-        role: Role.ADMIN,
-      },
-      { userId: player.id, organizationId: orgInvite.id, role: Role.PLAYER },
-      { userId: player.id, organizationId: orgOpen.id, role: Role.PLAYER },
-      { userId: player.id, organizationId: orgMoscow.id, role: Role.ADMIN },
-      { userId: player.id, organizationId: orgYouth.id, role: Role.PLAYER },
-      { userId: schoolAdmin.id, organizationId: orgOpen.id, role: Role.ADMIN },
-      {
-        userId: schoolAdmin.id,
-        organizationId: orgMoscow.id,
-        role: Role.ADMIN,
-      },
-      { userId: schoolAdmin.id, organizationId: orgYouth.id, role: Role.ADMIN },
-      { userId: schoolAdmin.id, organizationId: orgElite.id, role: Role.ADMIN },
-      {
-        userId: schoolAdmin.id,
-        organizationId: orgAcademy.id,
-        role: Role.ADMIN,
-      },
-      ...createdExtras.slice(8, 12).map((u) => ({
-        userId: u.id,
-        organizationId: orgOpen.id,
-        role: Role.PLAYER as Role,
-      })),
-      ...createdExtras.slice(12, 14).map((u) => ({
-        userId: u.id,
-        organizationId: orgAcademy.id,
-        role: Role.PLAYER as Role,
-      })),
-    ],
+  /** В каждой организации ровно один ADMIN (владелец школы); остальные — PLAYER. */
+  const membershipKey = (userId: number, organizationId: number) =>
+    `${userId}:${organizationId}`;
+  const seenMemberships = new Set<string>();
+  const orgMemberships: {
+    userId: number;
+    organizationId: number;
+    role: Role;
+  }[] = [];
+  const pushMembership = (
+    userId: number,
+    organizationId: number,
+    role: Role,
+  ) => {
+    const key = membershipKey(userId, organizationId);
+    if (seenMemberships.has(key)) return;
+    seenMemberships.add(key);
+    orgMemberships.push({ userId, organizationId, role });
+  };
+
+  const baseMemberships: {
+    userId: number;
+    organizationId: number;
+    role: Role;
+  }[] = [
+    { userId: schoolAdmin.id, organizationId: orgInvite.id, role: Role.ADMIN },
+    { userId: schoolAdmin.id, organizationId: orgOpen.id, role: Role.ADMIN },
+    { userId: schoolAdmin.id, organizationId: orgMoscow.id, role: Role.ADMIN },
+    { userId: schoolAdmin.id, organizationId: orgYouth.id, role: Role.ADMIN },
+    { userId: schoolAdmin.id, organizationId: orgElite.id, role: Role.ADMIN },
+    { userId: schoolAdmin.id, organizationId: orgAcademy.id, role: Role.ADMIN },
+    { userId: player.id, organizationId: orgInvite.id, role: Role.PLAYER },
+    { userId: player.id, organizationId: orgOpen.id, role: Role.PLAYER },
+    { userId: player.id, organizationId: orgMoscow.id, role: Role.PLAYER },
+    { userId: player.id, organizationId: orgYouth.id, role: Role.PLAYER },
+    { userId: player.id, organizationId: orgElite.id, role: Role.PLAYER },
+  ];
+  for (const m of baseMemberships) {
+    pushMembership(m.userId, m.organizationId, m.role);
+  }
+
+  const streamers = createdExtras.slice(0, 8);
+  const clubMembers = createdExtras.slice(8);
+  const orgIds = [orgInvite.id, orgOpen.id, orgMoscow.id, orgYouth.id, orgElite.id, orgAcademy.id];
+
+  streamers.forEach((u, i) => {
+    pushMembership(u.id, orgIds[i % orgIds.length], Role.PLAYER);
+    pushMembership(u.id, orgIds[(i + 2) % orgIds.length], Role.PLAYER);
+    pushMembership(u.id, orgIds[(i + 4) % orgIds.length], Role.PLAYER);
   });
+
+  clubMembers.forEach((u, i) => {
+    pushMembership(u.id, orgOpen.id, Role.PLAYER);
+    pushMembership(u.id, orgIds[(i + 3) % orgIds.length], Role.PLAYER);
+    pushMembership(u.id, orgAcademy.id, Role.PLAYER);
+  });
+
+  await prisma.userOrganization.createMany({ data: orgMemberships });
 
   const game = await prisma.game.create({
     data: {
@@ -534,12 +556,15 @@ async function main() {
   for (const u of createdExtras.slice(8)) {
     console.log(`  ${u.email}  |  ${u.name}`);
   }
-  console.log('\n— Организации —');
+  console.log('\n— Организации (ADMIN: schooladmin@chesscast.local) —');
   for (const o of orgs) {
     console.log(
       `  [${o.joinPolicy}] ${o.name} | код: ${o.inviteCode} | id: ${o.id}`,
     );
   }
+  console.log('\n— Публичный профиль —');
+  console.log(`  /player/${player.id}  (demo_player)`);
+  console.log(`  /player/${schoolAdmin.id}  (school_admin)`);
   console.log('\n— Демо для player@chesscast.local —');
   console.log('  Игры: ~55+ в «Мои игры», фильтр по token: filter-demo');
   console.log('  Вступление по коду: SEED-YOUTH-LIGA или SEED-ELITE-TACT');

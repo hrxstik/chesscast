@@ -1,9 +1,6 @@
 import React from 'react';
 
-interface MoveItem {
-  san: string; // SAN-нотация (e4, Nf3, ...)
-  uci: string; // UCI-нотация (e2e4, g1f3, ...)
-}
+export type MoveItem = { san: string };
 
 interface MovesListProps {
   moves: MoveItem[];
@@ -39,16 +36,8 @@ export const MovesList: React.FC<MovesListProps> = ({ moves }) => {
           {rows.map((row) => (
             <tr key={row.moveNumber} className="border-b last:border-b-0">
               <td className="pr-2 align-top text-muted-foreground">{row.moveNumber}.</td>
-              <td className="pr-4 align-top">
-                {row.white ? (
-                  <span title={row.white.uci}>{row.white.san}</span>
-                ) : (
-                  <span className="text-muted-foreground">...</span>
-                )}
-              </td>
-              <td className="align-top">
-                {row.black ? <span title={row.black.uci}>{row.black.san}</span> : null}
-              </td>
+              <td className="pr-4 align-top">{row.white?.san ?? '…'}</td>
+              <td className="align-top">{row.black?.san ?? ''}</td>
             </tr>
           ))}
         </tbody>

@@ -55,7 +55,7 @@ export function useChessStreamWebRtc({
   const [calibrationMessage, setCalibrationMessage] = useState<string | null>(null);
   const [gameStarted, setGameStarted] = useState(false);
   const [mappingData, setMappingData] = useState<Record<string, unknown> | null>(null);
-  const [moves, setMoves] = useState<{ san: string; uci: string }[]>([]);
+  const [moves, setMoves] = useState<{ san: string }[]>([]);
 
   useEffect(() => {
     gameStartedRef.current = gameStarted;
@@ -85,6 +85,7 @@ export function useChessStreamWebRtc({
       reconnectionDelayMax: 5000,
       reconnectionAttempts: Infinity,
       secure: wsUrl.startsWith('https://'),
+      withCredentials: true,
     });
 
     registerChessStreamSocketHandlers(newSocket, {
@@ -195,8 +196,10 @@ export function useChessStreamWebRtc({
   const handleStartGame = useCallback(() => {
     if (!calibrationCompleted) return;
     setMoves([]);
+    const s = socket || socketRef.current;
+    s?.emit('start-game', { token: gameToken });
     setGameStarted(true);
-  }, [calibrationCompleted]);
+  }, [calibrationCompleted, gameToken, socket, socketRef]);
 
   useChessStreamLifecycle({
     viewer,

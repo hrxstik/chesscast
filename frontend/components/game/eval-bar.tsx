@@ -47,8 +47,6 @@ export function EvalBar({ cpWhite, mateWhite, className, height }: Props) {
   const target = cpWhiteToBarPercent(cpWhite, mateWhite);
   const [whitePercent, setWhitePercent] = useState(50);
   const label = formatEvalLabel(cpWhite, mateWhite);
-  const showLabel =
-    Math.abs(target - 50) > 8 || (mateWhite != null && mateWhite !== 0);
 
   useEffect(() => {
     setWhitePercent(target);
@@ -70,7 +68,7 @@ export function EvalBar({ cpWhite, mateWhite, className, height }: Props) {
         />
       </div>
       <span className="w-[22px] text-center text-[10px] font-semibold tabular-nums leading-none text-foreground">
-        {showLabel ? label : ""}
+        {label}
       </span>
     </div>
   );

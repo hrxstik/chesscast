@@ -13,6 +13,7 @@ import {
   type AdminUserRow,
 } from '@/lib/api/admin-management';
 import { ApiError } from '@/lib/api/types';
+import { labelPlatformRole } from '@/lib/game-labels';
 
 export function AdminManagementPanel() {
   const [users, setUsers] = useState<AdminUserRow[]>([]);
@@ -100,7 +101,9 @@ export function AdminManagementPanel() {
               <span className="font-mono text-xs text-muted-foreground">#{u.id}</span>
               <span>{u.name}</span>
               <span className="text-muted-foreground">{u.email}</span>
-              <span className="text-xs text-muted-foreground">{u.platformRole}</span>
+              <span className="text-xs text-muted-foreground">
+                {labelPlatformRole(u.platformRole)}
+              </span>
               {u.blocked && u.blockedReason ? (
                 <span className="text-xs text-muted-foreground">Причина: {u.blockedReason}</span>
               ) : null}

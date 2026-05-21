@@ -18,7 +18,7 @@ export type ChessStreamSocketRegisterContext = {
   setCalibrationCompleted: (b: boolean) => void;
   setCalibrationMessage: (s: string | null) => void;
   setGameStarted: (b: boolean) => void;
-  setMoves: Dispatch<SetStateAction<{ san: string; uci: string }[]>>;
+  setMoves: Dispatch<SetStateAction<{ san: string }[]>>;
   setMappingData: Dispatch<SetStateAction<Record<string, unknown> | null>>;
   setPositionFromFen: (fen: string) => void;
   captureAndSendFrame: () => void;
@@ -241,6 +241,10 @@ export function registerChessStreamSocketHandlers(
     setCalibrationMessage(data.message || 'Калибровка доски...');
   });
 
+  newSocket.on('game-started', () => {
+    setGameStarted(true);
+  });
+
   newSocket.on('calibration-completed', (data: { message: string; mappingData?: unknown }) => {
     setError(null);
     setCalibrationInProgress(false);
@@ -279,23 +283,17 @@ export function registerChessStreamSocketHandlers(
       }
     }
 
-    if (data.move) {
+    if (data.move_san) {
       if (!viewerRef.current && !gameStartedRef.current) {
         return;
       }
+      const san = String(data.move_san);
       setMoves((prev) => {
         const lastMove = prev[prev.length - 1];
-        const uci = String(data.move);
-        if (lastMove && lastMove.uci === uci) {
+        if (lastMove?.san === san) {
           return prev;
         }
-        return [
-          ...prev,
-          {
-            san: String(data.move_san || data.move),
-            uci,
-          },
-        ];
+        return [...prev, { san }];
       });
     } else if (data.status === 'error' && data.message) {
       setError(String(data.message));

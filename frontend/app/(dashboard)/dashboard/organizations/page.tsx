@@ -14,6 +14,7 @@ import {
   type OrganizationCreateEligibilityDto,
 } from "@/lib/api/organizations";
 import { OrganizationSearchCombobox } from "@/components/organization/organization-search-combobox";
+import { labelOrgRole } from "@/lib/game-labels";
 import toast from "react-hot-toast";
 
 export default function DashboardOrganizationsPage() {
@@ -128,7 +129,7 @@ export default function DashboardOrganizationsPage() {
                     <div className="font-medium">{r.name}</div>
                     <div className="text-xs text-muted-foreground">
                       роль:{" "}
-                      {r.role === "ADMIN" ? "Администратор" : "Участник"}{" "}
+                      {labelOrgRole(r.role)}{" "}
                     </div>
                   </div>
                   <Button asChild variant="outline" className="h-8 text-xs">
