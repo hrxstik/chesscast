@@ -5,7 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { UserRepository } from './user.repository';
-import { GameVisibility, User } from '@prisma/client';
+import { GameVisibility, OrganizationJoinPolicy, User } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 import { AppElasticsearchService } from '../elasticsearch/elasticsearch.service';
 
@@ -107,17 +107,27 @@ export class UserService {
       }
     }
 
+    const isOwnProfile = viewerUserId === profileUserId;
+    const organizations = user.userOrganizations
+      .filter(
+        (m) =>
+          isOwnProfile ||
+          m.organization.joinPolicy === OrganizationJoinPolicy.OPEN,
+      )
+      .map((m) => ({
+        id: m.organization.id,
+        name: m.organization.name,
+        role: m.role,
+        blocked: m.organization.blocked,
+        joinPolicy: m.organization.joinPolicy,
+      }));
+
     return {
       id: user.id,
       name: user.name,
       avatar: user.avatar,
       createdAt: user.createdAt,
-      organizations: user.userOrganizations.map((m) => ({
-        id: m.organization.id,
-        name: m.organization.name,
-        role: m.role,
-        blocked: m.organization.blocked,
-      })),
+      organizations,
       recentGames,
     };
   }

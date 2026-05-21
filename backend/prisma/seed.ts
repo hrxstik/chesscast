@@ -19,6 +19,7 @@ import {
   SubscriptionStatus,
   StreamQualityLevel,
   OrganizationJoinPolicy,
+  PlatformAuditType,
 } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 import { randomUUID } from 'crypto';
@@ -32,6 +33,7 @@ async function main() {
   const now = new Date();
   const farFuture = new Date('2099-12-31T23:59:59.000Z');
 
+  await prisma.platformAuditLog.deleteMany();
   await prisma.billingEvent.deleteMany();
   await prisma.payment.deleteMany();
   await prisma.subscription.deleteMany();
@@ -544,6 +546,88 @@ async function main() {
     },
   });
 
+  const auditBase = new Date(now);
+  const hoursAgo = (h: number) => new Date(auditBase.getTime() - h * 3600_000);
+  await prisma.platformAuditLog.createMany({
+    data: [
+      {
+        type: PlatformAuditType.AUTH,
+        action: 'ADMIN_LOGIN_DEMO',
+        message: 'Демо: вход супер-администратора в панель',
+        actorUserId: superadmin.id,
+        createdAt: hoursAgo(1),
+      },
+      {
+        type: PlatformAuditType.MODERATION,
+        action: 'USER_BLOCKED',
+        message: `Демо: пользователь ${createdExtras[0].email} заблокирован (нарушение правил)`,
+        actorUserId: superadmin.id,
+        targetType: 'user',
+        targetId: createdExtras[0].id,
+        metadata: { reason: 'Демо-блокировка в сиде', seed: true },
+        createdAt: hoursAgo(6),
+      },
+      {
+        type: PlatformAuditType.MODERATION,
+        action: 'ORG_BLOCKED',
+        message: `Демо: организация «${orgElite.name}» заблокирована (жалобы)`,
+        actorUserId: superadmin.id,
+        targetType: 'organization',
+        targetId: orgElite.id,
+        metadata: { reason: 'Демо-блокировка клуба', seed: true },
+        createdAt: hoursAgo(12),
+      },
+      {
+        type: PlatformAuditType.MODERATION,
+        action: 'ORG_UNBLOCKED',
+        message: `Демо: организация «${orgElite.name}» разблокирована`,
+        actorUserId: superadmin.id,
+        targetType: 'organization',
+        targetId: orgElite.id,
+        metadata: { reason: 'Проверка завершена', seed: true },
+        createdAt: hoursAgo(11),
+      },
+      {
+        type: PlatformAuditType.BILLING,
+        action: 'INVOICE_PAID',
+        message: `Оплата подписки ${premiumPlan.title} (${payment.amount} RUB)`,
+        actorUserId: player.id,
+        targetType: 'payment',
+        targetId: payment.id,
+        createdAt: hoursAgo(24),
+      },
+      {
+        type: PlatformAuditType.ORG,
+        action: 'ORG_SEEDED',
+        message: `Сид: создана организация «${orgInvite.name}»`,
+        actorUserId: schoolAdmin.id,
+        targetType: 'organization',
+        targetId: orgInvite.id,
+        metadata: { inviteCode: orgInvite.inviteCode },
+        createdAt: hoursAgo(48),
+      },
+      {
+        type: PlatformAuditType.PLAN,
+        action: 'PLAN_DEACTIVATED',
+        message: `Демо: тариф ${corporatePlan.title} (${corporatePlan.code}) деактивирован администратором`,
+        actorUserId: superadmin.id,
+        targetType: 'plan',
+        targetId: corporatePlan.id,
+        metadata: { seed: true },
+        createdAt: hoursAgo(72),
+      },
+      {
+        type: PlatformAuditType.PLAN,
+        action: 'PLAN_ACTIVATED',
+        message: `Демо: тариф ${premiumPlan.title} (${premiumPlan.code}) активирован`,
+        actorUserId: superadmin.id,
+        targetType: 'plan',
+        targetId: premiumPlan.id,
+        createdAt: hoursAgo(96),
+      },
+    ],
+  });
+
   console.log('\n========== SEED ChessCast ==========');
   console.log(`Пароль у всех: ${DEV_PASSWORD}\n`);
   console.log('— Основные учётки —');
@@ -575,6 +659,8 @@ async function main() {
   console.log('  Вступление по коду: SEED-YOUTH-LIGA или SEED-ELITE-TACT');
   console.log('  Поиск: «Moscow», «Elite», id организации из списка выше');
   console.log(`\nДемо-игра token: ${game.token}`);
+  console.log('\n— Служебный журнал (вкладка Админ → Журнал) —');
+  console.log('  8 демо-записей PlatformAuditLog (MODERATION, BILLING, PLAN, …)');
   console.log('====================================\n');
 }
 

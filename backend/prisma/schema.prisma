@@ -24,6 +24,7 @@ model User {
   gamesCreated       Game[]             @relation("GameCreator")
   payments           Payment[]
   billingEventsActed BillingEvent[]     @relation("BillingEventActor")
+  platformAuditLogs  PlatformAuditLog[] @relation("PlatformAuditActor")
   organizationsOwned Organization[]     @relation("OrganizationOwner")
 
   verified   DateTime?
@@ -261,4 +262,28 @@ model BillingEvent {
   actor       User?            @relation("BillingEventActor", fields: [actorUserId], references: [id])
   metadata    Json?
   createdAt   DateTime         @default(now())
+}
+
+enum PlatformAuditType {
+  AUTH
+  MODERATION
+  BILLING
+  ORG
+  PLAN
+}
+
+model PlatformAuditLog {
+  id          Int               @id @default(autoincrement())
+  type        PlatformAuditType
+  action      String
+  message     String
+  actorUserId Int?
+  actor       User?             @relation("PlatformAuditActor", fields: [actorUserId], references: [id])
+  targetType  String?
+  targetId    Int?
+  metadata    Json?
+  createdAt   DateTime          @default(now())
+
+  @@index([type])
+  @@index([createdAt(sort: Desc)])
 }

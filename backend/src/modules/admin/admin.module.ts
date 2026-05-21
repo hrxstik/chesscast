@@ -6,9 +6,10 @@ import { AdminManagementController } from './admin-management.controller';
 import { AdminManagementService } from './admin-management.service';
 import { ElasticsearchModule } from '../elasticsearch/elasticsearch.module';
 import { PrismaModule } from '../prisma/prisma.module';
+import { AuditModule } from '../audit/audit.module';
 
 @Module({
-  imports: [PrismaModule, ElasticsearchModule],
+  imports: [PrismaModule, ElasticsearchModule, AuditModule],
   controllers: [AdminBillingController, AdminManagementController],
   providers: [AdminBillingService, AdminManagementService, SuperAdminGuard],
 })

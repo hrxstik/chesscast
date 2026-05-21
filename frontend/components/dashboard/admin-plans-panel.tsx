@@ -3,6 +3,15 @@
 import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Text } from '@/components/ui/typography';
+import { AdminEffectCallout } from '@/components/dashboard/admin-effect-callout';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { ApiError } from '@/lib/api/types';
 import {
   createPlan,
@@ -47,6 +56,8 @@ export function AdminPlansPanel() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [pendingPlan, setPendingPlan] = useState<AdminPlanDto | null>(null);
+  const [toggling, setToggling] = useState(false);
 
   async function loadPlans() {
     setLoading(true);
@@ -98,16 +109,22 @@ export function AdminPlansPanel() {
     }
   }
 
-  async function onToggleActive(plan: AdminPlanDto) {
+  async function confirmToggleActive() {
+    if (!pendingPlan) return;
+    setToggling(true);
+    setError(null);
     try {
-      if (plan.isActive) {
-        await disablePlan(plan.id);
+      if (pendingPlan.isActive) {
+        await disablePlan(pendingPlan.id);
       } else {
-        await updatePlan(plan.id, { isActive: true });
+        await updatePlan(pendingPlan.id, { isActive: true });
       }
+      setPendingPlan(null);
       await loadPlans();
     } catch (e) {
       setError(e instanceof ApiError ? e.message : 'Не удалось обновить тариф');
+    } finally {
+      setToggling(false);
     }
   }
 
@@ -115,6 +132,14 @@ export function AdminPlansPanel() {
 
   return (
     <div className="space-y-5">
+      <AdminEffectCallout title="Что происходит при деактивации тарифа">
+        <ul className="list-inside list-disc space-y-1">
+          <li>Тариф скрывается с публичной страницы «Тарифы» (запрос только активных планов).</li>
+          <li>Новые подписки на этот план оформить нельзя.</li>
+          <li>Уже оформленные подписки продолжают действовать до даты окончания.</li>
+          <li>Событие записывается в служебный журнал аудита.</li>
+        </ul>
+      </AdminEffectCallout>
       {error ? <Text className="text-sm text-destructive">{error}</Text> : null}
 
       <div className="rounded-lg border border-border">
@@ -141,7 +166,7 @@ export function AdminPlansPanel() {
                   type="button"
                   variant="outline"
                   className="ml-auto h-8 text-xs"
-                  onClick={() => void onToggleActive(p)}>
+                  onClick={() => setPendingPlan(p)}>
                   {p.isActive ? 'Деактивировать' : 'Активировать'}
                 </Button>
               </li>
@@ -239,6 +264,39 @@ export function AdminPlansPanel() {
           {saving ? 'Создание…' : 'Создать тариф'}
         </Button>
       </form>
+
+      {pendingPlan ? (
+        <Dialog open onOpenChange={(open) => !open && setPendingPlan(null)}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>
+                {pendingPlan.isActive ? 'Деактивировать тариф' : 'Активировать тариф'}
+              </DialogTitle>
+              <DialogDescription>
+                {pendingPlan.title} ({pendingPlan.code})
+              </DialogDescription>
+            </DialogHeader>
+            <Text className="text-sm text-muted-foreground">
+              {pendingPlan.isActive
+                ? 'План перестанет предлагаться новым пользователям. Текущие подписчики сохранят доступ до конца оплаченного периода.'
+                : 'План снова появится на странице тарифов и станет доступен для новых подписок.'}
+            </Text>
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => setPendingPlan(null)}>
+                Отмена
+              </Button>
+              <Button
+                type="button"
+                variant={pendingPlan.isActive ? 'destructive' : 'default'}
+                disabled={toggling}
+                onClick={() => void confirmToggleActive()}
+              >
+                {toggling ? 'Сохранение…' : pendingPlan.isActive ? 'Деактивировать' : 'Активировать'}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      ) : null}
     </div>
   );
 }

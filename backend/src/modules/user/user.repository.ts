@@ -51,7 +51,13 @@ export class UserRepository {
           select: {
             role: true,
             organization: {
-              select: { id: true, name: true, blocked: true, deletedAt: true },
+              select: {
+                id: true,
+                name: true,
+                blocked: true,
+                deletedAt: true,
+                joinPolicy: true,
+              },
             },
           },
         },

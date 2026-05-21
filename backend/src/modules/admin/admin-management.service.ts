@@ -1,16 +1,23 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
-import { PlatformRole } from '@prisma/client';
+import { PlatformAuditType, PlatformRole } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AppElasticsearchService } from '../elasticsearch/elasticsearch.service';
+import { PlatformAuditService } from '../audit/platform-audit.service';
 
 @Injectable()
 export class AdminManagementService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly elastic: AppElasticsearchService,
+    private readonly audit: PlatformAuditService,
   ) {}
 
-  async listUsers(limit = 100, cursorId?: number, q?: string) {
+  async listUsers(
+    limit = 100,
+    cursorId?: number,
+    q?: string,
+    blocked?: boolean,
+  ) {
     if (q?.trim()) {
       const esRows = await this.elastic.searchUsers(q.trim(), Math.min(Math.max(limit, 1), 200));
       if (esRows) {
@@ -29,6 +36,7 @@ export class AdminManagementService {
     const take = Math.min(Math.max(limit, 1), 200);
     const where: import('@prisma/client').Prisma.UserWhereInput = {
       ...(cursorId != null ? { id: { lt: cursorId } } : {}),
+      ...(blocked !== undefined ? { blocked } : {}),
     };
     if (q?.trim()) {
       where.OR = [
@@ -58,13 +66,21 @@ export class AdminManagementService {
     };
   }
 
-  async setUserBlocked(id: number, blocked: boolean, reason: string) {
+  async setUserBlocked(
+    id: number,
+    blocked: boolean,
+    reason: string,
+    actorUserId: number,
+  ) {
     const r = reason?.trim() ?? '';
     if (r.length < 3) {
       throw new BadRequestException('Укажите причину не короче 3 символов');
     }
-    const exists = await this.prisma.user.findUnique({ where: { id }, select: { id: true } });
-    if (!exists) throw new NotFoundException('User not found');
+    const before = await this.prisma.user.findUnique({
+      where: { id },
+      select: { id: true, name: true, email: true, blocked: true },
+    });
+    if (!before) throw new NotFoundException('User not found');
     const updated = await this.prisma.user.update({
       where: { id },
       data: {
@@ -88,36 +104,26 @@ export class AdminManagementService {
       blockedReason: updated.blockedReason,
       platformRole: updated.platformRole,
     });
+    await this.audit.log({
+      type: PlatformAuditType.MODERATION,
+      action: blocked ? 'USER_BLOCKED' : 'USER_UNBLOCKED',
+      message: blocked
+        ? `Пользователь ${updated.email} заблокирован: ${r}`
+        : `Пользователь ${updated.email} разблокирован: ${r}`,
+      actorUserId,
+      targetType: 'user',
+      targetId: id,
+      metadata: { reason: r, email: updated.email, name: updated.name },
+    });
     return { id: updated.id, blocked: updated.blocked, blockedReason: updated.blockedReason };
   }
 
-  async setUserPlatformRole(id: number, platformRole: PlatformRole) {
-    const exists = await this.prisma.user.findUnique({ where: { id }, select: { id: true } });
-    if (!exists) throw new NotFoundException('User not found');
-    const updated = await this.prisma.user.update({
-      where: { id },
-      data: { platformRole },
-      select: {
-        id: true,
-        name: true,
-        email: true,
-        blocked: true,
-        blockedReason: true,
-        platformRole: true,
-      },
-    });
-    await this.elastic.indexUser({
-      id: updated.id,
-      name: updated.name,
-      email: updated.email,
-      blocked: updated.blocked,
-      blockedReason: updated.blockedReason,
-      platformRole: updated.platformRole,
-    });
-    return { id: updated.id, platformRole: updated.platformRole };
-  }
-
-  async listOrganizations(limit = 100, cursorId?: number, q?: string) {
+  async listOrganizations(
+    limit = 100,
+    cursorId?: number,
+    q?: string,
+    blocked?: boolean,
+  ) {
     if (q?.trim()) {
       const esRows = await this.elastic.searchOrganizations(
         q.trim(),
@@ -137,7 +143,9 @@ export class AdminManagementService {
     }
     const take = Math.min(Math.max(limit, 1), 200);
     const where: import('@prisma/client').Prisma.OrganizationWhereInput = {
+      deletedAt: null,
       ...(cursorId != null ? { id: { lt: cursorId } } : {}),
+      ...(blocked !== undefined ? { blocked } : {}),
     };
     if (q?.trim()) {
       where.name = { contains: q.trim(), mode: 'insensitive' };
@@ -163,14 +171,19 @@ export class AdminManagementService {
     };
   }
 
-  async setOrganizationBlocked(id: number, blocked: boolean, reason: string) {
+  async setOrganizationBlocked(
+    id: number,
+    blocked: boolean,
+    reason: string,
+    actorUserId: number,
+  ) {
     const r = reason?.trim() ?? '';
     if (r.length < 3) {
       throw new BadRequestException('Укажите причину не короче 3 символов');
     }
     const exists = await this.prisma.organization.findUnique({
       where: { id },
-      select: { id: true },
+      select: { id: true, name: true },
     });
     if (!exists) throw new NotFoundException('Organization not found');
     const updated = await this.prisma.organization.update({
@@ -198,6 +211,29 @@ export class AdminManagementService {
       inviteCode: updated.inviteCode,
       joinPolicy: updated.joinPolicy,
     });
+    await this.audit.log({
+      type: PlatformAuditType.MODERATION,
+      action: blocked ? 'ORG_BLOCKED' : 'ORG_UNBLOCKED',
+      message: blocked
+        ? `Организация «${updated.name}» заблокирована: ${r}`
+        : `Организация «${updated.name}» разблокирована: ${r}`,
+      actorUserId,
+      targetType: 'organization',
+      targetId: id,
+      metadata: { reason: r, name: updated.name },
+    });
     return { id: updated.id, blocked: updated.blocked, blockedReason: updated.blockedReason };
+  }
+
+  async listServiceLogs(limit = 50, type?: string, cursorId?: number) {
+    const auditType =
+      type?.trim() && Object.values(PlatformAuditType).includes(type.trim() as PlatformAuditType)
+        ? (type.trim() as PlatformAuditType)
+        : undefined;
+    return this.audit.list({
+      limit,
+      type: auditType,
+      cursorId,
+    });
   }
 }

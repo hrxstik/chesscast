@@ -17,6 +17,7 @@ import { resolveAvatarSrc } from "@/lib/avatar-url";
 import { ApiError } from "@/lib/api/types";
 import {
   labelGameScope,
+  labelJoinPolicy,
   labelOrgRole,
   labelPieceColor,
   labelResult,
@@ -99,6 +100,11 @@ export default function PlayerPage() {
               </Text>
             </div>
             <div className="w-full space-y-1">
+              {!isOwner && profile && profile.organizations.length > 0 ? (
+                <Text className="text-xs text-muted-foreground">
+                  В чужом профиле видны только открытые организации.
+                </Text>
+              ) : null}
               {profile?.organizations.slice(0, 5).map((o) => (
                 <div
                   key={o.id}
@@ -112,6 +118,7 @@ export default function PlayerPage() {
                   </Link>
                   {" · "}
                   {labelOrgRole(o.role)}
+                  {o.joinPolicy ? ` · ${labelJoinPolicy(o.joinPolicy)}` : ""}
                 </div>
               ))}
             </div>

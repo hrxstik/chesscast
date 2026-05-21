@@ -71,6 +71,7 @@ export type PublicUserProfileResponse = {
     name: string;
     role: 'PLAYER' | 'ADMIN';
     blocked: boolean;
+    joinPolicy?: string;
   }>;
   recentGames: Array<{
     id: number;
