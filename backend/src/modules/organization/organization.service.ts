@@ -54,7 +54,7 @@ export class OrganizationService {
     if (!canCreateOrganization) {
       message = 'Текущий тариф не позволяет создавать организации';
     } else if (adminOrganizationsCount >= maxOrganizations) {
-      message = `Достигнут лимит организаций для тарифа «${sub.plan.title}» (${maxOrganizations})`;
+      message = `Достигнут лимит организаций для тарифа «${sub.plan.title}»`;
     }
     return {
       canCreate:
@@ -137,7 +137,11 @@ export class OrganizationService {
       });
   }
 
-  async searchOrganizations(userId: number, query?: string, organizationId?: number) {
+  async searchOrganizations(
+    userId: number,
+    query?: string,
+    organizationId?: number,
+  ) {
     const trimmed = query?.trim();
     if (organizationId != null) {
       const row = await this.prisma.organization.findFirst({
@@ -184,7 +188,8 @@ export class OrganizationService {
           blocked: row.blocked,
           blockedReason: row.blockedReason,
           inviteCode: row.inviteCode,
-          joinPolicy: (row as { joinPolicy?: string }).joinPolicy ?? 'INVITE_ONLY',
+          joinPolicy:
+            (row as { joinPolicy?: string }).joinPolicy ?? 'INVITE_ONLY',
         })),
       );
     }
@@ -249,16 +254,22 @@ export class OrganizationService {
   }
 
   async joinOpenOrganization(userId: number, organizationId: number) {
-    const organization = await this.organizationRepository.findById(organizationId);
+    const organization =
+      await this.organizationRepository.findById(organizationId);
     if (!organization || organization.deletedAt) {
-      throw new NotFoundException(`Organization with id ${organizationId} not found`);
+      throw new NotFoundException(
+        `Organization with id ${organizationId} not found`,
+      );
     }
     if (organization.joinPolicy !== OrganizationJoinPolicy.OPEN) {
       throw new BadRequestException(
         'Без пригласительного кода можно вступить только в организации с типом «открытая»',
       );
     }
-    if (organization.blocked || !(await this.isOrganizationActive(organizationId))) {
+    if (
+      organization.blocked ||
+      !(await this.isOrganizationActive(organizationId))
+    ) {
       throw new ForbiddenException('Организация временно недоступна');
     }
     await this.organizationRepository.addMember(userId, organizationId);
@@ -283,13 +294,21 @@ export class OrganizationService {
     return updated;
   }
 
-  async create(data: CreateOrganizationDto, creatorUserId: number): Promise<Organization> {
-    const activeSubscription = await this.getActiveSubscriptionWithPlan(creatorUserId);
+  async create(
+    data: CreateOrganizationDto,
+    creatorUserId: number,
+  ): Promise<Organization> {
+    const activeSubscription =
+      await this.getActiveSubscriptionWithPlan(creatorUserId);
     if (!activeSubscription) {
-      throw new ForbiddenException('Нужна активная подписка для создания организации');
+      throw new ForbiddenException(
+        'Нужна активная подписка для создания организации',
+      );
     }
     if (!activeSubscription.plan.canCreateOrganization) {
-      throw new ForbiddenException('Текущий тариф не позволяет создавать организации');
+      throw new ForbiddenException(
+        'Текущий тариф не позволяет создавать организации',
+      );
     }
 
     const createdOrganizations = await this.prisma.userOrganization.count({
@@ -300,7 +319,9 @@ export class OrganizationService {
       },
     });
     if (createdOrganizations >= activeSubscription.plan.maxOrganizations) {
-      throw new ForbiddenException('Достигнут лимит организаций для текущего тарифа');
+      throw new ForbiddenException(
+        'Достигнут лимит организаций для текущего тарифа',
+      );
     }
 
     const joinPolicy = data.joinPolicy ?? OrganizationJoinPolicy.INVITE_ONLY;
@@ -362,15 +383,24 @@ export class OrganizationService {
     return this.organizationRepository.isUserMember(userId, organizationId);
   }
 
-  async assertUserHasAccess(userId: number, organizationId: number): Promise<void> {
+  async assertUserHasAccess(
+    userId: number,
+    organizationId: number,
+  ): Promise<void> {
     if (!userId) throw new UnauthorizedException();
-    const isMember = await this.organizationRepository.isUserMember(userId, organizationId);
+    const isMember = await this.organizationRepository.isUserMember(
+      userId,
+      organizationId,
+    );
     if (!isMember) {
       throw new ForbiddenException('Нет доступа к организации');
     }
   }
 
-  async assertUserIsAdmin(userId: number, organizationId: number): Promise<void> {
+  async assertUserIsAdmin(
+    userId: number,
+    organizationId: number,
+  ): Promise<void> {
     if (!userId) {
       throw new UnauthorizedException();
     }
@@ -407,7 +437,9 @@ export class OrganizationService {
     return { isMember: true, role: member.role, isAdmin };
   }
 
-  async assertOrganizationActiveForActions(organizationId: number): Promise<void> {
+  async assertOrganizationActiveForActions(
+    organizationId: number,
+  ): Promise<void> {
     const isActive = await this.isOrganizationActive(organizationId);
     if (!isActive) {
       throw new ForbiddenException(
@@ -438,7 +470,10 @@ export class OrganizationService {
     if (!organization) {
       throw new NotFoundException('Организация с таким кодом не найдена');
     }
-    if (organization.blocked || !(await this.isOrganizationActive(organization.id))) {
+    if (
+      organization.blocked ||
+      !(await this.isOrganizationActive(organization.id))
+    ) {
       throw new ForbiddenException('Организация временно заблокирована');
     }
     await this.organizationRepository.addMember(userId, organization.id);
@@ -449,9 +484,12 @@ export class OrganizationService {
     await this.assertUserHasAccess(requesterUserId, organizationId);
     const exists = await this.findById(organizationId);
     if (!exists) {
-      throw new NotFoundException(`Organization with id ${organizationId} not found`);
+      throw new NotFoundException(
+        `Organization with id ${organizationId} not found`,
+      );
     }
-    const members = await this.organizationRepository.getMembers(organizationId);
+    const members =
+      await this.organizationRepository.getMembers(organizationId);
     return members.map((m) => ({
       userId: m.userId,
       role: m.role,
@@ -467,7 +505,9 @@ export class OrganizationService {
     await this.assertUserHasAccess(requesterUserId, organizationId);
     const exists = await this.findById(organizationId);
     if (!exists) {
-      throw new NotFoundException(`Organization with id ${organizationId} not found`);
+      throw new NotFoundException(
+        `Organization with id ${organizationId} not found`,
+      );
     }
     const from = filters?.from ? new Date(filters.from) : undefined;
     const to = filters?.to ? new Date(filters.to) : undefined;
@@ -514,7 +554,9 @@ export class OrganizationService {
         payload: { gameId: g.id, token: g.token },
       })),
     ];
-    const sorted = logs.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+    const sorted = logs.sort(
+      (a, b) => b.createdAt.getTime() - a.createdAt.getTime(),
+    );
     if (filters?.type) {
       return sorted.filter((x) => x.type === filters.type);
     }
@@ -532,11 +574,17 @@ export class OrganizationService {
     if (targetUserId === organization.ownerUserId) {
       throw new ForbiddenException('Нельзя удалить владельца организации');
     }
-    const target = await this.organizationRepository.getMember(targetUserId, organizationId);
+    const target = await this.organizationRepository.getMember(
+      targetUserId,
+      organizationId,
+    );
     if (!target) {
       throw new NotFoundException('Участник не найден');
     }
-    return this.organizationRepository.removeMember(targetUserId, organizationId);
+    return this.organizationRepository.removeMember(
+      targetUserId,
+      organizationId,
+    );
   }
 
   async getActiveSubscriptionWithPlan(userId: number) {

@@ -65,8 +65,9 @@ export default function DashboardOrganizationsPage() {
           {eligibility && !canCreate && eligibility.message ? (
             <Text className="mt-2 text-sm text-muted-foreground">
               {eligibility.message}
+              <br />
               {eligibility.maxOrganizations > 0
-                ? ` · админ в ${eligibility.adminOrganizationsCount} из ${eligibility.maxOrganizations}`
+                ? `Вы администратор в ${eligibility.adminOrganizationsCount} организаций из ${eligibility.maxOrganizations}`
                 : ""}
             </Text>
           ) : eligibility && canCreate ? (
