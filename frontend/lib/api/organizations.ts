@@ -53,6 +53,19 @@ export async function fetchMyOrganizations(): Promise<MyOrganizationDto[]> {
   return apiFetch<MyOrganizationDto[]>('/organization/me/list');
 }
 
+export type OrganizationCreateEligibilityDto = {
+  canCreate: boolean;
+  adminOrganizationsCount: number;
+  maxOrganizations: number;
+  canCreateOrganization: boolean;
+  planTitle: string | null;
+  message: string | null;
+};
+
+export async function fetchOrganizationCreateEligibility(): Promise<OrganizationCreateEligibilityDto> {
+  return apiFetch<OrganizationCreateEligibilityDto>('/organization/me/create-eligibility');
+}
+
 export async function joinOrganizationByCode(inviteCode: string) {
   return apiFetch('/organization/join-by-code', {
     method: 'POST',
@@ -100,6 +113,20 @@ export async function fetchOrganization(id: number) {
 
 export async function fetchOrganizationStatus(id: number): Promise<OrganizationStatusDto> {
   return apiFetch<OrganizationStatusDto>(`/organization/${id}/status`);
+}
+
+export type OrganizationMembershipDto = {
+  isMember: boolean;
+  role: 'PLAYER' | 'ADMIN' | null;
+  isAdmin: boolean;
+};
+
+export async function fetchMyOrganizationMembership(
+  organizationId: number,
+): Promise<OrganizationMembershipDto> {
+  return apiFetch<OrganizationMembershipDto>(
+    `/organization/${organizationId}/membership`,
+  );
 }
 
 export async function fetchOrganizationMembers(id: number): Promise<OrganizationMemberDto[]> {

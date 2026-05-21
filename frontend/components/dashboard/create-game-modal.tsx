@@ -1,12 +1,13 @@
 'use client';
 
 import Link from 'next/link';
-import { useRouter, useSearchParams } from 'next/navigation';
-import { useMemo, useState } from 'react';
+import { useRouter } from 'next/navigation';
+import { useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Text } from '@/components/ui/typography';
 import { Button } from '@/components/ui/button';
 import { Select } from '@/components/ui/select';
+import { X } from 'lucide-react';
 import { submitCreateGame } from '@/lib/create-game-form';
 import { ApiError } from '@/lib/api/types';
 
@@ -15,18 +16,19 @@ const VISIBILITY_OPTIONS = [
   { value: 'PUBLIC', label: 'Публичная' },
 ];
 
-export default function CreateGamePage() {
+type Props = {
+  open: boolean;
+  onClose: () => void;
+  organizationId?: number;
+};
+
+export function CreateGameModal({ open, onClose, organizationId }: Props) {
   const router = useRouter();
-  const searchParams = useSearchParams();
-  const organizationId = useMemo(() => {
-    const raw = searchParams.get('organizationId');
-    if (!raw) return undefined;
-    const n = parseInt(raw, 10);
-    return Number.isNaN(n) ? undefined : n;
-  }, [searchParams]);
   const [visibility, setVisibility] = useState<'PRIVATE' | 'PUBLIC'>('PRIVATE');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  if (!open) return null;
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -34,6 +36,7 @@ export default function CreateGamePage() {
     setError(null);
     try {
       const game = await submitCreateGame(visibility, organizationId);
+      onClose();
       router.push(`/game/watch/${game.token}?viewer=false`);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Не удалось создать игру');
@@ -43,20 +46,32 @@ export default function CreateGamePage() {
   }
 
   return (
-    <div className="mx-auto max-w-lg space-y-6 py-8">
-      <Card>
-        <CardHeader>
-          <CardTitle>Создать игру</CardTitle>
-          <Text className="text-sm font-normal text-muted-foreground">
-            {organizationId != null
-              ? 'Партия будет привязана к выбранной организации.'
-              : 'Личная партия. Закрытая — по правилам доступа, публичная — по ссылке.'}
-          </Text>
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-[2px]"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="create-game-title">
+      <Card className="relative w-full max-w-lg border-border/80 shadow-lg">
+        <Button
+          type="button"
+          variant="ghost"
+          className="absolute right-2 top-2 !h-9 !min-h-9 !w-9 !min-w-9 !p-0"
+          aria-label="Закрыть"
+          onClick={onClose}>
+          <X className="size-4" />
+        </Button>
+        <CardHeader className="pr-12">
+          <CardTitle id="create-game-title">Создать игру</CardTitle>
+          {organizationId != null ? (
+            <Text className="text-sm font-normal text-muted-foreground">
+              Партия будет привязана к организации.
+            </Text>
+          ) : null}
         </CardHeader>
         <CardContent>
           <form onSubmit={onSubmit} className="space-y-4">
             <div className="space-y-2">
-              <label htmlFor="vis-p" className="text-sm font-medium">
+              <label htmlFor="create-game-visibility" className="text-sm font-medium">
                 Видимость
               </label>
               <Select
@@ -71,8 +86,8 @@ export default function CreateGamePage() {
               <Button type="submit" disabled={loading}>
                 {loading ? 'Создание…' : 'Создать'}
               </Button>
-              <Button asChild variant="outline" type="button">
-                <Link href="/dashboard/games">Отмена</Link>
+              <Button type="button" variant="outline" onClick={onClose}>
+                Отмена
               </Button>
             </div>
           </form>

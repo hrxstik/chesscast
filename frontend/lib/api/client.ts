@@ -1,9 +1,12 @@
 import { getApiUrl } from "@/lib/utils";
 import { ApiError } from "./types";
+import toast from "react-hot-toast";
 
 type RequestOptions = Omit<RequestInit, "body"> & {
   body?: unknown;
   skipAuth?: boolean;
+  /** Не показывать toast при ошибке (например, свой UI). */
+  silent?: boolean;
 };
 
 let refreshInFlight: Promise<boolean> | null = null;
@@ -85,7 +88,11 @@ export async function apiFetch<T>(
       if (typeof raw === "string") msg = raw;
       else if (Array.isArray(raw)) msg = raw.map(String).join(", ");
     }
-    throw new ApiError(msg || "Request failed", res.status, data);
+    const err = new ApiError(msg || "Request failed", res.status, data);
+    if (!options.silent && typeof window !== "undefined") {
+      toast.error(err.message);
+    }
+    throw err;
   }
 
   return data as T;

@@ -10,7 +10,6 @@ import { toast } from 'react-hot-toast';
 import { FormInput } from './form-input';
 import { Button } from '@/components/ui/button';
 import { useAuthStore } from '@/store/auth-store';
-import { ApiError } from '@/lib/api/types';
 import { safeNextPath } from '@/lib/navigation';
 
 interface Props {
@@ -39,10 +38,8 @@ export const RegisterForm: React.FC<Props> = ({ onClose }) => {
       toast.success('Аккаунт создан', { icon: '✅' });
       onClose?.();
       router.push(safeNextPath(searchParams.get('next')));
-    } catch (error) {
-      const msg =
-        error instanceof ApiError ? error.message : 'Не удалось создать аккаунт';
-      toast.error(msg, { icon: '❌' });
+    } catch {
+      /* Ошибка API — toast из apiFetch */
     }
   };
 

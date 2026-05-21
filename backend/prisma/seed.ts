@@ -134,7 +134,11 @@ async function main() {
       code: 'PREMIUM',
       title: 'Премиум',
       description: 'Для индивидуальных пользователей и тренеров',
-      features: ['Расширенный лимит игр', 'Доступ к стримингу', 'Более высокий приоритет'],
+      features: [
+        'Расширенный лимит игр',
+        'Доступ к стримингу',
+        'Более высокий приоритет',
+      ],
       maxGamesPerPeriod: 300,
       maxOrganizations: 1,
       canCreateOrganization: true,
@@ -149,7 +153,11 @@ async function main() {
       code: 'CORPORATE',
       title: 'Корпоративная',
       description: 'Для шахматных школ и клубов',
-      features: ['Создание организаций', 'Большие лимиты', 'Приоритетная поддержка'],
+      features: [
+        'Создание организаций',
+        'Большие лимиты',
+        'Приоритетная поддержка',
+      ],
       maxGamesPerPeriod: 3000,
       maxOrganizations: 3,
       canCreateOrganization: true,
@@ -249,7 +257,7 @@ async function main() {
     },
     {
       name: 'Школа тактики Elite',
-      description: 'Премиум-клуб с отдельным invite-кодом.',
+      description: 'Премиум-клуб с отдельным кодом приглашения.',
       inviteCode: 'SEED-ELITE-TACT',
       joinPolicy: OrganizationJoinPolicy.INVITE_ONLY,
     },
@@ -276,16 +284,28 @@ async function main() {
 
   await prisma.userOrganization.createMany({
     data: [
-      { userId: schoolAdmin.id, organizationId: orgInvite.id, role: Role.ADMIN },
+      {
+        userId: schoolAdmin.id,
+        organizationId: orgInvite.id,
+        role: Role.ADMIN,
+      },
       { userId: player.id, organizationId: orgInvite.id, role: Role.PLAYER },
       { userId: player.id, organizationId: orgOpen.id, role: Role.PLAYER },
       { userId: player.id, organizationId: orgMoscow.id, role: Role.ADMIN },
       { userId: player.id, organizationId: orgYouth.id, role: Role.PLAYER },
       { userId: schoolAdmin.id, organizationId: orgOpen.id, role: Role.ADMIN },
-      { userId: schoolAdmin.id, organizationId: orgMoscow.id, role: Role.ADMIN },
+      {
+        userId: schoolAdmin.id,
+        organizationId: orgMoscow.id,
+        role: Role.ADMIN,
+      },
       { userId: schoolAdmin.id, organizationId: orgYouth.id, role: Role.ADMIN },
       { userId: schoolAdmin.id, organizationId: orgElite.id, role: Role.ADMIN },
-      { userId: schoolAdmin.id, organizationId: orgAcademy.id, role: Role.ADMIN },
+      {
+        userId: schoolAdmin.id,
+        organizationId: orgAcademy.id,
+        role: Role.ADMIN,
+      },
       ...createdExtras.slice(8, 12).map((u) => ({
         userId: u.id,
         organizationId: orgOpen.id,
@@ -326,14 +346,52 @@ async function main() {
     GameResult.BLACK_RESIGN,
     GameResult.CANCELLED,
   ];
-  const statuses = [GameStatus.PENDING, GameStatus.IN_PROGRESS, GameStatus.FINISHED];
+  const statuses = [
+    GameStatus.PENDING,
+    GameStatus.IN_PROGRESS,
+    GameStatus.FINISHED,
+  ];
   const orgPool = [orgInvite.id, orgOpen.id, orgMoscow.id, orgYouth.id, null];
 
   const DEMO_MOVES = [
-    'e4', 'e5', 'Nf3', 'Nc6', 'Bb5', 'a6', 'Ba4', 'Nf6', 'O-O', 'Be7',
-    'Re1', 'b5', 'Bb3', 'd6', 'c3', 'O-O', 'h3', 'Nb8', 'd4', 'Nbd7',
-    'c4', 'c6', 'cxb5', 'axb5', 'Nc3', 'Bb7', 'Bg5', 'h6', 'Bh4', 'c5',
-    'dxc5', 'bxc5', 'Qd2', 'Nh5', 'Rad1', 'Qc7', 'Nc3', 'Ng4',
+    'e4',
+    'e5',
+    'Nf3',
+    'Nc6',
+    'Bb5',
+    'a6',
+    'Ba4',
+    'Nf6',
+    'O-O',
+    'Be7',
+    'Re1',
+    'b5',
+    'Bb3',
+    'd6',
+    'c3',
+    'O-O',
+    'h3',
+    'Nb8',
+    'd4',
+    'Nbd7',
+    'c4',
+    'c6',
+    'cxb5',
+    'axb5',
+    'Nc3',
+    'Bb7',
+    'Bg5',
+    'h6',
+    'Bh4',
+    'c5',
+    'dxc5',
+    'bxc5',
+    'Qd2',
+    'Nh5',
+    'Rad1',
+    'Qc7',
+    'Nc3',
+    'Ng4',
   ];
 
   const FINISHED_RESULTS = [
@@ -357,7 +415,9 @@ async function main() {
     createdAt.setDate(createdAt.getDate() - dayOffset);
     const status = statuses[i % statuses.length];
     const moveCount =
-      status === GameStatus.FINISHED ? Math.min(DEMO_MOVES.length, 12 + (i % 18)) : 0;
+      status === GameStatus.FINISHED
+        ? Math.min(DEMO_MOVES.length, 12 + (i % 18))
+        : 0;
     const moves = moveCount > 0 ? DEMO_MOVES.slice(0, moveCount) : [];
     const result =
       status === GameStatus.FINISHED
@@ -393,7 +453,13 @@ async function main() {
 
   for (let i = 0; i < 55; i++) {
     const opponent = createdExtras[i % createdExtras.length];
-    await seedGameForUser(player.id, opponent.id, i + 100, 'player-filter', player.id);
+    await seedGameForUser(
+      player.id,
+      opponent.id,
+      i + 100,
+      'player-filter',
+      player.id,
+    );
   }
 
   const playerSpotlight = await seedGameForUser(
@@ -470,7 +536,9 @@ async function main() {
   }
   console.log('\n— Организации —');
   for (const o of orgs) {
-    console.log(`  [${o.joinPolicy}] ${o.name} | код: ${o.inviteCode} | id: ${o.id}`);
+    console.log(
+      `  [${o.joinPolicy}] ${o.name} | код: ${o.inviteCode} | id: ${o.id}`,
+    );
   }
   console.log('\n— Демо для player@chesscast.local —');
   console.log('  Игры: ~55+ в «Мои игры», фильтр по token: filter-demo');

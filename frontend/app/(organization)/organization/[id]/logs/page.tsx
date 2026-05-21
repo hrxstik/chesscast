@@ -5,35 +5,28 @@ import { Section } from '@/components/ui/section';
 import { H1, Text } from '@/components/ui/typography';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { OrgSubNav } from '@/components/organization/org-sub-nav';
+import { OrgAdminGate } from '@/components/organization/org-admin-gate';
 import { Button } from '@/components/ui/button';
 import { Download } from 'lucide-react';
 import { fetchOrganizationLogs, type OrganizationLogDto } from '@/lib/api/organizations';
-import { ApiError } from '@/lib/api/types';
 
 type Props = { params: Promise<{ id: string }> };
 
-export default function OrganizationLogsPage({ params }: Props) {
-  const [id, setId] = useState('');
+function OrganizationLogsContent({ orgId }: { orgId: string }) {
   const [rows, setRows] = useState<OrganizationLogDto[]>([]);
   const [typeFilter, setTypeFilter] = useState('');
-  const [error, setError] = useState<string | null>(null);
 
-  async function load(orgId: number, type?: string) {
-    try {
-      const logs = await fetchOrganizationLogs(orgId, { type: type || undefined, limit: 200 });
-      setRows(logs);
-    } catch (e) {
-      setError(e instanceof ApiError ? e.message : 'Не удалось загрузить журнал');
-    }
+  async function load(type?: string) {
+    const logs = await fetchOrganizationLogs(Number(orgId), {
+      type: type || undefined,
+      limit: 200,
+    });
+    setRows(logs);
   }
 
   useEffect(() => {
-    (async () => {
-      const p = await params;
-      setId(p.id);
-      await load(Number(p.id), typeFilter);
-    })();
-  }, [params, typeFilter]);
+    void load(typeFilter);
+  }, [orgId, typeFilter]);
 
   function onExportCsv() {
     const header = ['type', 'createdAt'];
@@ -45,19 +38,19 @@ export default function OrganizationLogsPage({ params }: Props) {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `organization-${id}-logs.csv`;
+    a.download = `organization-${orgId}-logs.csv`;
     a.click();
     URL.revokeObjectURL(url);
   }
 
   return (
-    <Section>
-      <OrgSubNav orgId={id} />
-
+    <>
       <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
         <div>
           <H1>Журнал событий</H1>
-          <Text className="mt-2 text-muted-foreground">Организация #{id}. История ключевых событий.</Text>
+          <Text className="mt-2 text-muted-foreground">
+            Организация #{orgId}. История ключевых событий.
+          </Text>
         </div>
         <div className="flex w-full flex-col gap-2 md:w-auto md:flex-row">
           <select
@@ -74,7 +67,6 @@ export default function OrganizationLogsPage({ params }: Props) {
           </Button>
         </div>
       </div>
-      {error ? <Text className="text-sm text-destructive">{error}</Text> : null}
 
       <Card className="mt-8 overflow-hidden border-border/80">
         <CardHeader className="border-b border-border bg-muted/30">
@@ -112,6 +104,27 @@ export default function OrganizationLogsPage({ params }: Props) {
           </div>
         </CardContent>
       </Card>
+    </>
+  );
+}
+
+export default function OrganizationLogsPage({ params }: Props) {
+  const [id, setId] = useState('');
+
+  useEffect(() => {
+    void params.then((p) => setId(p.id));
+  }, [params]);
+
+  return (
+    <Section>
+      <OrgSubNav orgId={id} />
+      {id ? (
+        <OrgAdminGate orgId={id}>
+          <OrganizationLogsContent orgId={id} />
+        </OrgAdminGate>
+      ) : (
+        <Text className="text-muted-foreground">Загрузка…</Text>
+      )}
     </Section>
   );
 }

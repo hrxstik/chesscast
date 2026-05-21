@@ -170,10 +170,17 @@ export class AppElasticsearchService {
         index: ORGS_INDEX,
         size,
         query: {
-          multi_match: {
-            query: q,
-            fields: ['name^3', 'description', 'inviteCode'],
-            fuzziness: 'AUTO',
+          bool: {
+            should: [
+              {
+                match_phrase_prefix: {
+                  name: { query: q, boost: 3 },
+                },
+              },
+              { match: { description: { query: q, boost: 1 } } },
+              { term: { inviteCode: { value: q, boost: 2 } } },
+            ],
+            minimum_should_match: 1,
           },
         },
       });

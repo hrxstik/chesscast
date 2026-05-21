@@ -24,10 +24,10 @@ export function BoardWithEvalBar({
   return (
     <div
       className={cn(
-        'mx-auto grid w-full max-w-[min(100%,578px)] grid-cols-[22px_minmax(0,1fr)] gap-1.5',
+        'mx-auto grid w-full max-w-[min(100%,578px)] grid-cols-[22px_minmax(0,1fr)] items-stretch gap-1.5',
         className,
       )}>
-      <EvalBar cpWhite={cpWhite} mateWhite={mateWhite} className="h-full min-h-0 w-[22px]" />
+      <EvalBar cpWhite={cpWhite} mateWhite={mateWhite} className="h-full min-h-0" />
       <SquareChessboard options={options} maxBoardPx={maxBoardPx} />
     </div>
   );

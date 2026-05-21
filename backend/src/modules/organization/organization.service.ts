@@ -30,48 +30,171 @@ export class OrganizationService {
     private readonly gameService: GameService,
   ) {}
 
-  async searchOrganizations(userId: number, query?: string, organizationId?: number) {
-    if (query?.trim()) {
-      const esRows = await this.elastic.searchOrganizations(query.trim(), 30);
-      if (esRows) {
-        const filtered = organizationId
-          ? esRows.filter((x) => x.id === organizationId)
-          : esRows;
-        return Promise.all(
-          filtered.map(async (row) => {
-            const member = await this.prisma.userOrganization.findUnique({
-              where: { userId_organizationId: { userId, organizationId: row.id } },
-              select: { role: true },
-            });
-            const jp = (row as { joinPolicy?: string }).joinPolicy ?? 'INVITE_ONLY';
-            return {
-              id: row.id,
-              name: row.name,
-              description: row.description,
-              blocked: row.blocked,
-              blockedReason: row.blockedReason,
-              inviteCode: member ? row.inviteCode : undefined,
-              joinPolicy: jp,
-              isMember: !!member,
-              role: member?.role ?? null,
-              isActive: await this.isOrganizationActive(row.id),
-            };
-          }),
-        );
-      }
+  async getCreateEligibility(userId: number) {
+    const adminOrganizationsCount = await this.prisma.userOrganization.count({
+      where: {
+        userId,
+        role: Role.ADMIN,
+        organization: { deletedAt: null },
+      },
+    });
+    const sub = await this.getActiveSubscriptionWithPlan(userId);
+    if (!sub) {
+      return {
+        canCreate: false,
+        adminOrganizationsCount,
+        maxOrganizations: 0,
+        canCreateOrganization: false,
+        planTitle: null as string | null,
+        message: 'Нужна активная подписка для создания организации',
+      };
     }
-    const where: import('@prisma/client').Prisma.OrganizationWhereInput = {
-      deletedAt: null,
+    const { maxOrganizations, canCreateOrganization } = sub.plan;
+    let message: string | null = null;
+    if (!canCreateOrganization) {
+      message = 'Текущий тариф не позволяет создавать организации';
+    } else if (adminOrganizationsCount >= maxOrganizations) {
+      message = `Достигнут лимит организаций для тарифа «${sub.plan.title}» (${maxOrganizations})`;
+    }
+    return {
+      canCreate:
+        canCreateOrganization && adminOrganizationsCount < maxOrganizations,
+      adminOrganizationsCount,
+      maxOrganizations,
+      canCreateOrganization,
+      planTitle: sub.plan.title,
+      message,
     };
+  }
+
+  private async enrichSearchRows(
+    userId: number,
+    rows: Array<{
+      id: number;
+      name: string;
+      description: string;
+      blocked: boolean;
+      blockedReason: string | null;
+      inviteCode: string;
+      joinPolicy: OrganizationJoinPolicy | string;
+    }>,
+  ) {
+    if (rows.length === 0) {
+      return [];
+    }
+    const ids = rows.map((r) => r.id);
+    const orgMeta = await this.prisma.organization.findMany({
+      where: { id: { in: ids }, deletedAt: null },
+      select: {
+        id: true,
+        ownerUserId: true,
+        blocked: true,
+        inviteCode: true,
+        joinPolicy: true,
+      },
+    });
+    const metaById = new Map(orgMeta.map((o) => [o.id, o]));
+    const memberships = await this.prisma.userOrganization.findMany({
+      where: { userId, organizationId: { in: ids } },
+      select: { organizationId: true, role: true },
+    });
+    const roleByOrg = new Map(
+      memberships.map((m) => [m.organizationId, m.role]),
+    );
+    const now = new Date();
+    const ownerIds = [...new Set(orgMeta.map((o) => o.ownerUserId))];
+    const activeOwnerSubs =
+      ownerIds.length > 0
+        ? await this.prisma.subscription.findMany({
+            where: {
+              userId: { in: ownerIds },
+              status: SubscriptionStatus.ACTIVE,
+              endAt: { gt: now },
+              plan: { canCreateOrganization: true },
+            },
+            select: { userId: true },
+          })
+        : [];
+    const activeOwners = new Set(activeOwnerSubs.map((s) => s.userId));
+
+    return rows
+      .filter((r) => metaById.has(r.id))
+      .map((row) => {
+        const meta = metaById.get(row.id)!;
+        const role = roleByOrg.get(row.id) ?? null;
+        return {
+          id: row.id,
+          name: row.name,
+          description: row.description,
+          blocked: row.blocked,
+          blockedReason: row.blockedReason,
+          inviteCode: role ? meta.inviteCode : undefined,
+          joinPolicy: meta.joinPolicy,
+          isMember: role != null,
+          role,
+          isActive: !meta.blocked && activeOwners.has(meta.ownerUserId),
+        };
+      });
+  }
+
+  async searchOrganizations(userId: number, query?: string, organizationId?: number) {
+    const trimmed = query?.trim();
     if (organizationId != null) {
-      where.id = organizationId;
-    } else if (query && query.trim()) {
-      where.name = { contains: query.trim(), mode: 'insensitive' };
+      const row = await this.prisma.organization.findFirst({
+        where: { id: organizationId, deletedAt: null },
+        select: {
+          id: true,
+          name: true,
+          description: true,
+          blocked: true,
+          blockedReason: true,
+          inviteCode: true,
+          joinPolicy: true,
+        },
+      });
+      return row ? this.enrichSearchRows(userId, [row]) : [];
+    }
+    if (!trimmed) {
+      return [];
+    }
+    const asId = parseInt(trimmed, 10);
+    if (!Number.isNaN(asId) && String(asId) === trimmed) {
+      const byId = await this.prisma.organization.findFirst({
+        where: { id: asId, deletedAt: null },
+        select: {
+          id: true,
+          name: true,
+          description: true,
+          blocked: true,
+          blockedReason: true,
+          inviteCode: true,
+          joinPolicy: true,
+        },
+      });
+      return byId ? this.enrichSearchRows(userId, [byId]) : [];
+    }
+    const esRows = await this.elastic.searchOrganizations(trimmed, 20);
+    if (esRows?.length) {
+      return this.enrichSearchRows(
+        userId,
+        esRows.map((row) => ({
+          id: row.id,
+          name: row.name,
+          description: row.description,
+          blocked: row.blocked,
+          blockedReason: row.blockedReason,
+          inviteCode: row.inviteCode,
+          joinPolicy: (row as { joinPolicy?: string }).joinPolicy ?? 'INVITE_ONLY',
+        })),
+      );
     }
     const rows = await this.prisma.organization.findMany({
-      where,
+      where: {
+        deletedAt: null,
+        name: { contains: trimmed, mode: 'insensitive' },
+      },
       orderBy: { id: 'desc' },
-      take: 30,
+      take: 20,
       select: {
         id: true,
         name: true,
@@ -82,22 +205,7 @@ export class OrganizationService {
         joinPolicy: true,
       },
     });
-    return Promise.all(
-      rows.map(async (row) => {
-        const member = await this.prisma.userOrganization.findUnique({
-          where: { userId_organizationId: { userId, organizationId: row.id } },
-          select: { role: true },
-        });
-        return {
-          ...row,
-          inviteCode: member ? row.inviteCode : undefined,
-          joinPolicy: row.joinPolicy,
-          isMember: !!member,
-          role: member?.role ?? null,
-          isActive: await this.isOrganizationActive(row.id),
-        };
-      }),
-    );
+    return this.enrichSearchRows(userId, rows);
   }
 
   async findById(id: number): Promise<Organization> {
@@ -263,10 +371,40 @@ export class OrganizationService {
   }
 
   async assertUserIsAdmin(userId: number, organizationId: number): Promise<void> {
-    const organization = await this.findById(organizationId);
-    if (organization.ownerUserId !== userId) {
-      throw new ForbiddenException('Недостаточно прав: нужен администратор организации');
+    if (!userId) {
+      throw new UnauthorizedException();
     }
+    const organization = await this.findById(organizationId);
+    if (organization.ownerUserId === userId) {
+      return;
+    }
+    const member = await this.prisma.userOrganization.findUnique({
+      where: {
+        userId_organizationId: { userId, organizationId },
+      },
+      select: { role: true },
+    });
+    if (member?.role !== Role.ADMIN) {
+      throw new ForbiddenException(
+        'Недостаточно прав: нужен администратор организации',
+      );
+    }
+  }
+
+  async getMyMembership(userId: number, organizationId: number) {
+    const member = await this.prisma.userOrganization.findUnique({
+      where: {
+        userId_organizationId: { userId, organizationId },
+      },
+      select: { role: true },
+    });
+    if (!member) {
+      return { isMember: false, role: null as Role | null, isAdmin: false };
+    }
+    const organization = await this.findById(organizationId);
+    const isAdmin =
+      member.role === Role.ADMIN || organization.ownerUserId === userId;
+    return { isMember: true, role: member.role, isAdmin };
   }
 
   async assertOrganizationActiveForActions(organizationId: number): Promise<void> {
@@ -352,7 +490,7 @@ export class OrganizationService {
     requesterUserId: number,
     filters?: { type?: string; from?: string; to?: string },
   ) {
-    await this.assertUserHasAccess(requesterUserId, organizationId);
+    await this.assertUserIsAdmin(requesterUserId, organizationId);
     const org = await this.findById(organizationId);
     const games = await this.organizationRepository.getGames(
       organizationId,

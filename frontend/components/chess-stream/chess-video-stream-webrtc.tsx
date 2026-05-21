@@ -1,19 +1,22 @@
-'use client';
+"use client";
 
-import React from 'react';
-import { useEngine } from '@/lib/hooks/useEngine';
-import { BoardWithEvalBar } from '@/components/game/board-with-eval-bar';
-import { streamVideoContainerClass } from '@/lib/stream-config';
-import { Text } from '@/components/ui/typography';
-import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
-import { cn } from '@/lib/utils';
-import { ChessStreamGrid } from '@/components/chess-stream/chess-stream-grid';
-import { StreamAnalysisSidebar } from '@/components/chess-stream/stream-analysis-sidebar';
-import { ChessStreamStreamerControls } from '@/components/chess-stream/chess-stream-streamer-controls';
-import { useChessStreamWebRtc } from '@/components/chess-stream/hooks/use-chess-stream-webrtc';
-import { PlayerSideLabel } from '@/components/game/player-side-label';
-import { fetchGameSessionPublic, type GameSessionPublic } from '@/lib/api/game-session';
+import React from "react";
+import { useEngine } from "@/lib/hooks/useEngine";
+import { BoardWithEvalBar } from "@/components/game/board-with-eval-bar";
+import { streamVideoContainerClass } from "@/lib/stream-config";
+import { Text } from "@/components/ui/typography";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
+import { ChessStreamGrid } from "@/components/chess-stream/chess-stream-grid";
+import { StreamAnalysisSidebar } from "@/components/chess-stream/stream-analysis-sidebar";
+import { ChessStreamStreamerControls } from "@/components/chess-stream/chess-stream-streamer-controls";
+import { useChessStreamWebRtc } from "@/components/chess-stream/hooks/use-chess-stream-webrtc";
+import { PlayerSideLabel } from "@/components/game/player-side-label";
+import {
+  fetchGameSessionPublic,
+  type GameSessionPublic,
+} from "@/lib/api/game-session";
 
 interface ChessVideoStreamProps {
   gameToken: string;
@@ -55,10 +58,10 @@ export const ChessVideoStreamWebRTC: React.FC<ChessVideoStreamProps> = ({
     };
   }, [gameToken]);
 
-  const whitePlayer = session?.players.find((p) => p.color === 'WHITE');
-  const blackPlayer = session?.players.find((p) => p.color === 'BLACK');
+  const whitePlayer = session?.players.find((p) => p.color === "WHITE");
+  const blackPlayer = session?.players.find((p) => p.color === "BLACK");
   const showResult =
-    session?.status === 'FINISHED' && session.result !== 'CANCELLED';
+    session?.status === "FINISHED" && session.result !== "CANCELLED";
 
   const {
     videoRef,
@@ -80,7 +83,7 @@ export const ChessVideoStreamWebRTC: React.FC<ChessVideoStreamProps> = ({
   return (
     <ChessStreamGrid
       videoColumn={
-        <div className={cn(streamVideoContainerClass, 'relative')}>
+        <div className={cn(streamVideoContainerClass, "relative")}>
           <video
             ref={videoRef}
             autoPlay
@@ -88,8 +91,11 @@ export const ChessVideoStreamWebRTC: React.FC<ChessVideoStreamProps> = ({
             muted
             className="absolute inset-0 h-full w-full object-contain"
             style={{
-              display: hasVideoStream || !!videoRef.current?.srcObject ? 'block' : 'none',
-              backgroundColor: '#000',
+              display:
+                hasVideoStream || !!videoRef.current?.srcObject
+                  ? "block"
+                  : "none",
+              backgroundColor: "#000",
             }}
             onLoadedMetadata={() => {
               void videoRef.current?.play().catch(() => {});
@@ -104,25 +110,26 @@ export const ChessVideoStreamWebRTC: React.FC<ChessVideoStreamProps> = ({
           {!hasVideoStream && !videoRef.current?.srcObject ? (
             <div className="absolute inset-0 flex flex-col items-center justify-center gap-4 bg-black/90 px-4 text-center">
               <Text className="!mb-0 text-primary-foreground">
-                {viewerMode ? 'Ожидание видеопотока…' : 'Видео не запущено'}
+                {viewerMode ? "Ожидание видеопотока…" : "Видео не запущено"}
               </Text>
               {!isStreaming && !viewerMode ? (
                 <Button type="button" onClick={startStreaming}>
-                  Начать стрим
+                  Запустить видеопоток
                 </Button>
               ) : null}
             </div>
           ) : null}
           {hasVideoStream && videoRef.current?.srcObject ? (
             <Badge className="absolute left-2 top-2 z-10" variant="secondary">
-              {viewerMode ? 'Просмотр' : 'Камера'}
+              {viewerMode ? "Просмотр" : "Камера"}
             </Badge>
           ) : null}
           <canvas ref={canvasRef} className="hidden" />
           {isStreaming && hasVideoStream ? (
             <Badge
               className="absolute right-2 top-2 z-10 border-0 bg-destructive text-destructive-foreground hover:bg-destructive/90"
-              variant="default">
+              variant="default"
+            >
               LIVE
             </Badge>
           ) : null}
@@ -131,7 +138,7 @@ export const ChessVideoStreamWebRTC: React.FC<ChessVideoStreamProps> = ({
       boardColumn={
         <>
           <PlayerSideLabel
-            name={whitePlayer?.name ?? 'Игрок 1'}
+            name={whitePlayer?.name ?? "Игрок 1"}
             color="WHITE"
             gameResult={showResult ? session?.result : null}
           />
@@ -141,7 +148,7 @@ export const ChessVideoStreamWebRTC: React.FC<ChessVideoStreamProps> = ({
             mateWhite={mateWhite}
           />
           <PlayerSideLabel
-            name={blackPlayer?.name ?? 'Игрок 2'}
+            name={blackPlayer?.name ?? "Игрок 2"}
             color="BLACK"
             gameResult={showResult ? session?.result : null}
           />
@@ -158,7 +165,9 @@ export const ChessVideoStreamWebRTC: React.FC<ChessVideoStreamProps> = ({
           pvRows={pvRows}
         />
       }
-      renderStreamerControls={() => <ChessStreamStreamerControls {...streamerControlsProps} />}
+      renderStreamerControls={() => (
+        <ChessStreamStreamerControls {...streamerControlsProps} />
+      )}
     />
   );
 };

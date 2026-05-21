@@ -10,7 +10,6 @@ import { LoginFormValues, loginSchema } from './schemas';
 import toast from 'react-hot-toast';
 import { Button } from '@/components/ui/button';
 import { useAuthStore } from '@/store/auth-store';
-import { ApiError } from '@/lib/api/types';
 import { safeNextPath } from '@/lib/navigation';
 
 interface Props {
@@ -37,10 +36,8 @@ export const LoginForm: React.FC<Props> = ({ onClose }) => {
       toast.success('Вы успешно вошли в аккаунт', { icon: '✅' });
       onClose?.();
       router.push(safeNextPath(searchParams.get('next')));
-    } catch (error) {
-      const msg =
-        error instanceof ApiError ? error.message : 'Не удалось войти в аккаунт';
-      toast.error(msg, { icon: '❌' });
+    } catch {
+      /* Ошибка API — toast из apiFetch */
     }
   };
 

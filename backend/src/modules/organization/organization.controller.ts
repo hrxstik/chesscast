@@ -66,6 +66,12 @@ export class OrganizationController {
     return this.organizationService.listMyOrganizations(req.user.id);
   }
 
+  @Get('me/create-eligibility')
+  @UseGuards(JwtAuthGuard)
+  async getCreateEligibility(@Req() req: Request & { user: { id: number } }) {
+    return this.organizationService.getCreateEligibility(req.user.id);
+  }
+
   @Post('join-by-code')
   @UseGuards(JwtAuthGuard)
   async joinByCode(
@@ -82,6 +88,15 @@ export class OrganizationController {
     @Req() req: Request & { user: { id: number } },
   ) {
     return this.organizationService.joinOpenOrganization(req.user.id, id);
+  }
+
+  @Get(':id/membership')
+  @UseGuards(JwtAuthGuard)
+  async getMyMembership(
+    @Param('id', ParseIntPipe) id: number,
+    @Req() req: Request & { user: { id: number } },
+  ) {
+    return this.organizationService.getMyMembership(req.user.id, id);
   }
 
   @Get(':id/status')

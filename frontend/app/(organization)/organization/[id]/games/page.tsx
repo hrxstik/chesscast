@@ -11,19 +11,19 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Filter } from 'lucide-react';
 import { OrgSubNav } from '@/components/organization/org-sub-nav';
 import { OrganizationGamesList } from '@/components/organization/organization-games-list';
-import { fetchOrganization, fetchOrganizationMembers } from '@/lib/api/organizations';
-import { useAuthStore } from '@/store/auth-store';
-import { ApiError } from '@/lib/api/types';
+import {
+  fetchMyOrganizationMembership,
+  fetchOrganization,
+} from '@/lib/api/organizations';
+import { hrefCreateGameModal } from '@/lib/create-game-modal-url';
 
 type Props = { params: Promise<{ id: string }> };
 
 export default function OrganizationGamesPage({ params }: Props) {
-  const userId = useAuthStore((s) => s.user?.id);
   const [orgId, setOrgId] = useState<number | null>(null);
   const [name, setName] = useState('Организация');
   const [isAdmin, setIsAdmin] = useState(false);
   const [status, setStatus] = useState('');
-  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     (async () => {
@@ -32,21 +32,17 @@ export default function OrganizationGamesPage({ params }: Props) {
       if (Number.isNaN(id)) return;
       setOrgId(id);
       try {
-        const [org, members] = await Promise.all([
+        const [org, membership] = await Promise.all([
           fetchOrganization(id),
-          fetchOrganizationMembers(id),
+          fetchMyOrganizationMembership(id),
         ]);
         setName(org.name);
-        if (userId != null) {
-          setIsAdmin(
-            members.some((m) => m.userId === userId && m.role === 'ADMIN'),
-          );
-        }
-      } catch (e) {
-        setError(e instanceof ApiError ? e.message : 'Не удалось загрузить организацию');
+        setIsAdmin(membership.isAdmin);
+      } catch {
+        /* toast из apiFetch */
       }
     })();
-  }, [params, userId]);
+  }, [params]);
 
   return (
     <Section>
@@ -66,15 +62,13 @@ export default function OrganizationGamesPage({ params }: Props) {
         </div>
         {isAdmin && orgId != null ? (
           <Button asChild className="w-full gap-2 md:w-auto">
-            <Link href={`/create-game?organizationId=${orgId}`}>
+            <Link href={`/organization/${orgId}${hrefCreateGameModal(orgId)}`}>
               <Plus className="size-4" aria-hidden />
               Новая игра
             </Link>
           </Button>
         ) : null}
       </div>
-
-      {error ? <Text className="mt-4 text-destructive">{error}</Text> : null}
 
       <Card className="mt-8 border-border/80 bg-muted/20">
         <CardContent className="flex flex-wrap items-end gap-2 pt-6">

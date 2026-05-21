@@ -5,8 +5,6 @@ import { GameListCard } from '@/components/dashboard/game-list-card';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Loader2 } from 'lucide-react';
 import { fetchOrganizationGames } from '@/lib/api/organizations';
-import { ApiError } from '@/lib/api/types';
-
 export function OrganizationGamesList(props: {
   organizationId: number;
   status?: string;
@@ -15,8 +13,6 @@ export function OrganizationGamesList(props: {
 }) {
   const [games, setGames] = useState<Awaited<ReturnType<typeof fetchOrganizationGames>>>([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
   useEffect(() => {
     let mounted = true;
     setLoading(true);
@@ -25,14 +21,9 @@ export function OrganizationGamesList(props: {
         const g = await fetchOrganizationGames(props.organizationId, {
           status: props.status,
         });
-        if (mounted) {
-          setGames(g);
-          setError(null);
-        }
-      } catch (e) {
-        if (mounted) {
-          setError(e instanceof ApiError ? e.message : 'Не удалось загрузить игры');
-        }
+        if (mounted) setGames(g);
+      } catch {
+        if (mounted) setGames([]);
       } finally {
         if (mounted) setLoading(false);
       }
@@ -47,16 +38,6 @@ export function OrganizationGamesList(props: {
       <div className="flex justify-center py-12">
         <Loader2 className="size-8 animate-spin text-muted-foreground" />
       </div>
-    );
-  }
-
-  if (error) {
-    return (
-      <Card>
-        <CardContent className="pt-6">
-          <p className="text-destructive">{error}</p>
-        </CardContent>
-      </Card>
     );
   }
 

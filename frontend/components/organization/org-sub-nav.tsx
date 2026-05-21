@@ -2,18 +2,36 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
+import { useEffect, useState } from 'react';
 import { cn } from '@/lib/utils';
+import { fetchMyOrganizationMembership } from '@/lib/api/organizations';
 
-const segments = (orgId: string) =>
+const allSegments = (orgId: string) =>
   [
-    { href: `/organization/${orgId}`, label: 'Обзор' },
-    { href: `/organization/${orgId}/settings`, label: 'Настройки' },
-    { href: `/organization/${orgId}/logs`, label: 'Журнал' },
+    { href: `/organization/${orgId}`, label: 'Обзор', adminOnly: false },
+    { href: `/organization/${orgId}/games`, label: 'Игры', adminOnly: false },
+    { href: `/organization/${orgId}/settings`, label: 'Настройки', adminOnly: true },
+    { href: `/organization/${orgId}/logs`, label: 'Журнал', adminOnly: true },
   ] as const;
 
 export function OrgSubNav({ orgId }: { orgId: string }) {
   const pathname = usePathname();
-  const items = segments(orgId);
+  const [isAdmin, setIsAdmin] = useState(false);
+  const orgNum = Number(orgId);
+
+  useEffect(() => {
+    if (!orgId || Number.isNaN(orgNum)) return;
+    void (async () => {
+      try {
+        const m = await fetchMyOrganizationMembership(orgNum);
+        setIsAdmin(m.isAdmin);
+      } catch {
+        setIsAdmin(false);
+      }
+    })();
+  }, [orgId, orgNum]);
+
+  const items = allSegments(orgId).filter((item) => !item.adminOnly || isAdmin);
 
   return (
     <nav
