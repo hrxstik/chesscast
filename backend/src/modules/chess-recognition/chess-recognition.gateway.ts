@@ -15,6 +15,7 @@ import {
   type FrameProcessedResult,
 } from './chess-recognition.service';
 import { MediasoupService } from './mediasoup.service';
+import { GameService } from '../game/game.service';
 import sharp from 'sharp';
 
 @WebSocketGateway({
@@ -45,6 +46,7 @@ export class ChessRecognitionGateway
   constructor(
     private readonly chessRecognitionService: ChessRecognitionService,
     private readonly mediasoupService: MediasoupService,
+    private readonly gameService: GameService,
   ) {
     // Инициализация mediasoup worker
     this.mediasoupService.initializeWorker();
@@ -204,6 +206,8 @@ export class ChessRecognitionGateway
     } catch (error) {
       // Игнорируем ошибку
     }
+
+    void this.gameService.markInProgressByToken(token);
 
     this.logger.log(
       `📹 [STREAMER] Client ${client.id} started streaming for token ${token} (${clientsInRoom} clients in room)`,
@@ -847,6 +851,7 @@ export class ChessRecognitionGateway
 
     if (token) {
       this.chessRecognitionService.stopStreamProcessing(token);
+      void this.gameService.markFinishedByToken(token);
     }
 
     // Убираем клиента из стримеров

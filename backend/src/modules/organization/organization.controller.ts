@@ -15,6 +15,10 @@ import {
 } from '@nestjs/common';
 import { OrganizationService } from './organization.service';
 import { FileInterceptor } from '@nestjs/platform-express';
+import {
+  multerImageLimits,
+  multerImageMemory,
+} from '../upload/multer-memory';
 import { JwtAuthGuard } from 'src/guards/jwt-auth.guard';
 import {
   OptionalJwtAuthGuard,
@@ -92,7 +96,12 @@ export class OrganizationController {
   }
 
   @UseGuards(JwtAuthGuard)
-  @UseInterceptors(FileInterceptor('image'))
+  @UseInterceptors(
+    FileInterceptor('image', {
+      storage: multerImageMemory,
+      limits: multerImageLimits,
+    }),
+  )
   @Patch(':id')
   async updateOrganizationById(
     @Param('id', ParseIntPipe) id: number,
@@ -123,11 +132,10 @@ export class OrganizationController {
     @Param('id', ParseIntPipe) id: number,
     @Req() req: Request & { user: { id: number } },
     @Query('status') status?: string,
-    @Query('mode') mode?: string,
     @Query('from') from?: string,
     @Query('to') to?: string,
   ) {
-    return this.organizationService.getGames(id, req.user.id, { status, mode, from, to });
+    return this.organizationService.getGames(id, req.user.id, { status, from, to });
   }
 
   @Get(':id/logs')

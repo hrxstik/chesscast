@@ -21,6 +21,10 @@ import { JwtAuthGuard } from 'src/guards/jwt-auth.guard';
 import type { Request } from 'express';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { UploadService } from '../upload/upload.service';
+import {
+  multerImageLimits,
+  multerImageMemory,
+} from '../upload/multer-memory';
 
 @Controller('user')
 export class UserController {
@@ -82,7 +86,12 @@ export class UserController {
   }
 
   @UseGuards(JwtAuthGuard)
-  @UseInterceptors(FileInterceptor('image'))
+  @UseInterceptors(
+    FileInterceptor('image', {
+      storage: multerImageMemory,
+      limits: multerImageLimits,
+    }),
+  )
   @Post('me/avatar')
   async uploadMyAvatar(
     @Req() req: Request & { user: { id: number } },

@@ -7,7 +7,9 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { OrgSubNav } from '@/components/organization/org-sub-nav';
 import { Button } from '@/components/ui/button';
 import Link from 'next/link';
-import { Gamepad2, Settings, Users } from 'lucide-react';
+import { Gamepad2, Plus, Settings, Users } from 'lucide-react';
+import { Select } from '@/components/ui/select';
+import { GameListCard } from '@/components/dashboard/game-list-card';
 import {
   fetchOrganization,
   fetchOrganizationGames,
@@ -17,17 +19,19 @@ import {
   type OrganizationMemberDto,
 } from '@/lib/api/organizations';
 import { ApiError } from '@/lib/api/types';
+import { useAuthStore } from '@/store/auth-store';
 
 type Props = { params: Promise<{ id: string }> };
 
 export default function OrganizationPage({ params }: Props) {
+  const userId = useAuthStore((s) => s.user?.id);
   const [id, setId] = useState<string>('');
+  const [isAdmin, setIsAdmin] = useState(false);
   const [name, setName] = useState('Организация');
   const [members, setMembers] = useState<OrganizationMemberDto[]>([]);
   const [games, setGames] = useState<OrganizationGameDto[]>([]);
   const [isActive, setIsActive] = useState<boolean | null>(null);
   const [statusFilter, setStatusFilter] = useState('');
-  const [modeFilter, setModeFilter] = useState('');
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -41,7 +45,6 @@ export default function OrganizationPage({ params }: Props) {
           fetchOrganizationMembers(orgId),
           fetchOrganizationGames(orgId, {
             status: statusFilter || undefined,
-            mode: modeFilter || undefined,
           }),
           fetchOrganizationStatus(orgId),
         ]);
@@ -49,11 +52,14 @@ export default function OrganizationPage({ params }: Props) {
         setMembers(m);
         setGames(g);
         setIsActive(st.isActive);
+        if (userId != null) {
+          setIsAdmin(m.some((x) => x.userId === userId && x.role === 'ADMIN'));
+        }
       } catch (e) {
         setError(e instanceof ApiError ? e.message : 'Не удалось загрузить организацию');
       }
     })();
-  }, [params, statusFilter, modeFilter]);
+  }, [params, statusFilter, userId]);
 
   return (
     <Section>
@@ -118,41 +124,34 @@ export default function OrganizationPage({ params }: Props) {
           </CardHeader>
           <CardContent className="space-y-3">
             <Text className="text-sm text-muted-foreground">
-              Партии организации с фильтрами по статусу и режиму.
+              Партии организации. Фильтр по статусу.
             </Text>
-            <div className="flex flex-wrap gap-2">
-              <select
-                className="h-9 rounded-md border border-input bg-background px-2 text-sm"
-                value={statusFilter}
-                onChange={(e) => setStatusFilter(e.target.value)}>
-                <option value="">Все статусы</option>
-                <option value="PENDING">PENDING</option>
-                <option value="IN_PROGRESS">IN_PROGRESS</option>
-                <option value="FINISHED">FINISHED</option>
-              </select>
-              <select
-                className="h-9 rounded-md border border-input bg-background px-2 text-sm"
-                value={modeFilter}
-                onChange={(e) => setModeFilter(e.target.value)}>
-                <option value="">Все режимы</option>
-                <option value="TRAINING">TRAINING</option>
-                <option value="COMPETITIVE">COMPETITIVE</option>
-              </select>
-            </div>
+            {isAdmin ? (
+              <Button asChild className="w-full gap-2">
+                <Link href={`/create-game?organizationId=${id}`}>
+                  <Plus className="size-4" aria-hidden />
+                  Новая игра в организации
+                </Link>
+              </Button>
+            ) : null}
+            <Select
+              value={statusFilter}
+              onValueChange={setStatusFilter}
+              options={[
+                { value: '', label: 'Все статусы' },
+                { value: 'PENDING', label: 'Ожидает начала' },
+                { value: 'IN_PROGRESS', label: 'Идёт трансляция' },
+                { value: 'FINISHED', label: 'Завершена' },
+              ]}
+              aria-label="Статус партии"
+            />
             <div className="space-y-2">
-              {games.slice(0, 5).map((g) => (
-                <div
-                  key={g.id}
-                  className="flex items-center justify-between rounded-lg border border-border/60 bg-muted/20 px-3 py-2">
-                  <div className="text-sm font-mono">{g.token.slice(0, 10)}…</div>
-                  <div className="text-xs text-muted-foreground">
-                    {g.mode} · {g.status}
-                  </div>
-                </div>
+              {games.slice(0, 8).map((g) => (
+                <GameListCard key={g.id} game={g} />
               ))}
             </div>
             <Button asChild variant="secondary" className="w-full">
-              <Link href={`/dashboard/games`}>Все игры организации</Link>
+              <Link href={`/organization/${id}/games`}>Все игры организации</Link>
             </Button>
           </CardContent>
         </Card>

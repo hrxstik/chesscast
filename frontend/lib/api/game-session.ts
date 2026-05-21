@@ -11,7 +11,6 @@ export type GameSessionPlayer = {
 export type GameSessionPublic = {
   id: number;
   token: string;
-  mode: string;
   result: string;
   status: string;
   visibility: string;
@@ -20,6 +19,9 @@ export type GameSessionPublic = {
   createdAt: string;
   organization: { id: number; name: string } | null;
   players: GameSessionPlayer[];
+  canConduct: boolean;
+  canWatchLive: boolean;
+  canAnalyze: boolean;
 };
 
 export type GameSessionResult =

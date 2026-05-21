@@ -65,7 +65,6 @@ export class UserRepository {
               select: {
                 id: true,
                 token: true,
-                mode: true,
                 status: true,
                 result: true,
                 createdAt: true,

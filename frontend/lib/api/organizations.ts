@@ -1,4 +1,5 @@
 import { apiFetch } from './client';
+import type { GameListItem } from './types';
 
 export type MyOrganizationDto = {
   id: number;
@@ -21,14 +22,7 @@ export type OrganizationMemberDto = {
   };
 };
 
-export type OrganizationGameDto = {
-  id: number;
-  token: string;
-  mode: string;
-  status: string;
-  visibility: string;
-  createdAt: string;
-};
+export type OrganizationGameDto = GameListItem;
 
 export type OrganizationLogDto = {
   type: string;
@@ -120,11 +114,10 @@ export async function removeOrganizationMember(organizationId: number, userId: n
 
 export async function fetchOrganizationGames(
   id: number,
-  filters?: { status?: string; mode?: string; from?: string; to?: string },
+  filters?: { status?: string; from?: string; to?: string },
 ): Promise<OrganizationGameDto[]> {
   const q = new URLSearchParams();
   if (filters?.status) q.set('status', filters.status);
-  if (filters?.mode) q.set('mode', filters.mode);
   if (filters?.from) q.set('from', filters.from);
   if (filters?.to) q.set('to', filters.to);
   return apiFetch<OrganizationGameDto[]>(`/organization/${id}/games${q.size ? `?${q}` : ''}`);

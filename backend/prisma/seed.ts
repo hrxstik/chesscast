@@ -9,7 +9,6 @@ import {
   Prisma,
   PlatformRole,
   Role,
-  GameMode,
   GameResult,
   GameStatus,
   GameVisibility,
@@ -218,34 +217,83 @@ async function main() {
     });
   }
 
-  const orgInvite = await prisma.organization.create({
-    data: {
+  const orgDefs: {
+    name: string;
+    description: string;
+    inviteCode: string;
+    joinPolicy: OrganizationJoinPolicy;
+  }[] = [
+    {
       name: 'Демо-школа ChessCast',
-      description: 'Сидированная организация (только по приглашению).',
+      description: 'Закрытая школа, вступление по коду SEED-DEMO-SCHOOL.',
       inviteCode: 'SEED-DEMO-SCHOOL',
       joinPolicy: OrganizationJoinPolicy.INVITE_ONLY,
-      ownerUserId: schoolAdmin.id,
     },
-  });
-
-  const orgOpen = await prisma.organization.create({
-    data: {
+    {
       name: 'Открытый клуб Seed',
-      description: 'Можно вступить без кода (join-open).',
+      description: 'Публичный клуб, можно вступить без кода.',
       inviteCode: 'SEED-OPEN-CLUB',
       joinPolicy: OrganizationJoinPolicy.OPEN,
-      ownerUserId: schoolAdmin.id,
     },
-  });
+    {
+      name: 'Chess Club Moscow',
+      description: 'Клуб для поиска по названию и ID.',
+      inviteCode: 'SEED-MOSCOW-CC',
+      joinPolicy: OrganizationJoinPolicy.INVITE_ONLY,
+    },
+    {
+      name: 'Юношеская лига Seed',
+      description: 'Турнирная лига для демо-фильтров.',
+      inviteCode: 'SEED-YOUTH-LIGA',
+      joinPolicy: OrganizationJoinPolicy.INVITE_ONLY,
+    },
+    {
+      name: 'Школа тактики Elite',
+      description: 'Премиум-клуб с отдельным invite-кодом.',
+      inviteCode: 'SEED-ELITE-TACT',
+      joinPolicy: OrganizationJoinPolicy.INVITE_ONLY,
+    },
+    {
+      name: 'Онлайн-академия 64',
+      description: 'Ещё одна организация для списка и поиска.',
+      inviteCode: 'SEED-ACADEMY-64',
+      joinPolicy: OrganizationJoinPolicy.OPEN,
+    },
+  ];
+
+  const orgs: Awaited<ReturnType<typeof prisma.organization.create>>[] = [];
+  for (const def of orgDefs) {
+    orgs.push(
+      await prisma.organization.create({
+        data: {
+          ...def,
+          ownerUserId: schoolAdmin.id,
+        },
+      }),
+    );
+  }
+  const [orgInvite, orgOpen, orgMoscow, orgYouth, orgElite, orgAcademy] = orgs;
 
   await prisma.userOrganization.createMany({
     data: [
       { userId: schoolAdmin.id, organizationId: orgInvite.id, role: Role.ADMIN },
       { userId: player.id, organizationId: orgInvite.id, role: Role.PLAYER },
+      { userId: player.id, organizationId: orgOpen.id, role: Role.PLAYER },
+      { userId: player.id, organizationId: orgMoscow.id, role: Role.ADMIN },
+      { userId: player.id, organizationId: orgYouth.id, role: Role.PLAYER },
       { userId: schoolAdmin.id, organizationId: orgOpen.id, role: Role.ADMIN },
-      ...createdExtras.slice(8, 14).map((u) => ({
+      { userId: schoolAdmin.id, organizationId: orgMoscow.id, role: Role.ADMIN },
+      { userId: schoolAdmin.id, organizationId: orgYouth.id, role: Role.ADMIN },
+      { userId: schoolAdmin.id, organizationId: orgElite.id, role: Role.ADMIN },
+      { userId: schoolAdmin.id, organizationId: orgAcademy.id, role: Role.ADMIN },
+      ...createdExtras.slice(8, 12).map((u) => ({
         userId: u.id,
         organizationId: orgOpen.id,
+        role: Role.PLAYER as Role,
+      })),
+      ...createdExtras.slice(12, 14).map((u) => ({
+        userId: u.id,
+        organizationId: orgAcademy.id,
         role: Role.PLAYER as Role,
       })),
     ],
@@ -253,7 +301,6 @@ async function main() {
 
   const game = await prisma.game.create({
     data: {
-      mode: GameMode.TRAINING,
       result: GameResult.DRAW,
       status: GameStatus.PENDING,
       token: 'seed-demo-game',
@@ -271,32 +318,118 @@ async function main() {
   });
 
   const visibilities = [GameVisibility.PRIVATE, GameVisibility.PUBLIC];
-  const modes = [GameMode.TRAINING, GameMode.COMPETITIVE];
-  const results = [GameResult.DRAW, GameResult.WHITE_WIN, GameResult.BLACK_WIN];
+  const results = [
+    GameResult.DRAW,
+    GameResult.WHITE_WIN,
+    GameResult.BLACK_WIN,
+    GameResult.WHITE_RESIGN,
+    GameResult.BLACK_RESIGN,
+    GameResult.CANCELLED,
+  ];
   const statuses = [GameStatus.PENDING, GameStatus.IN_PROGRESS, GameStatus.FINISHED];
+  const orgPool = [orgInvite.id, orgOpen.id, orgMoscow.id, orgYouth.id, null];
 
-  for (let i = 0; i < 48; i++) {
-    const creator = createdExtras[i % createdExtras.length];
-    const orgId = i % 3 === 0 ? orgInvite.id : i % 3 === 1 ? orgOpen.id : null;
+  const DEMO_MOVES = [
+    'e4', 'e5', 'Nf3', 'Nc6', 'Bb5', 'a6', 'Ba4', 'Nf6', 'O-O', 'Be7',
+    'Re1', 'b5', 'Bb3', 'd6', 'c3', 'O-O', 'h3', 'Nb8', 'd4', 'Nbd7',
+    'c4', 'c6', 'cxb5', 'axb5', 'Nc3', 'Bb7', 'Bg5', 'h6', 'Bh4', 'c5',
+    'dxc5', 'bxc5', 'Qd2', 'Nh5', 'Rad1', 'Qc7', 'Nc3', 'Ng4',
+  ];
+
+  const FINISHED_RESULTS = [
+    GameResult.WHITE_WIN,
+    GameResult.BLACK_WIN,
+    GameResult.DRAW,
+    GameResult.STALEMATE,
+    GameResult.WHITE_RESIGN,
+    GameResult.BLACK_RESIGN,
+  ];
+
+  async function seedGameForUser(
+    creatorId: number,
+    opponentId: number,
+    i: number,
+    prefix: string,
+    creatorOverride?: number,
+  ) {
+    const dayOffset = i % 90;
+    const createdAt = new Date(now);
+    createdAt.setDate(createdAt.getDate() - dayOffset);
+    const status = statuses[i % statuses.length];
+    const moveCount =
+      status === GameStatus.FINISHED ? Math.min(DEMO_MOVES.length, 12 + (i % 18)) : 0;
+    const moves = moveCount > 0 ? DEMO_MOVES.slice(0, moveCount) : [];
+    const result =
+      status === GameStatus.FINISHED
+        ? FINISHED_RESULTS[i % FINISHED_RESULTS.length]
+        : results[i % results.length];
+
     const g = await prisma.game.create({
       data: {
-        mode: modes[i % modes.length],
-        result: results[i % results.length],
-        status: statuses[i % statuses.length],
-        token: `seed-g-${i}-${randomUUID().slice(0, 8)}`,
-        organizationId: orgId,
-        creatorId: creator.id,
+        result,
+        status,
+        moves,
+        token: `${prefix}-${i}-${String(i % 10).padStart(2, '0')}-${randomUUID().slice(0, 6)}`,
+        organizationId: orgPool[i % orgPool.length],
+        creatorId: creatorOverride ?? creatorId,
         visibility: visibilities[i % 2],
+        createdAt,
       },
     });
-    const opponent = createdExtras[(i + 1) % createdExtras.length];
     await prisma.userGame.createMany({
       data: [
-        { userId: creator.id, gameId: g.id, color: Color.WHITE },
-        { userId: opponent.id, gameId: g.id, color: Color.BLACK },
+        { userId: creatorId, gameId: g.id, color: Color.WHITE },
+        { userId: opponentId, gameId: g.id, color: Color.BLACK },
       ],
     });
+    return g;
   }
+
+  for (let i = 0; i < 40; i++) {
+    const creator = createdExtras[i % createdExtras.length];
+    const opponent = createdExtras[(i + 3) % createdExtras.length];
+    await seedGameForUser(creator.id, opponent.id, i, 'seed-extra');
+  }
+
+  for (let i = 0; i < 55; i++) {
+    const opponent = createdExtras[i % createdExtras.length];
+    await seedGameForUser(player.id, opponent.id, i + 100, 'player-filter', player.id);
+  }
+
+  const playerSpotlight = await seedGameForUser(
+    player.id,
+    schoolAdmin.id,
+    0,
+    'filter-demo',
+    player.id,
+  );
+  await prisma.game.update({
+    where: { id: playerSpotlight.id },
+    data: {
+      status: GameStatus.IN_PROGRESS,
+      result: GameResult.CANCELLED,
+      token: 'filter-demo-live',
+      moves: [],
+    },
+  });
+
+  const analyzeDemo = await prisma.game.create({
+    data: {
+      result: GameResult.WHITE_WIN,
+      status: GameStatus.FINISHED,
+      moves: DEMO_MOVES.slice(0, 24),
+      token: 'filter-demo-analyze',
+      organizationId: null,
+      creatorId: player.id,
+      visibility: GameVisibility.PRIVATE,
+    },
+  });
+  await prisma.userGame.createMany({
+    data: [
+      { userId: player.id, gameId: analyzeDemo.id, color: Color.WHITE },
+      { userId: schoolAdmin.id, gameId: analyzeDemo.id, color: Color.BLACK },
+    ],
+  });
 
   const payment = await prisma.payment.create({
     data: {
@@ -336,8 +469,13 @@ async function main() {
     console.log(`  ${u.email}  |  ${u.name}`);
   }
   console.log('\n— Организации —');
-  console.log(`  INVITE_ONLY: "${orgInvite.name}" код: ${orgInvite.inviteCode}`);
-  console.log(`  OPEN:         "${orgOpen.name}" код (для справки): ${orgOpen.inviteCode}`);
+  for (const o of orgs) {
+    console.log(`  [${o.joinPolicy}] ${o.name} | код: ${o.inviteCode} | id: ${o.id}`);
+  }
+  console.log('\n— Демо для player@chesscast.local —');
+  console.log('  Игры: ~55+ в «Мои игры», фильтр по token: filter-demo');
+  console.log('  Вступление по коду: SEED-YOUTH-LIGA или SEED-ELITE-TACT');
+  console.log('  Поиск: «Moscow», «Elite», id организации из списка выше');
   console.log(`\nДемо-игра token: ${game.token}`);
   console.log('====================================\n');
 }

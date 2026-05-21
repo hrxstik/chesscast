@@ -71,7 +71,6 @@ export type PublicUserProfileResponse = {
   recentGames: Array<{
     id: number;
     token: string;
-    mode: string;
     status: string;
     result: string;
     createdAt: string;

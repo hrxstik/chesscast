@@ -10,7 +10,6 @@ import {
   Brain,
   Camera,
   History,
-  Sparkles,
   Trophy,
   Users,
 } from "lucide-react";

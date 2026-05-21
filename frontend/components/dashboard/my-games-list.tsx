@@ -1,16 +1,15 @@
 'use client';
 
 import { useMyGamesInfiniteFiltered } from '@/lib/hooks/use-my-games-infinite';
+import { GameListCard } from '@/components/dashboard/game-list-card';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
-import Link from 'next/link';
 import { Loader2 } from 'lucide-react';
 import { useEffect, useRef } from 'react';
 
 export function MyGamesList(props: {
+  title?: string;
+  emptyHint?: string;
   status?: string;
-  mode?: string;
   organizationId?: number;
   result?: string;
   token?: string;
@@ -51,9 +50,6 @@ export function MyGamesList(props: {
           <p className="text-destructive">
             {error instanceof Error ? error.message : 'Не удалось загрузить игры'}
           </p>
-          <p className="mt-2 text-sm text-muted-foreground">
-            Войдите в аккаунт или проверьте, что API доступен.
-          </p>
         </CardContent>
       </Card>
     );
@@ -65,10 +61,12 @@ export function MyGamesList(props: {
     return (
       <Card>
         <CardHeader>
-          <CardTitle>Пока нет игр</CardTitle>
+          <CardTitle>{props.title ?? 'Пока нет игр'}</CardTitle>
         </CardHeader>
         <CardContent>
-          <p className="text-muted-foreground">Создайте игру из дашборда, когда появится кнопка.</p>
+          <p className="text-muted-foreground">
+            {props.emptyHint ?? 'Создайте игру кнопкой «Новая игра».'}
+          </p>
         </CardContent>
       </Card>
     );
@@ -77,36 +75,14 @@ export function MyGamesList(props: {
   return (
     <div className="space-y-3">
       {games.map((g) => (
-        <Card key={g.id}>
-          <CardContent className="flex flex-col gap-3 p-4 md:flex-row md:items-center md:justify-between">
-            <div>
-              <div className="flex flex-wrap items-center gap-2">
-                <span className="font-mono text-sm text-muted-foreground">{g.token.slice(0, 8)}…</span>
-                <Badge variant="secondary">{g.status}</Badge>
-                <Badge variant="outline">{g.mode}</Badge>
-                <Badge variant="muted">{g.visibility}</Badge>
-              </div>
-              {g.organization && (
-                <p className="mt-1 text-sm text-muted-foreground">{g.organization.name}</p>
-              )}
-            </div>
-            <div className="flex gap-2">
-              <Button asChild variant="outline">
-                <Link href={`/game/watch/${g.token}`}>Смотреть</Link>
-              </Button>
-              <Button asChild>
-                <Link href={`/game/${g.token}`}>Играть</Link>
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
+        <GameListCard key={g.id} game={g} />
       ))}
       <div ref={sentinelRef} className="h-4" />
-      {isFetchingNextPage && (
+      {isFetchingNextPage ? (
         <div className="flex justify-center py-4">
           <Loader2 className="size-6 animate-spin text-muted-foreground" />
         </div>
-      )}
+      ) : null}
     </div>
   );
 }

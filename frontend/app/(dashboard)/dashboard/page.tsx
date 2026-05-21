@@ -4,7 +4,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { H2, Lead, Text } from "@/components/ui/typography";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
-import { ArrowRight, Gamepad2, Building2, User, Sparkles } from "lucide-react";
+import { ArrowRight, Gamepad2, Building2, User } from "lucide-react";
 import { useEffect, useState } from "react";
 import {
   getDashboardSummary,

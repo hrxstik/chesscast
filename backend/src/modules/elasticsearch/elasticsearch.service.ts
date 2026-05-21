@@ -1,4 +1,6 @@
 import { Injectable } from '@nestjs/common';
+import { InjectQueue } from '@nestjs/bullmq';
+import { Queue } from 'bullmq';
 import { ElasticsearchService } from '@nestjs/elasticsearch';
 import { PrismaService } from '../prisma/prisma.service';
 
@@ -29,7 +31,25 @@ export class AppElasticsearchService {
   constructor(
     private readonly elasticsearchService: ElasticsearchService,
     private readonly prisma: PrismaService,
+    @InjectQueue('search') private readonly searchQueue: Queue,
   ) {}
+
+  /** Индексация в фоне: ответ API не ждёт Elasticsearch. */
+  scheduleIndexUser(doc: UserSearchDoc): void {
+    void this.searchQueue
+      .add('index-user', doc, { removeOnComplete: 200, removeOnFail: 50 })
+      .catch(() => {
+        void this.indexUser(doc);
+      });
+  }
+
+  scheduleIndexOrganization(doc: OrganizationSearchDoc): void {
+    void this.searchQueue
+      .add('index-organization', doc, { removeOnComplete: 200, removeOnFail: 50 })
+      .catch(() => {
+        void this.indexOrganization(doc);
+      });
+  }
 
   async ping(): Promise<boolean> {
     try {
@@ -88,7 +108,7 @@ export class AppElasticsearchService {
         index: USERS_INDEX,
         id: String(doc.id),
         document: doc,
-        refresh: true,
+        refresh: false,
       });
     } catch {
       // noop
@@ -102,7 +122,7 @@ export class AppElasticsearchService {
         index: ORGS_INDEX,
         id: String(doc.id),
         document: doc,
-        refresh: true,
+        refresh: false,
       });
     } catch {
       // noop

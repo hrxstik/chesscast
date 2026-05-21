@@ -43,7 +43,12 @@ export class GameController {
     }
     const skipNum = skip ? parseInt(skip, 10) : 0;
     const takeNum = take ? parseInt(take, 10) : 10;
-    return this.gameService.getPaginatedByUserId(userId, skipNum, takeNum);
+    return this.gameService.getPaginatedByUserId(
+      userId,
+      skipNum,
+      takeNum,
+      req.user.id,
+    );
   }
 
   @UseGuards(JwtAuthGuard)
@@ -53,7 +58,6 @@ export class GameController {
     @Query('cursor') cursor?: string,
     @Query('limit') limit?: string,
     @Query('status') status?: string,
-    @Query('mode') mode?: string,
     @Query('organizationId') organizationId?: string,
     @Query('result') result?: string,
     @Query('token') token?: string,
@@ -75,7 +79,6 @@ export class GameController {
         : undefined;
     return this.gameService.getMyGamesCursor(userId, limitNum, cursorId, {
       status,
-      mode,
       organizationId: orgId != null && !Number.isNaN(orgId) ? orgId : undefined,
       result,
       token,

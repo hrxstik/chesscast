@@ -1,9 +1,11 @@
 import {
   BadRequestException,
   ForbiddenException,
+  Inject,
   Injectable,
   NotFoundException,
   UnauthorizedException,
+  forwardRef,
 } from '@nestjs/common';
 import {
   Organization,
@@ -12,6 +14,7 @@ import {
   SubscriptionStatus,
 } from '@prisma/client';
 import { OrganizationRepository } from './organization.repository';
+import { GameService } from '../game/game.service';
 import { CreateOrganizationDto } from 'src/dtos/create/create-organization.dto';
 import generateCode from 'utils/generate-code';
 import { PrismaService } from '../prisma/prisma.service';
@@ -23,6 +26,8 @@ export class OrganizationService {
     private readonly organizationRepository: OrganizationRepository,
     private readonly prisma: PrismaService,
     private readonly elastic: AppElasticsearchService,
+    @Inject(forwardRef(() => GameService))
+    private readonly gameService: GameService,
   ) {}
 
   async searchOrganizations(userId: number, query?: string, organizationId?: number) {
@@ -319,7 +324,7 @@ export class OrganizationService {
   async getGames(
     organizationId: number,
     requesterUserId: number,
-    filters?: { status?: string; mode?: string; from?: string; to?: string },
+    filters?: { status?: string; from?: string; to?: string },
   ) {
     await this.assertUserHasAccess(requesterUserId, organizationId);
     const exists = await this.findById(organizationId);
@@ -328,12 +333,18 @@ export class OrganizationService {
     }
     const from = filters?.from ? new Date(filters.from) : undefined;
     const to = filters?.to ? new Date(filters.to) : undefined;
-    return this.organizationRepository.getGames(organizationId, requesterUserId, {
-      status: filters?.status,
-      mode: filters?.mode,
-      from: from && !Number.isNaN(from.getTime()) ? from : undefined,
-      to: to && !Number.isNaN(to.getTime()) ? to : undefined,
-    });
+    const rows = await this.organizationRepository.getGames(
+      organizationId,
+      requesterUserId,
+      {
+        status: filters?.status,
+        from: from && !Number.isNaN(from.getTime()) ? from : undefined,
+        to: to && !Number.isNaN(to.getTime()) ? to : undefined,
+      },
+    );
+    return Promise.all(
+      rows.map((g) => this.gameService.toListItemDto(g, requesterUserId)),
+    );
   }
 
   async getLogs(
@@ -362,7 +373,7 @@ export class OrganizationService {
         type: 'GAME_CREATED',
         createdAt: g.createdAt,
         actor: null as null | { id: number; name: string },
-        payload: { gameId: g.id, token: g.token, mode: g.mode },
+        payload: { gameId: g.id, token: g.token },
       })),
     ];
     const sorted = logs.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());

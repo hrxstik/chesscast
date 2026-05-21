@@ -12,6 +12,14 @@ export class SearchReindexProcessor extends WorkerHost {
     if (job.name === 'reindex-all') {
       return this.elasticsearch.reindexAll();
     }
+    if (job.name === 'index-user') {
+      await this.elasticsearch.indexUser(job.data);
+      return { ok: true };
+    }
+    if (job.name === 'index-organization') {
+      await this.elasticsearch.indexOrganization(job.data);
+      return { ok: true };
+    }
     return undefined;
   }
 }

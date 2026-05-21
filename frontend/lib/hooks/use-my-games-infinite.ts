@@ -9,7 +9,6 @@ export function useMyGamesInfiniteFiltered(
   limit = 20,
   filters: {
     status?: string;
-    mode?: string;
     organizationId?: number;
     result?: string;
     token?: string;
@@ -23,7 +22,6 @@ export function useMyGamesInfiniteFiltered(
       'me',
       limit,
       filters.status,
-      filters.mode,
       filters.organizationId,
       filters.result,
       filters.token,

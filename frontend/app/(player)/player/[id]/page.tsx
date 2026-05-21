@@ -92,7 +92,7 @@ export default function PlayerPage() {
                 className="flex items-center justify-between rounded-lg border border-border/60 bg-muted/15 px-4 py-3">
                 <div className="text-xs font-mono">{g.token.slice(0, 10)}…</div>
                 <div className="text-xs text-muted-foreground">
-                  {g.mode} · {g.status}
+                  {g.status}
                 </div>
               </div>
             ))}

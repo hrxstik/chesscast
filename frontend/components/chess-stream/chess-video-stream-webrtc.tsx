@@ -12,6 +12,8 @@ import { ChessStreamGrid } from '@/components/chess-stream/chess-stream-grid';
 import { StreamAnalysisSidebar } from '@/components/chess-stream/stream-analysis-sidebar';
 import { ChessStreamStreamerControls } from '@/components/chess-stream/chess-stream-streamer-controls';
 import { useChessStreamWebRtc } from '@/components/chess-stream/hooks/use-chess-stream-webrtc';
+import { PlayerSideLabel } from '@/components/game/player-side-label';
+import { fetchGameSessionPublic, type GameSessionPublic } from '@/lib/api/game-session';
 
 interface ChessVideoStreamProps {
   gameToken: string;
@@ -36,6 +38,27 @@ export const ChessVideoStreamWebRTC: React.FC<ChessVideoStreamProps> = ({
     setPositionFromFen,
     pvRows,
   } = useEngine(undefined, { multiPv: 3 });
+
+  const [session, setSession] = React.useState<GameSessionPublic | null>(null);
+
+  React.useEffect(() => {
+    let mounted = true;
+    const load = async () => {
+      const res = await fetchGameSessionPublic(gameToken);
+      if (mounted && res.ok) setSession(res.data);
+    };
+    void load();
+    const t = setInterval(() => void load(), 8000);
+    return () => {
+      mounted = false;
+      clearInterval(t);
+    };
+  }, [gameToken]);
+
+  const whitePlayer = session?.players.find((p) => p.color === 'WHITE');
+  const blackPlayer = session?.players.find((p) => p.color === 'BLACK');
+  const showResult =
+    session?.status === 'FINISHED' && session.result !== 'CANCELLED';
 
   const {
     videoRef,
@@ -107,17 +130,21 @@ export const ChessVideoStreamWebRTC: React.FC<ChessVideoStreamProps> = ({
       }
       boardColumn={
         <>
-          <Text className="!mb-0 w-full text-center !text-sm font-medium">
-            Игрок 1<span className="text-muted-foreground"> · белые</span>
-          </Text>
+          <PlayerSideLabel
+            name={whitePlayer?.name ?? 'Игрок 1'}
+            color="WHITE"
+            gameResult={showResult ? session?.result : null}
+          />
           <BoardWithEvalBar
             options={chessboardOptions}
             cpWhite={evaluationCpWhite}
             mateWhite={mateWhite}
           />
-          <Text className="!mb-0 w-full text-center !text-sm font-medium">
-            Игрок 2<span className="text-muted-foreground"> · чёрные</span>
-          </Text>
+          <PlayerSideLabel
+            name={blackPlayer?.name ?? 'Игрок 2'}
+            color="BLACK"
+            gameResult={showResult ? session?.result : null}
+          />
         </>
       }
       sidebar={

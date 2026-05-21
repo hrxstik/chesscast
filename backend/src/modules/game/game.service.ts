@@ -1,8 +1,10 @@
 import {
   ForbiddenException,
+  Inject,
   Injectable,
   InternalServerErrorException,
   NotFoundException,
+  forwardRef,
 } from '@nestjs/common';
 import { GameRepository, type GameWithAccess } from './game.repository';
 import {
@@ -15,6 +17,7 @@ import {
 import { CreateGameDto } from 'src/dtos/create/create-game.dto';
 import { OrganizationService } from '../organization/organization.service';
 import { GameSessionPublicDto } from 'src/dtos/game/game-session-public.dto';
+import { GameListItemDto } from 'src/dtos/game/game-list-item.dto';
 import crypto from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
 
@@ -22,6 +25,7 @@ import { PrismaService } from '../prisma/prisma.service';
 export class GameService {
   constructor(
     private readonly gameRepository: GameRepository,
+    @Inject(forwardRef(() => OrganizationService))
     private readonly organizationService: OrganizationService,
     private readonly prisma: PrismaService,
   ) {}
@@ -37,7 +41,6 @@ export class GameService {
     return game;
   }
 
-  /** Данные партии для UI (без паролей участников). */
   async getSessionPublicByToken(
     token: string,
     viewerUserId?: number,
@@ -46,13 +49,18 @@ export class GameService {
     if (!game || game.deletedAt) {
       throw new NotFoundException(`Game with token ${token} not found`);
     }
-    if (!(await this.canUserViewGame(game, viewerUserId))) {
+    const canView = await this.canUserViewGame(game, viewerUserId);
+    const access = {
+      canConduct: this.canUserConductGame(game, viewerUserId),
+      canWatchLive: await this.canUserWatchLive(game, viewerUserId),
+      canAnalyze: await this.canUserAnalyze(game, viewerUserId),
+    };
+    if (!canView) {
       throw new ForbiddenException('Нет доступа к этой партии');
     }
     return {
       id: game.id,
       token: game.token,
-      mode: game.mode,
       result: game.result,
       status: game.status,
       visibility: game.visibility,
@@ -68,6 +76,7 @@ export class GameService {
         avatar: u.user.avatar,
         color: u.color,
       })),
+      ...access,
     };
   }
 
@@ -84,19 +93,113 @@ export class GameService {
     if (game.creatorId === viewerUserId) {
       return true;
     }
-    return game.users.some((u) => u.userId === viewerUserId);
+    if (game.users.some((u) => u.userId === viewerUserId)) {
+      return true;
+    }
+    if (game.organizationId != null) {
+      const member = await this.prisma.userOrganization.findUnique({
+        where: {
+          userId_organizationId: {
+            userId: viewerUserId,
+            organizationId: game.organizationId,
+          },
+        },
+      });
+      if (member) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  canUserConductGame(
+    game: Pick<Game, 'creatorId' | 'status'>,
+    userId?: number,
+  ): boolean {
+    if (userId == null || game.creatorId !== userId) {
+      return false;
+    }
+    return (
+      game.status === GameStatus.PENDING ||
+      game.status === GameStatus.IN_PROGRESS
+    );
+  }
+
+  async canUserWatchLive(
+    game: GameWithAccess,
+    viewerUserId?: number,
+  ): Promise<boolean> {
+    const isLive =
+      game.status === GameStatus.PENDING ||
+      game.status === GameStatus.IN_PROGRESS;
+    if (!isLive) {
+      return false;
+    }
+    // Ведущий открывает /game/watch?viewer=false, не «Смотреть»
+    if (viewerUserId != null && game.creatorId === viewerUserId) {
+      return false;
+    }
+    return this.canUserViewGame(game, viewerUserId);
+  }
+
+  async canUserAnalyze(
+    game: GameWithAccess,
+    viewerUserId?: number,
+  ): Promise<boolean> {
+    if (game.status !== GameStatus.FINISHED) {
+      return false;
+    }
+    return this.canUserViewGame(game, viewerUserId);
+  }
+
+  async markInProgressByToken(token: string): Promise<void> {
+    const game = await this.gameRepository.findByToken(token);
+    if (!game || game.deletedAt) {
+      return;
+    }
+    if (game.status === GameStatus.FINISHED) {
+      return;
+    }
+    if (game.status === GameStatus.IN_PROGRESS) {
+      return;
+    }
+    await this.gameRepository.updateStatusByToken(token, GameStatus.IN_PROGRESS);
+  }
+
+  async markFinishedByToken(token: string): Promise<void> {
+    const game = await this.gameRepository.findByToken(token);
+    if (!game || game.deletedAt) {
+      return;
+    }
+    if (game.status === GameStatus.FINISHED) {
+      return;
+    }
+    await this.prisma.game.updateMany({
+      where: { token, deletedAt: null },
+      data: {
+        status: GameStatus.FINISHED,
+        ...(game.result === GameResult.CANCELLED
+          ? { result: GameResult.DRAW }
+          : {}),
+      },
+    });
   }
 
   async getPaginatedByUserId(
     userId: number,
     skip?: number,
     take?: number,
-  ): Promise<Game[]> {
+    viewerUserId?: number,
+  ): Promise<GameListItemDto[]> {
     try {
-      return await this.gameRepository.findManyByUserIdPaginated(
+      const rows = await this.gameRepository.findManyByUserIdPaginated(
         userId,
         skip,
         take,
+      );
+      const viewer = viewerUserId ?? userId;
+      return Promise.all(
+        rows.map((g) => this.toListItemDto(g as GameWithAccess, viewer)),
       );
     } catch {
       throw new NotFoundException(`User with id ${userId} not found`);
@@ -109,24 +212,22 @@ export class GameService {
     cursorId?: number,
     filters?: {
       status?: string;
-      mode?: string;
       organizationId?: number;
       result?: string;
       token?: string;
       from?: string;
       to?: string;
     },
-  ): Promise<{ items: Game[]; nextCursor: number | null }> {
+  ): Promise<{ items: GameListItemDto[]; nextCursor: number | null }> {
     const take = Math.min(Math.max(limit, 1), 50);
     const from = filters?.from ? new Date(filters.from) : undefined;
     const to = filters?.to ? new Date(filters.to) : undefined;
-    const items = await this.gameRepository.findManyByUserIdCursor(
+    const rows = await this.gameRepository.findManyByUserIdCursor(
       userId,
       take + 1,
       cursorId,
       {
         status: filters?.status,
-        mode: filters?.mode,
         organizationId: filters?.organizationId,
         result: filters?.result,
         token: filters?.token,
@@ -134,11 +235,40 @@ export class GameService {
         to: to && !Number.isNaN(to.getTime()) ? to : undefined,
       },
     );
-    const hasMore = items.length > take;
-    const page = hasMore ? items.slice(0, take) : items;
+    const hasMore = rows.length > take;
+    const page = hasMore ? rows.slice(0, take) : rows;
+    const items = await Promise.all(
+      page.map((g) => this.toListItemDto(g as GameWithAccess, userId)),
+    );
     const nextCursor =
       hasMore && page.length > 0 ? page[page.length - 1].id : null;
-    return { items: page, nextCursor };
+    return { items, nextCursor };
+  }
+
+  async toListItemDto(
+    game: GameWithAccess,
+    viewerUserId: number,
+  ): Promise<GameListItemDto> {
+    const [canWatchLive, canAnalyze] = await Promise.all([
+      this.canUserWatchLive(game, viewerUserId),
+      this.canUserAnalyze(game, viewerUserId),
+    ]);
+    return {
+      id: game.id,
+      token: game.token,
+      status: game.status,
+      result: game.result,
+      visibility: game.visibility,
+      organizationId: game.organizationId,
+      creatorId: game.creatorId,
+      createdAt: game.createdAt,
+      organization: game.organization
+        ? { id: game.organization.id, name: game.organization.name }
+        : null,
+      canConduct: this.canUserConductGame(game, viewerUserId),
+      canWatchLive,
+      canAnalyze,
+    };
   }
 
   async createGame(data: CreateGameDto, creatorId: number): Promise<Game> {
@@ -200,7 +330,6 @@ export class GameService {
     const token = crypto.randomUUID();
 
     const createData: Prisma.GameCreateInput = {
-      mode: data.mode,
       token,
       visibility: data.visibility ?? GameVisibility.PRIVATE,
       creator: { connect: { id: creatorId } },
@@ -214,7 +343,7 @@ export class GameService {
 
     try {
       return await this.gameRepository.create(createData);
-    } catch (error) {
+    } catch {
       throw new InternalServerErrorException('Error creating game');
     }
   }

@@ -4,77 +4,83 @@ import { MyGamesList } from '@/components/dashboard/my-games-list';
 import { H2, Text } from '@/components/ui/typography';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
+import { Select } from '@/components/ui/select';
 import { Filter, Plus } from 'lucide-react';
 import Link from 'next/link';
 import { useState } from 'react';
 
+const STATUS_OPTIONS = [
+  { value: '', label: 'Все статусы' },
+  { value: 'PENDING', label: 'Ожидает начала' },
+  { value: 'IN_PROGRESS', label: 'Идёт трансляция' },
+  { value: 'FINISHED', label: 'Завершена' },
+];
+
+const RESULT_OPTIONS = [
+  { value: '', label: 'Любой исход' },
+  { value: 'WHITE_WIN', label: 'Победа белых' },
+  { value: 'BLACK_WIN', label: 'Победа чёрных' },
+  { value: 'DRAW', label: 'Ничья' },
+  { value: 'CANCELLED', label: 'Отменена' },
+  { value: 'WHITE_RESIGN', label: 'Сдались белые' },
+  { value: 'BLACK_RESIGN', label: 'Сдались чёрные' },
+];
+
 export default function DashboardGamesPage() {
   const [status, setStatus] = useState('');
-  const [mode, setMode] = useState('');
   const [result, setResult] = useState('');
   const [token, setToken] = useState('');
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
+
   return (
     <div className="space-y-8">
       <div>
         <H2>Мои игры</H2>
-        <Text className="mt-2 text-muted-foreground">
-          Список с курсорной пагинацией и фильтрами по статусу/режиму.
+        <Text className="mt-2 max-w-3xl text-muted-foreground">
+          Личные и организационные партии. Закрытая — по правилам доступа, публичная — по
+          ссылке. Ожидает / идёт трансляция — смотреть или вести, завершена — только разбор.
         </Text>
       </div>
 
       <Card className="border-border/80 bg-muted/20">
-        <CardContent className="flex flex-col gap-4 pt-6 md:flex-row md:items-center md:justify-between">
-          <div className="flex flex-wrap items-center gap-2">
-            <div className="flex items-center gap-2">
-              <Filter className="size-4 text-muted-foreground" aria-hidden />
-              <select
-                className="h-9 rounded-md border border-input bg-background px-2 text-sm"
-                value={status}
-                onChange={(e) => setStatus(e.target.value)}>
-                <option value="">Все статусы</option>
-                <option value="PENDING">PENDING</option>
-                <option value="IN_PROGRESS">IN_PROGRESS</option>
-                <option value="FINISHED">FINISHED</option>
-              </select>
-              <select
-                className="h-9 rounded-md border border-input bg-background px-2 text-sm"
-                value={mode}
-                onChange={(e) => setMode(e.target.value)}>
-                <option value="">Все режимы</option>
-                <option value="TRAINING">TRAINING</option>
-                <option value="COMPETITIVE">COMPETITIVE</option>
-              </select>
-              <select
-                className="h-9 rounded-md border border-input bg-background px-2 text-sm"
-                value={result}
-                onChange={(e) => setResult(e.target.value)}>
-                <option value="">Любой исход</option>
-                <option value="WHITE_WIN">WHITE_WIN</option>
-                <option value="BLACK_WIN">BLACK_WIN</option>
-                <option value="DRAW">DRAW</option>
-                <option value="CANCELLED">CANCELLED</option>
-              </select>
-              <input
-                className="h-9 rounded-md border border-input bg-background px-2 text-sm"
-                placeholder="Поиск по token"
-                value={token}
-                onChange={(e) => setToken(e.target.value)}
-              />
-              <input
-                className="h-9 rounded-md border border-input bg-background px-2 text-sm"
-                type="date"
-                value={from}
-                onChange={(e) => setFrom(e.target.value)}
-              />
-              <input
-                className="h-9 rounded-md border border-input bg-background px-2 text-sm"
-                type="date"
-                value={to}
-                onChange={(e) => setTo(e.target.value)}
-              />
-            </div>
+        <CardContent className="flex flex-col gap-4 pt-6 md:flex-row md:items-end md:justify-between">
+          <div className="flex flex-wrap items-end gap-2">
+            <Filter className="mb-2 size-4 text-muted-foreground md:mb-0" aria-hidden />
+            <Select
+              value={status}
+              onValueChange={setStatus}
+              options={STATUS_OPTIONS}
+              placeholder="Статус"
+              aria-label="Фильтр по статусу"
+            />
+            <Select
+              value={result}
+              onValueChange={setResult}
+              options={RESULT_OPTIONS}
+              placeholder="Исход"
+              aria-label="Фильтр по исходу"
+            />
+            <input
+              className="h-9 min-w-[8rem] rounded-md border border-input bg-background px-2 text-sm shadow-xs"
+              placeholder="Токен"
+              value={token}
+              onChange={(e) => setToken(e.target.value)}
+            />
+            <input
+              className="h-9 rounded-md border border-input bg-background px-2 text-sm shadow-xs"
+              type="date"
+              value={from}
+              onChange={(e) => setFrom(e.target.value)}
+              aria-label="Дата с"
+            />
+            <input
+              className="h-9 rounded-md border border-input bg-background px-2 text-sm shadow-xs"
+              type="date"
+              value={to}
+              onChange={(e) => setTo(e.target.value)}
+              aria-label="Дата по"
+            />
           </div>
           <Button asChild className="w-full gap-2 md:w-auto">
             <Link href="/create-game" className="inline-flex items-center gap-2">
@@ -87,7 +93,6 @@ export default function DashboardGamesPage() {
 
       <MyGamesList
         status={status || undefined}
-        mode={mode || undefined}
         result={result || undefined}
         token={token || undefined}
         from={from || undefined}

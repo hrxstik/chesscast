@@ -71,7 +71,6 @@ model Organization {
 model Game {
   id Int @id @default(autoincrement())
 
-  mode   GameMode
   result GameResult
   status GameStatus @default(PENDING)
   users  UserGame[]
@@ -153,11 +152,6 @@ enum GameResult {
   STALEMATE
   DRAW
   CANCELLED
-}
-
-enum GameMode {
-  TRAINING
-  COMPETITIVE
 }
 
 enum GameStatus {

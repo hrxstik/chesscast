@@ -24,13 +24,16 @@ export type LoginResponse = {
 export type GameListItem = {
   id: number;
   token: string;
-  mode: string;
   status: string;
   result: string;
   visibility: string;
   organizationId: number | null;
+  creatorId: number | null;
   createdAt: string;
   organization?: { id: number; name: string } | null;
+  canConduct: boolean;
+  canWatchLive: boolean;
+  canAnalyze: boolean;
 };
 
 export type GamesCursorResponse = {

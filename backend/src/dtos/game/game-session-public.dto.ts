@@ -1,4 +1,4 @@
-import { Color, GameMode, GameResult, GameStatus, GameVisibility } from '@prisma/client';
+import { Color, GameResult, GameStatus, GameVisibility } from '@prisma/client';
 
 export type GameSessionPlayerPublicDto = {
   userId: number;
@@ -10,7 +10,6 @@ export type GameSessionPlayerPublicDto = {
 export type GameSessionPublicDto = {
   id: number;
   token: string;
-  mode: GameMode;
   result: GameResult;
   status: GameStatus;
   visibility: GameVisibility;
@@ -19,4 +18,7 @@ export type GameSessionPublicDto = {
   createdAt: Date;
   organization: { id: number; name: string } | null;
   players: GameSessionPlayerPublicDto[];
+  canConduct: boolean;
+  canWatchLive: boolean;
+  canAnalyze: boolean;
 };

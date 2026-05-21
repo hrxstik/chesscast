@@ -40,14 +40,18 @@ export class UserService {
       throw new NotFoundException(`User with id ${id} not found`);
     }
     const updated = await this.userRepository.updateById(id, updateData);
-    await this.elastic.indexUser({
-      id: updated.id,
-      name: updated.name,
-      email: updated.email,
-      blocked: updated.blocked,
-      blockedReason: updated.blockedReason,
-      platformRole: updated.platformRole,
-    });
+    const onlyAvatar =
+      Object.keys(updateData).length === 1 && 'avatar' in updateData;
+    if (!onlyAvatar) {
+      this.elastic.scheduleIndexUser({
+        id: updated.id,
+        name: updated.name,
+        email: updated.email,
+        blocked: updated.blocked,
+        blockedReason: updated.blockedReason,
+        platformRole: updated.platformRole,
+      });
+    }
     return updated;
   }
 
@@ -70,7 +74,6 @@ export class UserService {
       recentGames: user.userGames.map((x) => ({
         id: x.game.id,
         token: x.game.token,
-        mode: x.game.mode,
         status: x.game.status,
         result: x.game.result,
         createdAt: x.game.createdAt,

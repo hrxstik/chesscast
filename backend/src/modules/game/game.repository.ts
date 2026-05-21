@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { Game, GameMode, GameResult, GameStatus, Prisma } from '@prisma/client';
+import { Game, GameResult, GameStatus, Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 
 const gameWithAccessInclude = {
@@ -40,28 +40,10 @@ export class GameRepository {
     });
   }
 
-  /** Публичная сессия без паролей и лишних полей пользователя */
-  async findSessionPublicByToken(token: string) {
-    return this.prisma.game.findFirst({
+  async updateStatusByToken(token: string, status: GameStatus): Promise<void> {
+    await this.prisma.game.updateMany({
       where: { token, deletedAt: null },
-      select: {
-        id: true,
-        token: true,
-        mode: true,
-        result: true,
-        status: true,
-        visibility: true,
-        initialPosition: true,
-        moves: true,
-        createdAt: true,
-        organization: { select: { id: true, name: true } },
-        users: {
-          select: {
-            color: true,
-            user: { select: { id: true, name: true, avatar: true } },
-          },
-        },
-      },
+      data: { status },
     });
   }
 
@@ -98,7 +80,6 @@ export class GameRepository {
     cursorId?: number,
     filters?: {
       status?: string;
-      mode?: string;
       organizationId?: number;
       result?: string;
       token?: string;
@@ -113,9 +94,6 @@ export class GameRepository {
     };
     if (filters?.status && Object.values(GameStatus).includes(filters.status as GameStatus)) {
       where.status = filters.status as GameStatus;
-    }
-    if (filters?.mode && Object.values(GameMode).includes(filters.mode as GameMode)) {
-      where.mode = filters.mode as GameMode;
     }
     if (filters?.organizationId != null) {
       where.organizationId = filters.organizationId;
