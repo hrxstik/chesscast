@@ -7,14 +7,26 @@ import {
 } from 'lucide-react';
 import type { NavItem } from '@/components/layout/app-shell';
 
+/** Нормализованный путь без завершающего слэша */
+function normPath(pathname: string): string {
+  if (!pathname || pathname === '/') return '/';
+  return pathname.replace(/\/$/, '');
+}
+
 export function isDashboardNavActive(pathname: string, href: string): boolean {
-  if (pathname === href || pathname.startsWith(`${href}/`)) {
-    return true;
+  const path = normPath(pathname);
+
+  // Страницы организации — в дашборде активен только пункт «Организации»
+  if (path.startsWith('/organization')) {
+    return href === '/dashboard/organizations';
   }
-  if (href === '/dashboard/organizations' && pathname.startsWith('/organization')) {
-    return true;
+
+  // «Обзор» (/dashboard) — только точное совпадение, не /dashboard/games и т.д.
+  if (href === '/dashboard') {
+    return path === '/dashboard';
   }
-  return false;
+
+  return path === href || path.startsWith(`${href}/`);
 }
 
 export function getDashboardNavItems(role: 'USER' | 'SUPERADMIN'): NavItem[] {
