@@ -38,9 +38,6 @@ export default function DashboardPage() {
           <span>Организации: {summary?.organizationsCount ?? "—"}</span>
           <span>Подписка: {summary?.subscription?.plan.title ?? "нет"}</span>
         </div>
-        {error ? (
-          <Text className="mt-2 text-sm text-destructive">{error}</Text>
-        ) : null}
       </div>
 
       <div className="grid gap-4 md:grid-cols-2 laptop:grid-cols-3">

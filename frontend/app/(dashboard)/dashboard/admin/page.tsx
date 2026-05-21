@@ -1,24 +1,14 @@
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { H2, Lead, Text } from '@/components/ui/typography';
-import { Shield, Building2, Users, Wallet, Ban } from 'lucide-react';
-import { AdminBillingPanel } from '@/components/dashboard/admin-billing-panel';
-import { AdminPlansPanel } from '@/components/dashboard/admin-plans-panel';
-import { AdminManagementPanel } from '@/components/dashboard/admin-management-panel';
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { H2, Lead, Text } from "@/components/ui/typography";
+import { Shield, Building2, Users, Wallet, Ban } from "lucide-react";
+import { AdminBillingPanel } from "@/components/dashboard/admin-billing-panel";
+import { AdminPlansPanel } from "@/components/dashboard/admin-plans-panel";
+import { AdminManagementPanel } from "@/components/dashboard/admin-management-panel";
 
 export default function SuperAdminDashboardPage() {
   return (
     <div className="space-y-8">
-      <div className="rounded-2xl border border-primary/20 bg-gradient-to-br from-primary/5 via-background to-muted/30 p-6 md:p-8">
-        <div className="flex items-center gap-2 text-primary">
-          <Shield className="size-6" aria-hidden />
-          <span className="text-sm font-semibold uppercase tracking-wide">Супер-админ</span>
-        </div>
-        <H2 className="mt-3">Панель администрирования</H2>
-        <Lead className="mt-2 max-w-3xl">
-          Доступ по <code className="rounded bg-muted px-1.5 py-0.5 text-sm">platformRole = SUPERADMIN</code>.
-          API для блокировок и бухгалтерии защищаем отдельно на бэкенде.
-        </Lead>
-      </div>
+      <H2 className="mt-3">Панель администрирования</H2>
 
       <div className="grid gap-4 md:grid-cols-2 laptop:grid-cols-3">
         <Card className="border-border/80">
@@ -75,7 +65,8 @@ export default function SuperAdminDashboardPage() {
         </CardHeader>
         <CardContent className="space-y-4">
           <Text className="text-muted-foreground">
-            Управление планами через БД: создание, активация/деактивация, изменение лимитов.
+            Управление планами через БД: создание, активация/деактивация,
+            изменение лимитов.
           </Text>
           <AdminPlansPanel />
         </CardContent>

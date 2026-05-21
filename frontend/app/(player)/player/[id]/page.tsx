@@ -13,6 +13,7 @@ import {
   getPublicUserProfile,
   type PublicUserProfileResponse,
 } from "@/lib/api/user";
+import { resolveAvatarSrc } from "@/lib/avatar-url";
 import { ApiError } from "@/lib/api/types";
 import {
   labelGameScope,
@@ -31,6 +32,7 @@ export default function PlayerPage() {
   const [error, setError] = React.useState<string | null>(null);
 
   const isOwner = user?.id.toString() === userIdFromUrl;
+  const avatarSrc = resolveAvatarSrc(profile?.avatar);
 
   React.useEffect(() => {
     (async () => {
@@ -60,13 +62,6 @@ export default function PlayerPage() {
               ? profile.name
               : `Профиль игрока ${userIdFromUrl}`}
         </H1>
-        <Text className="mt-2 max-w-2xl text-muted-foreground">
-          Публичная карточка игрока: организации и партии, доступные вам по
-          правилам видимости.
-        </Text>
-        {error ? (
-          <Text className="mt-2 text-sm text-destructive">{error}</Text>
-        ) : null}
       </div>
 
       <div className="grid gap-6 lg:grid-cols-3">
@@ -78,7 +73,20 @@ export default function PlayerPage() {
             </CardTitle>
           </CardHeader>
           <CardContent className="flex flex-col items-center gap-4 text-center">
-            <div className="size-24 rounded-full border-2 border-dashed border-border bg-muted/40" />
+            <div className="size-24 overflow-hidden rounded-full border-2 border-border bg-muted/40">
+              {avatarSrc ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={avatarSrc}
+                  alt={profile?.name ?? "Аватар игрока"}
+                  className="size-full object-cover"
+                />
+              ) : (
+                <div className="flex size-full items-center justify-center text-muted-foreground">
+                  <User className="size-10 opacity-40" aria-hidden />
+                </div>
+              )}
+            </div>
             <div className="w-full space-y-2">
               <Text className="text-sm font-medium">
                 {profile?.name ?? "—"}
