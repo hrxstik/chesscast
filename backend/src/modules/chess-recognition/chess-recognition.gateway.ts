@@ -56,8 +56,50 @@ export class ChessRecognitionGateway
   }
 
   private async resolveSocketUserId(client: Socket): Promise<number | null> {
+    const auth = client.handshake.auth as
+      | { ticket?: string; accessToken?: string }
+      | undefined;
+
+    if (auth?.ticket) {
+      try {
+        const payload = await this.jwtService.verifyAsync<{
+          sub: number;
+          typ?: string;
+        }>(auth.ticket);
+        if (payload.typ === 'ws' && typeof payload.sub === 'number') {
+          return payload.sub;
+        }
+      } catch {
+        /* fall through */
+      }
+    }
+
+    const bearer = client.handshake.headers.authorization;
+    if (typeof bearer === 'string' && bearer.startsWith('Bearer ')) {
+      try {
+        const token = bearer.slice(7).trim();
+        const payload = await this.jwtService.verifyAsync<{ sub: number }>(token);
+        if (typeof payload.sub === 'number') return payload.sub;
+      } catch {
+        /* fall through */
+      }
+    }
+
+    if (auth?.accessToken) {
+      try {
+        const payload = await this.jwtService.verifyAsync<{ sub: number }>(
+          auth.accessToken,
+        );
+        if (typeof payload.sub === 'number') return payload.sub;
+      } catch {
+        /* fall through */
+      }
+    }
+
     try {
-      const raw = client.handshake.headers.cookie;
+      const raw =
+        client.handshake.headers.cookie ??
+        (client.request as { headers?: { cookie?: string } })?.headers?.cookie;
       if (!raw) return null;
       const cookies = Object.fromEntries(
         raw.split(';').map((part) => {
@@ -80,7 +122,22 @@ export class ChessRecognitionGateway
   ): void {
     const san = result.move_san?.trim();
     if (!san) return;
-    void this.gameService.appendSanMoveByToken(token, san);
+    void this.gameService.appendSanMoveByToken(token, san).then((outcome) => {
+      if (outcome?.autoFinished && outcome.result) {
+        this.broadcastGameFinished(token, outcome.result);
+        this.logger.log(
+          `🏁 Auto-finished game ${token} after mate (${outcome.result})`,
+        );
+      }
+    });
+  }
+
+  /** Завершение партии: уведомить комнату, остановить CV и WebRTC. */
+  broadcastGameFinished(token: string, result?: string): void {
+    this.chessRecognitionService.stopStreamProcessing(token);
+    void this.mediasoupService.closeRoom(token).catch(() => undefined);
+    const roomId = `stream:${token}`;
+    this.server.to(roomId).emit('game-finished', { token, result });
   }
 
   handleConnection(client: Socket) {
@@ -925,7 +982,6 @@ export class ChessRecognitionGateway
 
     if (token) {
       this.chessRecognitionService.stopStreamProcessing(token);
-      void this.gameService.markFinishedByToken(token);
     }
 
     // Убираем клиента из стримеров

@@ -111,8 +111,7 @@ export function useChessStreamMediasoup(
 
       sendTransport.on('connectionstatechange', (state) => {
         if (state === 'failed' || state === 'disconnected') {
-          notifyError(`Отправка видео: ${state}. Переподключение…`);
-          socket.emit('start-stream', { token: gameToken });
+          notifyError(`Отправка видео: ${state}. Проверьте соединение.`);
         }
       });
 

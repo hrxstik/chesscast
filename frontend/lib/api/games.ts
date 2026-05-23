@@ -1,4 +1,5 @@
 import { apiFetch } from './client';
+import type { GameSessionPublic } from './game-session';
 import type { GamesCursorResponse } from './types';
 
 export type CreateGameBody = {
@@ -15,11 +16,34 @@ export type CreatedGameDto = {
   status: string;
 };
 
+export type FinishGameResult =
+  | 'WHITE_WIN'
+  | 'BLACK_WIN'
+  | 'DRAW'
+  | 'STALEMATE'
+  | 'WHITE_RESIGN'
+  | 'BLACK_RESIGN'
+  | 'WHITE_TIME_OUT'
+  | 'BLACK_TIME_OUT';
+
 export async function createGame(body: CreateGameBody): Promise<CreatedGameDto> {
   return apiFetch<CreatedGameDto>('/game', {
     method: 'POST',
     body,
   });
+}
+
+export async function finishGame(
+  token: string,
+  result: FinishGameResult,
+): Promise<GameSessionPublic> {
+  return apiFetch<GameSessionPublic>(
+    `/game/session/${encodeURIComponent(token)}/finish`,
+    {
+      method: 'POST',
+      body: { result },
+    },
+  );
 }
 
 export async function fetchMyGamesPage(params: {

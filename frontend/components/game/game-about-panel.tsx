@@ -2,15 +2,7 @@
 
 import type { ReactNode } from 'react';
 import Link from 'next/link';
-import {
-  Building2,
-  Calendar,
-  Crown,
-  Hash,
-  Minus,
-  Swords,
-  Users,
-} from 'lucide-react';
+import { Building2, Calendar, Hash, Swords, Users } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Text } from '@/components/ui/typography';
 import { resolveAvatarSrc } from '@/lib/avatar-url';
@@ -22,11 +14,8 @@ import {
   labelStatus,
   labelVisibility,
 } from '@/lib/game-labels';
-import {
-  getSideOutcome,
-  outcomeBadgeText,
-  type SideOutcome,
-} from '@/lib/game-result-ui';
+import { getSideOutcome } from '@/lib/game-result-ui';
+import { OutcomeSidebarBadge } from '@/lib/game/outcome-ui';
 import { cn } from '@/lib/utils';
 
 type Props = {
@@ -34,39 +23,6 @@ type Props = {
   statusText: string;
   token: string;
 };
-
-function OutcomeBadge({ outcome }: { outcome: SideOutcome }) {
-  const text = outcomeBadgeText(outcome);
-  if (!text) return null;
-  if (outcome === 'win') {
-    return (
-      <span
-        className="inline-flex size-7 shrink-0 items-center justify-center rounded-full bg-amber-500/15 text-amber-600 dark:text-amber-400"
-        title="Победа"
-      >
-        <Crown className="size-3.5" aria-hidden />
-      </span>
-    );
-  }
-  if (outcome === 'draw') {
-    return (
-      <span
-        className="inline-flex min-w-7 items-center justify-center rounded-full bg-muted px-1.5 text-xs font-bold tabular-nums"
-        title="Ничья"
-      >
-        ½
-      </span>
-    );
-  }
-  return (
-    <span
-      className="inline-flex size-7 shrink-0 items-center justify-center rounded-full bg-muted/80 text-muted-foreground"
-      title="Поражение"
-    >
-      <Minus className="size-3.5" aria-hidden />
-    </span>
-  );
-}
 
 function PlayerCard({
   player,
@@ -119,7 +75,7 @@ function PlayerCard({
           {labelPieceColor(player.color)}
         </p>
       </div>
-      <OutcomeBadge outcome={outcome} />
+      <OutcomeSidebarBadge outcome={outcome} />
     </Link>
   );
 }

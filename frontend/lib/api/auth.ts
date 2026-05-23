@@ -40,4 +40,10 @@ export async function logoutRequest(): Promise<void> {
   await apiFetch('/auth/logout', { method: 'POST' });
 }
 
+/** Тикет для Socket.IO (обход проблем с cookie в WS handshake). */
+export async function fetchWsTicket(): Promise<string> {
+  const res = await apiFetch<{ ticket: string }>('/auth/ws-ticket');
+  return res.ticket;
+}
+
 export type { AuthUserDto };

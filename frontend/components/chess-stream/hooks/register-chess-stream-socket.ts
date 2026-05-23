@@ -21,6 +21,7 @@ export type ChessStreamSocketRegisterContext = {
   setMoves: Dispatch<SetStateAction<{ san: string }[]>>;
   setMappingData: Dispatch<SetStateAction<Record<string, unknown> | null>>;
   setPositionFromFen: (fen: string) => void;
+  onGameFinished?: () => void;
   captureAndSendFrame: () => void;
   initMediasoupDevice: (
     rtp: mediasoupClient.types.RtpCapabilities,
@@ -48,6 +49,7 @@ export function registerChessStreamSocketHandlers(
     setMoves,
     setMappingData,
     setPositionFromFen,
+    onGameFinished,
     captureAndSendFrame,
     initMediasoupDevice,
     createProducer,
@@ -66,7 +68,6 @@ export function registerChessStreamSocketHandlers(
     boardStateHistoryRef,
     boardStateStableCountRef,
     viewerRef,
-    gameStartedRef,
   } = refs;
 
   newSocket.on('video-frame', (data: { token: string; frame: string }) => {
@@ -122,6 +123,9 @@ export function registerChessStreamSocketHandlers(
   newSocket.on('stream-started', () => {
     setIsStreaming(true);
     if (!viewer) {
+      setCalibrationCompleted(false);
+      setCalibrationInProgress(false);
+      setCalibrationMessage('Ожидание калибровки доски…');
       const startSendingFrames = () => {
         if (
           videoRef.current &&
@@ -242,6 +246,16 @@ export function registerChessStreamSocketHandlers(
     setGameStarted(true);
   });
 
+  newSocket.on('game-finished', () => {
+    setGameStarted(false);
+    setIsStreaming(false);
+    if (frameIntervalRef.current) {
+      clearInterval(frameIntervalRef.current);
+      frameIntervalRef.current = null;
+    }
+    onGameFinished?.();
+  });
+
   newSocket.on('calibration-completed', (data: { message: string; mappingData?: unknown }) => {
     setCalibrationInProgress(false);
     setCalibrationCompleted(true);
@@ -253,36 +267,32 @@ export function registerChessStreamSocketHandlers(
 
   newSocket.on('frame-processed', (data: Record<string, unknown>) => {
     if (data.board_state && Array.isArray(data.board_state)) {
-      if (viewerRef.current || gameStartedRef.current) {
-        try {
-          const fen = boardStateToFen(data.board_state as number[][]);
-          const history = boardStateHistoryRef.current;
-          history.push(fen);
-          if (history.length > 8) {
-            history.shift();
-          }
-          const lastN = history.slice(-STABLE_THRESHOLD);
-          const isStable = lastN.length === STABLE_THRESHOLD && lastN.every((f) => f === fen);
-          if (isStable) {
-            boardStateStableCountRef.current = STABLE_THRESHOLD;
-            try {
-              setPositionFromFen(fen);
-            } catch {
-              /* ignore FEN */
-            }
-          } else {
-            boardStateStableCountRef.current = 0;
-          }
-        } catch {
-          /* ignore */
+      try {
+        const fen = boardStateToFen(data.board_state as number[][]);
+        const history = boardStateHistoryRef.current;
+        history.push(fen);
+        if (history.length > 8) {
+          history.shift();
         }
+        const lastN = history.slice(-STABLE_THRESHOLD);
+        const isStable =
+          lastN.length === STABLE_THRESHOLD && lastN.every((f) => f === fen);
+        if (isStable) {
+          boardStateStableCountRef.current = STABLE_THRESHOLD;
+          try {
+            setPositionFromFen(fen);
+          } catch {
+            /* ignore FEN */
+          }
+        } else {
+          boardStateStableCountRef.current = 0;
+        }
+      } catch {
+        /* ignore */
       }
     }
 
     if (data.move_san) {
-      if (!viewerRef.current && !gameStartedRef.current) {
-        return;
-      }
       const san = String(data.move_san);
       setMoves((prev) => {
         const lastMove = prev[prev.length - 1];
@@ -297,7 +307,14 @@ export function registerChessStreamSocketHandlers(
   });
 
   newSocket.on('error', (error: { message: string }) => {
-    notifyError(error.message);
+    const msg = error.message ?? '';
+    if (
+      msg === 'Требуется авторизация для трансляции' &&
+      (streamRef.current || frameIntervalRef.current)
+    ) {
+      return;
+    }
+    notifyError(msg);
   });
 
   newSocket.on('disconnect', (reason) => {
@@ -314,7 +331,14 @@ export function registerChessStreamSocketHandlers(
     }
   });
 
-  newSocket.on('reconnect', () => {
+  newSocket.on('reconnect', async () => {
+    const { resolveChessStreamSocketAuth } = await import(
+      '@/lib/chess-stream/ws-socket-auth'
+    );
+    const auth = await resolveChessStreamSocketAuth();
+    if (auth.ticket) {
+      newSocket.auth = auth;
+    }
     if (viewerRef.current) {
       newSocket.emit('join-stream', { token: gameToken });
       newSocket.emit('get-router-rtp-capabilities', { token: gameToken });

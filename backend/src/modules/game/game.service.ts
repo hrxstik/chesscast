@@ -195,14 +195,50 @@ export class GameService {
   }
 
   /** Запись подтверждённого хода в SAN (только пока партия IN_PROGRESS). */
-  async appendSanMoveByToken(token: string, san: string): Promise<void> {
+  async appendSanMoveByToken(
+    token: string,
+    san: string,
+  ): Promise<{ autoFinished: true; result: GameResult } | void> {
     const normalized = san?.trim();
     if (!normalized) return;
     const game = await this.gameRepository.findByToken(token);
-    if (!game || game.deletedAt || game.status !== GameStatus.IN_PROGRESS) {
+    if (!game || game.deletedAt || game.status === GameStatus.FINISHED) {
       return;
     }
-    await this.gameRepository.appendSanMoveByToken(token, normalized);
+    if (game.status === GameStatus.PENDING) {
+      await this.markInProgressByToken(token);
+    } else if (game.status !== GameStatus.IN_PROGRESS) {
+      return;
+    }
+    const added = await this.gameRepository.appendSanMoveByToken(
+      token,
+      normalized,
+    );
+    if (!added) return;
+    return this.tryAutoFinishOnCheckmate(token, normalized);
+  }
+
+  /** Мат в SAN (#) — завершаем партию с исходом автоматически. */
+  private async tryAutoFinishOnCheckmate(
+    token: string,
+    san: string,
+  ): Promise<{ autoFinished: true; result: GameResult } | void> {
+    if (!san.endsWith('#')) return;
+    const game = await this.gameRepository.findByToken(token);
+    if (!game || game.deletedAt || game.status === GameStatus.FINISHED) {
+      return;
+    }
+    const moveCount = game.moves.length;
+    const whiteWins = moveCount % 2 === 1;
+    const result = whiteWins ? GameResult.WHITE_WIN : GameResult.BLACK_WIN;
+    await this.prisma.game.update({
+      where: { id: game.id },
+      data: {
+        status: GameStatus.FINISHED,
+        result,
+      },
+    });
+    return { autoFinished: true, result };
   }
 
   async markInProgressByToken(token: string): Promise<void> {
@@ -242,6 +278,32 @@ export class GameService {
           : {}),
       },
     });
+  }
+
+  /** Завершение партии создателем с указанием исхода. */
+  async finishGameByToken(
+    token: string,
+    userId: number,
+    result: GameResult,
+  ): Promise<GameSessionPublicDto> {
+    const game = await this.gameRepository.findByToken(token);
+    if (!game || game.deletedAt) {
+      throw new NotFoundException(`Game with token ${token} not found`);
+    }
+    if (game.creatorId !== userId) {
+      throw new ForbiddenException('Завершить партию может только создатель');
+    }
+    if (game.status === GameStatus.FINISHED) {
+      return this.getSessionPublicByToken(token, userId);
+    }
+    await this.prisma.game.update({
+      where: { id: game.id },
+      data: {
+        status: GameStatus.FINISHED,
+        result,
+      },
+    });
+    return this.getSessionPublicByToken(token, userId);
   }
 
   async getPaginatedByUserId(

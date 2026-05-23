@@ -10,24 +10,33 @@ import {
   UseGuards,
   Req,
   ForbiddenException,
+  Inject,
+  forwardRef,
 } from '@nestjs/common';
 import { Game } from '@prisma/client';
 import { GameService } from './game.service';
 import type { GameWithAccess } from './game.repository';
 import { CreateGameDto } from 'src/dtos/create/create-game.dto';
+import { FinishGameDto } from 'src/dtos/game/finish-game.dto';
+import { GameSessionPublicDto } from 'src/dtos/game/game-session-public.dto';
 import { JwtAuthGuard } from 'src/guards/jwt-auth.guard';
 import {
   OptionalJwtAuthGuard,
   type AuthRequestUser,
 } from 'src/guards/optional-jwt-auth.guard';
 import { Request } from 'express';
+import { ChessRecognitionGateway } from '../chess-recognition/chess-recognition.gateway';
 
 /** После JwtAuthGuard — id из payload.sub. */
 type RequestUser = { id: number; email?: string };
 
 @Controller('game')
 export class GameController {
-  constructor(private readonly gameService: GameService) {}
+  constructor(
+    private readonly gameService: GameService,
+    @Inject(forwardRef(() => ChessRecognitionGateway))
+    private readonly chessStreamGateway: ChessRecognitionGateway,
+  ) {}
 
   /** Must be before :token — otherwise "user" is parsed as token. */
   @UseGuards(JwtAuthGuard)
@@ -88,6 +97,22 @@ export class GameController {
   }
 
   /** Публичное представление партии (игроки без чувствительных полей). До динамического :token. */
+  @UseGuards(JwtAuthGuard)
+  @Post('session/:token/finish')
+  async finishGame(
+    @Param('token') token: string,
+    @Body() body: FinishGameDto,
+    @Req() req: Request & { user: RequestUser },
+  ): Promise<GameSessionPublicDto> {
+    const session = await this.gameService.finishGameByToken(
+      token,
+      req.user.id,
+      body.result,
+    );
+    this.chessStreamGateway.broadcastGameFinished(token, body.result);
+    return session;
+  }
+
   @UseGuards(OptionalJwtAuthGuard)
   @Get('session/:token')
   async getGameSessionPublic(

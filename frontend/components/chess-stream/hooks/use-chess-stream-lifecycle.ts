@@ -12,7 +12,7 @@ export function useChessStreamLifecycle(params: {
   isStreaming: boolean;
   hasVideoStreamRef: RefObject<boolean>;
   setHasVideoStream: (v: boolean) => void;
-  connectWebSocket: () => void;
+  connectWebSocket: () => void | Promise<void>;
 }) {
   const {
     viewer,
@@ -77,7 +77,7 @@ export function useChessStreamLifecycle(params: {
 
   useEffect(() => {
     if (viewer && !socket && !isStreaming) {
-      connectWebSocket();
+      void connectWebSocket();
     }
   }, [viewer, socket, isStreaming, connectWebSocket]);
 

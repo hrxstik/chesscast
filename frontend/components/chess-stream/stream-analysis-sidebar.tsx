@@ -2,7 +2,7 @@
 
 import { MovesList } from "@/components/shared";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Text } from "@/components/ui/typography";
+import { EngineAnalysisLines } from "@/components/game/engine-analysis-lines";
 import type { EnginePvRow } from "@/lib/hooks/useEngine";
 
 import type { MoveItem } from "@/components/shared/moves-list";
@@ -38,28 +38,7 @@ export function StreamAnalysisSidebar({ moves, bestLine, pvRows }: Props) {
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-3 px-4 pb-4">
-          <div className="space-y-2">
-            {pvRows.length > 0 ? (
-              pvRows.map((row) => (
-                <div
-                  key={row.rank}
-                  className="rounded-md border border-border/60 bg-muted/20 p-2"
-                >
-                  <Text className="text-xs text-muted-foreground">
-                    Линия {row.rank}
-                  </Text>
-                  <Text className="mt-0.5 truncate font-mono text-[10px]! leading-tight sm:text-[12px]!">
-                    <span className="text-foreground">{row.scoreLabel}</span>
-                    {row.pv ? ` ${row.pv}` : ""}
-                  </Text>
-                </div>
-              ))
-            ) : (
-              <Text className="truncate font-mono text-[10px] leading-tight text-muted-foreground sm:text-[12px]">
-                {bestLine || "—"}
-              </Text>
-            )}
-          </div>
+          <EngineAnalysisLines pvRows={pvRows} bestLine={bestLine} />
         </CardContent>
       </Card>
     </>

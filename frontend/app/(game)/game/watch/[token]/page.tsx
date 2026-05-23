@@ -7,7 +7,6 @@ import { H1, Text } from '@/components/ui/typography';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { fetchGameSessionPublic } from '@/lib/api/game-session';
-import { labelStatus } from '@/lib/game-labels';
 
 type StreamMode = 'conduct' | 'viewer';
 
@@ -19,9 +18,9 @@ type Props = {
 
 export default function WatchGamePage({ params }: Props) {
   const resolvedParams = React.use(params);
-  const [sessionStatus, setSessionStatus] = React.useState<string | null>(null);
   const [mode, setMode] = React.useState<StreamMode | null>(null);
   const [forbidden, setForbidden] = React.useState(false);
+  const [gameFinished, setGameFinished] = React.useState(false);
 
   React.useEffect(() => {
     let mounted = true;
@@ -33,7 +32,13 @@ export default function WatchGamePage({ params }: Props) {
         setMode(null);
         return;
       }
-      setSessionStatus(res.data.status);
+      if (res.data.status === 'FINISHED') {
+        setGameFinished(true);
+        setMode(null);
+        setForbidden(false);
+        return;
+      }
+      setGameFinished(false);
       if (res.data.canConduct) {
         setMode('conduct');
         setForbidden(false);
@@ -50,13 +55,13 @@ export default function WatchGamePage({ params }: Props) {
     };
   }, [resolvedParams.token]);
 
-  if (mode === null && !forbidden) {
+  if (mode === null && !forbidden && !gameFinished) {
     return (
       <Text className="text-muted-foreground">Проверка доступа…</Text>
     );
   }
 
-  if (forbidden || mode === null) {
+  if (!gameFinished && (forbidden || mode === null)) {
     return (
       <div className="space-y-4 rounded-xl border border-border bg-muted/20 p-6">
         <H1 className="!text-xl">Нет доступа</H1>
@@ -71,7 +76,7 @@ export default function WatchGamePage({ params }: Props) {
     );
   }
 
-  if (sessionStatus === 'FINISHED') {
+  if (gameFinished) {
     return (
       <div className="space-y-4 rounded-xl border border-border bg-muted/20 p-6">
         <H1 className="!text-xl">Партия завершена</H1>
@@ -90,15 +95,9 @@ export default function WatchGamePage({ params }: Props) {
   return (
     <div className="space-y-4 md:space-y-5">
       <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <H1 className="!text-xl md:!text-2xl">
-            {isViewer ? 'Просмотр трансляции' : 'Ведение трансляции'}
-          </H1>
-          <Text className="!mt-1 !mb-0 font-mono text-xs text-muted-foreground">
-            token: {resolvedParams.token.slice(0, 16)}…
-            {sessionStatus ? ` · ${labelStatus(sessionStatus)}` : ''}
-          </Text>
-        </div>
+        <H1 className="!text-xl md:!text-2xl">
+          {isViewer ? 'Просмотр трансляции' : 'Ведение трансляции'}
+        </H1>
         <Badge variant={isViewer ? 'secondary' : 'default'}>
           {isViewer ? 'Зритель' : 'Ведущий'}
         </Badge>

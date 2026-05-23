@@ -42,9 +42,15 @@ export function SquareChessboard({ options, className, maxBoardPx = 560 }: Props
       className={cn('mx-auto aspect-square w-full max-w-[min(100%,560px)]', className)}
       style={{ maxWidth: maxBoardPx }}>
       <div
-        className="flex items-center justify-center overflow-hidden rounded-lg"
+        className="flex items-center justify-center overflow-visible rounded-lg"
         style={{ width: boardWidth, height: boardWidth, maxWidth: '100%' }}>
-        <Chessboard options={options} />
+        <Chessboard
+          options={{
+            animationDurationInMs: 120,
+            showAnimations: true,
+            ...options,
+          }}
+        />
       </div>
     </div>
   );

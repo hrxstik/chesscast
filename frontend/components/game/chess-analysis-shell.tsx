@@ -47,10 +47,10 @@ export function ChessAnalysisShell({
         </aside>
 
         <section className="order-1 flex flex-col items-center gap-3 lg:order-2 lg:col-span-5">
-          <div className="w-full text-center text-sm font-medium">
-            {whiteLabel}
-          </div>
-          <div className="w-full max-w-[min(100%,560px)]">{board}</div>
+          {whiteLabel ? (
+            <div className="w-full text-center text-sm font-medium">{whiteLabel}</div>
+          ) : null}
+          <div className="w-full max-w-[min(100%,560px)] overflow-visible">{board}</div>
           <Card className="w-full max-w-[min(100%,560px)] border-border/80">
             <CardHeader className="py-3">
               <CardTitle className="text-sm font-semibold md:text-base">
@@ -59,9 +59,9 @@ export function ChessAnalysisShell({
             </CardHeader>
             <CardContent className="px-4 pb-4">{controlsPanel}</CardContent>
           </Card>
-          <div className="w-full text-center text-sm font-medium">
-            {blackLabel}
-          </div>
+          {blackLabel ? (
+            <div className="w-full text-center text-sm font-medium">{blackLabel}</div>
+          ) : null}
         </section>
 
         <aside className="order-2 flex flex-col gap-3 lg:order-3 lg:col-span-4">
@@ -81,7 +81,7 @@ export function ChessAnalysisShell({
                 Анализ
               </CardTitle>
             </CardHeader>
-            <CardContent className="min-h-[200px] space-y-2 px-4 pb-4">
+            <CardContent className="space-y-3 px-4 pb-4">
               {analysisPanel}
             </CardContent>
           </Card>

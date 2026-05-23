@@ -8,6 +8,7 @@ import { useChessStreamMediasoup } from './use-chess-stream-mediasoup';
 import { useChessStreamCamera } from './use-chess-stream-camera';
 import { useChessStreamFrameCapture } from './use-chess-stream-frame-capture';
 import { registerChessStreamSocketHandlers } from './register-chess-stream-socket';
+import { resolveChessStreamSocketAuth } from '@/lib/chess-stream/ws-socket-auth';
 import { useChessStreamLifecycle } from './use-chess-stream-lifecycle';
 import type { ChessStreamStreamerControlsProps } from '@/components/chess-stream/chess-stream-streamer-controls';
 
@@ -16,6 +17,7 @@ export type UseChessStreamWebRtcParams = {
   modelPath?: string;
   viewer?: boolean;
   setPositionFromFen: (fen: string) => void;
+  onGameFinished?: () => void;
 };
 
 export function useChessStreamWebRtc({
@@ -23,6 +25,7 @@ export function useChessStreamWebRtc({
   modelPath,
   viewer = false,
   setPositionFromFen,
+  onGameFinished,
 }: UseChessStreamWebRtcParams) {
   const refs = useChessStreamRefs();
   const {
@@ -73,8 +76,9 @@ export function useChessStreamWebRtc({
 
   const { captureAndSendFrame } = useChessStreamFrameCapture(gameToken, refs, socket);
 
-  const connectWebSocket = useCallback(() => {
+  const connectWebSocket = useCallback(async () => {
     const wsUrl = getWsUrl();
+    const auth = await resolveChessStreamSocketAuth();
     const newSocket = io(`${wsUrl}/chess-stream`, {
       transports: ['websocket'],
       reconnection: true,
@@ -83,6 +87,7 @@ export function useChessStreamWebRtc({
       reconnectionAttempts: Infinity,
       secure: wsUrl.startsWith('https://'),
       withCredentials: true,
+      auth,
     });
 
     registerChessStreamSocketHandlers(newSocket, {
@@ -99,6 +104,7 @@ export function useChessStreamWebRtc({
       setMoves,
       setMappingData,
       setPositionFromFen,
+      onGameFinished,
       captureAndSendFrame,
       initMediasoupDevice,
       createProducer,
@@ -118,6 +124,7 @@ export function useChessStreamWebRtc({
     createProducer,
     createConsumer,
     setPositionFromFen,
+    onGameFinished,
   ]);
 
   const stopStreaming = useCallback(() => {
@@ -182,10 +189,11 @@ export function useChessStreamWebRtc({
 
   const startStreaming = useCallback(async () => {
     if (viewer) {
-      connectWebSocket();
+      await connectWebSocket();
     } else {
       await startCamera();
-      connectWebSocket();
+      setIsStreaming(true);
+      await connectWebSocket();
     }
   }, [viewer, startCamera, connectWebSocket]);
 
@@ -208,9 +216,11 @@ export function useChessStreamWebRtc({
     connectWebSocket,
   });
 
-  const streamerControlsProps: ChessStreamStreamerControlsProps = {
+  const streamerControlsProps: Omit<
+    ChessStreamStreamerControlsProps,
+    'gameFinished' | 'onOpenFinishGame' | 'showControls' | 'canStopStream'
+  > = {
     viewer,
-    isStreaming,
     calibrationCompleted,
     gameStarted,
     calibrationInProgress,
@@ -235,5 +245,6 @@ export function useChessStreamWebRtc({
     gameStarted,
     moves,
     streamerControlsProps,
+    hasVideoStream,
   };
 }

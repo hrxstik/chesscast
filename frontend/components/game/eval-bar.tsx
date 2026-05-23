@@ -13,17 +13,20 @@ type Props = {
   height?: number;
 };
 
-/** Доля белой части полоски (0–100), как на chess.com. */
+/** Доля белой части полоски (0–100), в духе chess.com: при мате и большом перевесе — почти вся шкала. */
 export function cpWhiteToBarPercent(
   cpWhite: number,
   mateWhite?: number | null,
 ): number {
   if (mateWhite != null && mateWhite !== 0) {
-    if (mateWhite > 0) return 99.5;
-    return 0.5;
+    return mateWhite > 0 ? 100 : 0;
   }
-  const cp = Math.max(-1500, Math.min(1500, cpWhite));
-  return 50 + 50 * (2 / (1 + Math.exp(-0.0035 * cp)) - 1);
+  const cp = Math.max(-2000, Math.min(2000, cpWhite));
+  if (cp >= 900) return 100;
+  if (cp <= -900) return 0;
+  if (cp >= 550) return 98;
+  if (cp <= -550) return 2;
+  return 50 + 50 * (2 / (1 + Math.exp(-0.0045 * cp)) - 1);
 }
 
 /** Подпись оценки в пешках (+1.2) или мат (M3). */
@@ -63,7 +66,7 @@ export function EvalBar({ cpWhite, mateWhite, className, height }: Props) {
         aria-label={`Оценка позиции: ${label}`}
       >
         <div
-          className="absolute inset-x-0 bottom-0 bg-zinc-100 transition-[height] duration-500 ease-out"
+          className="absolute inset-x-0 bottom-0 bg-zinc-100 transition-[height] duration-200 ease-out"
           style={{ height: `${whitePercent}%` }}
         />
       </div>

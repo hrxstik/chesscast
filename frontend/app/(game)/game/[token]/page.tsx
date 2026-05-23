@@ -4,18 +4,21 @@ import React from "react";
 import { useEngine } from "@/lib/hooks/useEngine";
 import { useGameReplay } from "@/lib/hooks/use-game-replay";
 import { Text } from "@/components/ui/typography";
-import { Badge } from "@/components/ui/badge";
 import { BoardWithEvalBar } from "@/components/game/board-with-eval-bar";
 import { ChessAnalysisShell } from "@/components/game/chess-analysis-shell";
-import { PlayerSideLabel } from "@/components/game/player-side-label";
+import { EngineAnalysisLines } from "@/components/game/engine-analysis-lines";
 import { Button } from "@/components/ui/button";
-import { SkipBack, SkipForward, StepBack, StepForward } from "lucide-react";
+import { SkipBack, SkipForward, StepBack, StepForward, RotateCcw } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
   fetchGameSessionPublic,
   type GameSessionPublic,
 } from "@/lib/api/game-session";
 import { GameAboutPanel } from "@/components/game/game-about-panel";
+import {
+  buildFenFromMoves,
+  withKingOutcomeMarkers,
+} from "@/lib/chess/board-outcome-markers";
 
 type Props = {
   params: Promise<{
@@ -28,23 +31,47 @@ export default function GamePage({ params }: Props) {
   const [session, setSession] = React.useState<GameSessionPublic | null>(null);
   const [statusText, setStatusText] =
     React.useState<string>("Загрузка партии...");
+  const [exploreFen, setExploreFen] = React.useState<string | null>(null);
 
   const replay = useGameReplay(
     session?.moves ?? [],
     session?.initialPosition ?? "startpos",
   );
 
+  const isExploring =
+    exploreFen !== null && exploreFen !== replay.currentFen;
+
+  const finalFen = React.useMemo(
+    () =>
+      session
+        ? buildFenFromMoves(session.moves, session.initialPosition)
+        : replay.currentFen,
+    [session, replay.currentFen],
+  );
+
+  const showOutcomeMarkers =
+    !!session?.result &&
+    session.result !== "CANCELLED" &&
+    replay.ply === replay.maxPly &&
+    !isExploring;
+
   const {
-    positionEvaluation,
     evaluationCpWhite,
     mateWhite,
-    engineReady,
-    depth,
+    pvRows,
     bestLine,
-    possibleMate,
     chessboardOptions,
+    isTerminalPosition,
     setPositionFromFen,
-  } = useEngine();
+  } = useEngine(undefined, {
+    multiPv: 3,
+    allowMove: true,
+    onFenChange: setExploreFen,
+  });
+
+  React.useEffect(() => {
+    setExploreFen(null);
+  }, [replay.currentFen]);
 
   React.useEffect(() => {
     setPositionFromFen(replay.currentFen);
@@ -79,9 +106,6 @@ export default function GamePage({ params }: Props) {
     };
   }, [token]);
 
-  const whitePlayer = session?.players.find((p) => p.color === "WHITE");
-  const blackPlayer = session?.players.find((p) => p.color === "BLACK");
-
   const moveRows: { no: number; white?: string; black?: string }[] = [];
   if (session) {
     for (let i = 0; i < session.moves.length; i += 2) {
@@ -96,19 +120,9 @@ export default function GamePage({ params }: Props) {
   return (
     <ChessAnalysisShell
       title={
-        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <h1 className="text-xl font-bold tracking-tight md:text-2xl">
-              Анализ партии
-            </h1>
-            <Text className="mt-0.5 font-mono text-xs text-muted-foreground">
-              токен: {token}
-            </Text>
-          </div>
-          <Badge variant="secondary">
-            {engineReady ? "Stockfish готов" : "Загрузка движка…"}
-          </Badge>
-        </div>
+        <h1 className="text-xl font-bold tracking-tight md:text-2xl">
+          Анализ партии
+        </h1>
       }
       leftInfo={
         <GameAboutPanel
@@ -117,29 +131,20 @@ export default function GamePage({ params }: Props) {
           token={token}
         />
       }
-      whiteLabel={
-        <PlayerSideLabel
-          name={whitePlayer?.name ?? "Игрок 1"}
-          userId={whitePlayer?.userId}
-          color="WHITE"
-          gameResult={session?.result}
-        />
-      }
+      whiteLabel={null}
       board={
         <BoardWithEvalBar
-          options={chessboardOptions}
+          options={withKingOutcomeMarkers(
+            chessboardOptions,
+            session?.result,
+            finalFen,
+            showOutcomeMarkers,
+          )}
           cpWhite={evaluationCpWhite}
           mateWhite={mateWhite}
         />
       }
-      blackLabel={
-        <PlayerSideLabel
-          name={blackPlayer?.name ?? "Игрок 2"}
-          userId={blackPlayer?.userId}
-          color="BLACK"
-          gameResult={session?.result}
-        />
-      }
+      blackLabel={null}
       movesPanel={
         session ? (
           <div className="space-y-0.5 font-mono text-xs">
@@ -183,38 +188,11 @@ export default function GamePage({ params }: Props) {
         )
       }
       analysisPanel={
-        <>
-          <div className="flex flex-wrap gap-4">
-            <div>
-              <Text className="text-xs text-muted-foreground">Оценка</Text>
-              <p className="text-lg font-semibold tabular-nums">
-                {mateWhite != null && mateWhite !== 0
-                  ? mateWhite > 0
-                    ? `+#${mateWhite}`
-                    : `#${mateWhite}`
-                  : positionEvaluation >= 0
-                    ? `+${positionEvaluation.toFixed(2)}`
-                    : positionEvaluation.toFixed(2)}
-              </p>
-            </div>
-            <div>
-              <Text className="text-xs text-muted-foreground">Глубина</Text>
-              <p className="text-lg font-semibold tabular-nums">{depth}</p>
-            </div>
-            <div>
-              <Text className="text-xs text-muted-foreground">Ход</Text>
-              <p className="text-lg font-semibold tabular-nums">
-                {replay.ply} / {replay.maxPly}
-              </p>
-            </div>
-          </div>
-          <div>
-            <Text className="text-xs text-muted-foreground">Лучшая линия</Text>
-            <p className="mt-1 truncate font-mono text-[10px] leading-tight text-muted-foreground sm:text-[11px]">
-              {bestLine}
-            </p>
-          </div>
-        </>
+        <EngineAnalysisLines
+          pvRows={pvRows}
+          bestLine={bestLine}
+          hidden={isTerminalPosition}
+        />
       }
       controlsPanel={
         <div className="flex flex-wrap gap-2">
@@ -256,6 +234,20 @@ export default function GamePage({ params }: Props) {
           >
             <SkipForward className="size-4" aria-hidden />В конец
           </Button>
+          {isExploring ? (
+            <Button
+              type="button"
+              variant="default"
+              className="gap-1"
+              onClick={() => {
+                setExploreFen(null);
+                setPositionFromFen(replay.currentFen);
+              }}
+            >
+              <RotateCcw className="size-4" aria-hidden />
+              К позиции партии
+            </Button>
+          ) : null}
         </div>
       }
     />

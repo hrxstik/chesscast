@@ -1,12 +1,14 @@
 import {
   Body,
   Controller,
+  Get,
   Post,
   Req,
   Res,
   UseGuards,
   UnauthorizedException,
 } from '@nestjs/common';
+import { JwtService } from '@nestjs/jwt';
 import type { Request, Response } from 'express';
 import { AuthService } from './auth.service';
 import { LoginUserDto } from 'src/dtos/auth/login-user.dto';
@@ -22,7 +24,10 @@ type AuthReq = Request & { user: { id: number } };
 
 @Controller('auth')
 export class AuthController {
-  constructor(private readonly authService: AuthService) {}
+  constructor(
+    private readonly authService: AuthService,
+    private readonly jwtService: JwtService,
+  ) {}
 
   @Post('login')
   async login(
@@ -56,6 +61,17 @@ export class AuthController {
     const pair = await this.authService.refresh(refreshToken);
     setAuthCookies(res, pair.access_token, pair.refresh_token);
     return { ok: true };
+  }
+
+  /** Краткоживущий тикет для Socket.IO (cookies в WS handshake не всегда доходят). */
+  @UseGuards(JwtAuthGuard)
+  @Get('ws-ticket')
+  wsTicket(@Req() req: AuthReq) {
+    const ticket = this.jwtService.sign(
+      { sub: req.user.id, typ: 'ws' },
+      { expiresIn: '15m' },
+    );
+    return { ticket };
   }
 
   @UseGuards(JwtAuthGuard)

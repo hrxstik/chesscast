@@ -10,6 +10,13 @@ export type EngineMessage = {
   multipv?: number;
 };
 
+export type EvaluateOptions = {
+  /** Фиксированное время на позицию (как chess.com live). */
+  movetimeMs?: number;
+  depth?: number;
+  multiPv?: number;
+};
+
 export default class Engine {
   stockfish: Worker;
   onMessage: (callback: (messageData: EngineMessage) => void) => void;
@@ -59,8 +66,10 @@ export default class Engine {
     };
   }
 
-  evaluatePosition(fen: string, depth = 12, multiPv = 1) {
-    if (depth > 24) depth = 24;
+  evaluatePosition(fen: string, opts: EvaluateOptions = {}) {
+    const multiPv = opts.multiPv ?? 1;
+    const movetimeMs = opts.movetimeMs;
+    const depth = opts.depth ?? 16;
 
     if (multiPv !== this.multiPvConfigured) {
       const n = Math.min(Math.max(1, multiPv), 5);
@@ -68,8 +77,14 @@ export default class Engine {
       this.multiPvConfigured = n;
     }
 
+    this.stockfish.postMessage('stop');
     this.stockfish.postMessage(`position fen ${fen}`);
-    this.stockfish.postMessage(`go depth ${depth}`);
+    if (movetimeMs != null && movetimeMs > 0) {
+      this.stockfish.postMessage(`go movetime ${Math.min(movetimeMs, 3000)}`);
+    } else {
+      const d = Math.min(Math.max(depth, 1), 24);
+      this.stockfish.postMessage(`go depth ${d}`);
+    }
   }
 
   stop() {
