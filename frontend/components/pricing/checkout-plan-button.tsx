@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button';
 import { useAuthStore } from '@/store/auth-store';
 import { apiFetch } from '@/lib/api/client';
 import { ApiError } from '@/lib/api/types';
+import { notifyError } from '@/lib/notify';
 
 type Props = {
   planId: number;
@@ -24,7 +25,6 @@ export function CheckoutPlanButton({
   const router = useRouter();
   const hydrate = useAuthStore((s) => s.hydrate);
   const [loading, setLoading] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
   const [autoRenew, setAutoRenew] = useState(true);
 
   if (planCode === 'FREE') {
@@ -39,7 +39,6 @@ export function CheckoutPlanButton({
   }
 
   async function onClick() {
-    setErr(null);
     await hydrate();
     if (!useAuthStore.getState().isAuthenticated) {
       router.push(`/login?next=${encodeURIComponent('/pricing')}`);
@@ -53,7 +52,7 @@ export function CheckoutPlanButton({
       );
       window.location.href = res.confirmationUrl;
     } catch (e) {
-      setErr(e instanceof ApiError ? e.message : 'Не удалось создать оплату');
+      notifyError(e instanceof ApiError ? e.message : 'Не удалось создать оплату');
     } finally {
       setLoading(false);
     }
@@ -72,7 +71,6 @@ export function CheckoutPlanButton({
           Автопродление: сохранить способ оплаты в ЮKassa и продлевать подписку до отмены (можно снять галочку).
         </span>
       </label>
-      {err ? <p className="text-xs text-destructive">{err}</p> : null}
       <Button
         type="button"
         className="w-full"

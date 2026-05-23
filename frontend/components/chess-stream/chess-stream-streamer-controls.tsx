@@ -4,8 +4,6 @@ import { Button } from '@/components/ui/button';
 import { Text } from '@/components/ui/typography';
 
 export type ChessStreamStreamerControlsProps = {
-  cameraError: string | null;
-  error: string | null;
   viewer: boolean;
   isStreaming: boolean;
   calibrationCompleted: boolean;
@@ -17,8 +15,6 @@ export type ChessStreamStreamerControlsProps = {
 };
 
 export function ChessStreamStreamerControls({
-  cameraError,
-  error,
   viewer,
   isStreaming,
   calibrationCompleted,
@@ -30,8 +26,6 @@ export function ChessStreamStreamerControls({
 }: ChessStreamStreamerControlsProps) {
   return (
     <>
-      {cameraError ? <Text className="text-destructive">{cameraError}</Text> : null}
-      {error ? <Text className="text-destructive">{error}</Text> : null}
       {!viewer && isStreaming ? (
         <div className="flex flex-col gap-2">
           <div className="flex flex-col gap-2 md:flex-row md:flex-wrap">

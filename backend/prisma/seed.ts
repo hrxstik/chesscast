@@ -28,36 +28,55 @@ const prisma = new PrismaClient();
 
 const DEV_PASSWORD = 'ChessCastDev123!';
 
-async function main() {
-  const passwordHash = await bcrypt.hash(DEV_PASSWORD, 10);
-  const now = new Date();
-  const farFuture = new Date('2099-12-31T23:59:59.000Z');
+const DEMO_EMAILS = [
+  'superadmin@chesscast.local',
+  'player@chesscast.local',
+  'schooladmin@chesscast.local',
+] as const;
 
-  await prisma.platformAuditLog.deleteMany();
-  await prisma.billingEvent.deleteMany();
-  await prisma.payment.deleteMany();
-  await prisma.subscription.deleteMany();
-  await prisma.userGame.deleteMany();
-  await prisma.game.deleteMany();
-  await prisma.userOrganization.deleteMany();
-  await prisma.organization.deleteMany();
-  await prisma.plan.deleteMany();
-  await prisma.user.deleteMany({
+/** Полная очистка демо-данных перед повторным сидированием (идемпотентный seed). */
+async function wipeDemoDatabase() {
+  const audit = await prisma.platformAuditLog.deleteMany();
+  const billing = await prisma.billingEvent.deleteMany();
+  const payments = await prisma.payment.deleteMany();
+  const subscriptions = await prisma.subscription.deleteMany();
+  const userGames = await prisma.userGame.deleteMany();
+  const games = await prisma.game.deleteMany();
+  const memberships = await prisma.userOrganization.deleteMany();
+  const orgs = await prisma.organization.deleteMany();
+  const plans = await prisma.plan.deleteMany();
+  const users = await prisma.user.deleteMany({
     where: {
       OR: [
         { email: { endsWith: '@seed.chesscast.local' } },
-        {
-          email: {
-            in: [
-              'superadmin@chesscast.local',
-              'player@chesscast.local',
-              'schooladmin@chesscast.local',
-            ],
-          },
-        },
+        { email: { in: [...DEMO_EMAILS] } },
+        { email: { endsWith: '@chesscast.local' } },
       ],
     },
   });
+  console.log(
+    '[seed] Очистка:',
+    JSON.stringify({
+      audit: audit.count,
+      billing: billing.count,
+      payments: payments.count,
+      subscriptions: subscriptions.count,
+      userGames: userGames.count,
+      games: games.count,
+      memberships: memberships.count,
+      organizations: orgs.count,
+      plans: plans.count,
+      users: users.count,
+    }),
+  );
+}
+
+async function main() {
+  await wipeDemoDatabase();
+
+  const passwordHash = await bcrypt.hash(DEV_PASSWORD, 10);
+  const now = new Date();
+  const farFuture = new Date('2099-12-31T23:59:59.000Z');
 
   const superadmin = await prisma.user.create({
     data: {
@@ -505,23 +524,31 @@ async function main() {
     },
   });
 
-  const analyzeDemo = await prisma.game.create({
-    data: {
-      result: GameResult.WHITE_WIN,
-      status: GameStatus.FINISHED,
-      moves: DEMO_MOVES.slice(0, 24),
-      token: 'filter-demo-analyze',
-      organizationId: null,
-      creatorId: player.id,
-      visibility: GameVisibility.PRIVATE,
-    },
-  });
-  await prisma.userGame.createMany({
-    data: [
-      { userId: player.id, gameId: analyzeDemo.id, color: Color.WHITE },
-      { userId: schoolAdmin.id, gameId: analyzeDemo.id, color: Color.BLACK },
-    ],
-  });
+  /** Детский мат (Scholar's Mate): 1.e4 e5 2.Bc4 Nc6 3.Qh5 Nf6 4.Qxf7# — классическая учебная партия. */
+  const SCHOLARS_MATE_MOVES = ['e4', 'e5', 'Bc4', 'Nc6', 'Qh5', 'Nf6', 'Qxf7'];
+  for (const org of orgs) {
+    const token =
+      org.inviteCode === 'SEED-OPEN-CLUB'
+        ? 'demo-detskiy-mat'
+        : `demo-detskiy-mat-${org.inviteCode.toLowerCase()}`;
+    const scholarsGame = await prisma.game.create({
+      data: {
+        result: GameResult.WHITE_WIN,
+        status: GameStatus.FINISHED,
+        moves: SCHOLARS_MATE_MOVES,
+        token,
+        organizationId: org.id,
+        creatorId: player.id,
+        visibility: GameVisibility.PUBLIC,
+      },
+    });
+    await prisma.userGame.createMany({
+      data: [
+        { userId: player.id, gameId: scholarsGame.id, color: Color.WHITE },
+        { userId: schoolAdmin.id, gameId: scholarsGame.id, color: Color.BLACK },
+      ],
+    });
+  }
 
   const payment = await prisma.payment.create({
     data: {
@@ -531,7 +558,7 @@ async function main() {
       amount: new Prisma.Decimal('1490.00'),
       status: PaymentStatus.SUCCEEDED,
       purpose: PaymentPurpose.SUBSCRIPTION_PERSONAL,
-      providerPaymentId: `seed_${Date.now()}`,
+      providerPaymentId: 'seed_demo_payment_1',
       metadata: { demo: true },
     },
   });
@@ -656,6 +683,8 @@ async function main() {
   console.log('\n— Демо для player@chesscast.local (demo_player) —');
   console.log('  ADMIN в: «Демо-школа ChessCast», «Открытый клуб Seed»');
   console.log('  Игры: ~55+ в «Мои игры», фильтр по token: filter-demo');
+  console.log('  Разбор (детский мат): /game/demo-detskiy-mat  (орг. «Открытый клуб Seed»)');
+  console.log('  То же в каждой орг.: demo-detskiy-mat-<код приглашения>');
   console.log('  Вступление по коду: SEED-YOUTH-LIGA или SEED-ELITE-TACT');
   console.log('  Поиск: «Moscow», «Elite», id организации из списка выше');
   console.log(`\nДемо-игра token: ${game.token}`);

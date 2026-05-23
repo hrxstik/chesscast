@@ -12,18 +12,17 @@ import {
   type AdminOrganizationRow,
 } from '@/lib/api/admin-management';
 import { ApiError } from '@/lib/api/types';
+import { notifyError } from '@/lib/notify';
 
 export function AdminOrganizationsPanel() {
   const [rows, setRows] = useState<AdminOrganizationRow[]>([]);
   const [query, setQuery] = useState('');
   const [blockedFilter, setBlockedFilter] = useState('');
-  const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [pending, setPending] = useState<AdminOrganizationRow | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
-    setError(null);
     try {
       const res = await fetchAdminOrganizations({
         q: query || undefined,
@@ -36,7 +35,9 @@ export function AdminOrganizationsPanel() {
       });
       setRows(res.items);
     } catch (e) {
-      setError(e instanceof ApiError ? e.message : 'Не удалось загрузить организации');
+      notifyError(
+        e instanceof ApiError ? e.message : 'Не удалось загрузить организации',
+      );
     } finally {
       setLoading(false);
     }
@@ -58,7 +59,6 @@ export function AdminOrganizationsPanel() {
         </ul>
       </AdminEffectCallout>
 
-      {error ? <Text className="text-sm text-destructive">{error}</Text> : null}
       <div className="flex flex-wrap items-end gap-2">
         <input
           className="h-9 min-w-[12rem] flex-1 rounded-md border border-input bg-background px-2 text-sm"

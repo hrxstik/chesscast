@@ -3,21 +3,19 @@
 import { useCallback } from 'react';
 import type { ChessStreamRefs } from './chess-stream-ref-types';
 import { CHESS_STREAM_VIDEO_CONSTRAINTS } from '@/components/chess-stream/lib/camera-stream-constraints';
+import { notifyError } from '@/lib/notify';
 
 export function useChessStreamCamera(
   refs: ChessStreamRefs,
   setHasVideoStream: (v: boolean) => void,
-  setCameraError: (msg: string | null) => void,
 ) {
   const { videoRef, streamRef, streamBackupRef } = refs;
 
   const startCamera = useCallback(async () => {
     try {
       if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-        setCameraError(
-          'Ваш браузер не поддерживает доступ к камере. ' +
-            'Для доступа к камере требуется HTTPS или localhost. ' +
-            'Попробуйте использовать HTTPS или подключитесь через localhost.',
+        notifyError(
+          'Браузер не поддерживает камеру. Используйте HTTPS или localhost.',
         );
         return;
       }
@@ -32,7 +30,6 @@ export function useChessStreamCamera(
         streamRef.current = stream;
         streamBackupRef.current = stream;
         video.srcObject = stream;
-        setCameraError(null);
         setHasVideoStream(true);
 
         setTimeout(() => {
@@ -79,7 +76,7 @@ export function useChessStreamCamera(
         video.onplay = handlePlay;
         video.onplaying = handlePlaying;
         video.onerror = () => {
-          setCameraError('Ошибка воспроизведения видео с камеры');
+          notifyError('Ошибка воспроизведения видео с камеры');
         };
 
         setTimeout(async () => {
@@ -93,11 +90,11 @@ export function useChessStreamCamera(
         }, 200);
       }
     } catch (err) {
-      setCameraError(
+      notifyError(
         err instanceof Error ? err.message : 'Не удалось получить доступ к камере',
       );
     }
-  }, [videoRef, streamRef, streamBackupRef, setHasVideoStream, setCameraError]);
+  }, [videoRef, streamRef, streamBackupRef, setHasVideoStream]);
 
   return { startCamera };
 }

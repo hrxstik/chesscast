@@ -74,8 +74,13 @@ export function useEngine(initialFen?: string, opts?: UseEngineOptions): UseEngi
           const mate = message.possibleMate;
           const cp = message.positionEvaluation;
           let scoreLabel = '…';
-          if (mate !== undefined) scoreLabel = `#${mate}`;
-          else if (cp !== undefined) {
+          if (mate !== undefined && mate !== '') {
+            const mateStm = Number(mate);
+            const mWhite =
+              chessGameRef.current.turn() === 'w' ? mateStm : -mateStm;
+            scoreLabel =
+              mWhite > 0 ? `+M${mWhite}` : mWhite < 0 ? `-M${Math.abs(mWhite)}` : '0';
+          } else if (cp !== undefined && cp !== '') {
             const signed =
               (chessGameRef.current.turn() === 'w' ? 1 : -1) * (Number(cp) / 100);
             scoreLabel = signed >= 0 ? `+${signed.toFixed(2)}` : signed.toFixed(2);
@@ -102,21 +107,21 @@ export function useEngine(initialFen?: string, opts?: UseEngineOptions): UseEngi
 
       if (idx === 1 || multiPv === 1) {
         const turn = chessGameRef.current.turn();
-        if (message.positionEvaluation) {
+        // Мат и cp приходят в разных строках info; cp не должен затирать уже найденный мат.
+        if (message.possibleMate !== undefined && message.possibleMate !== '') {
+          const mateStm = Number(message.possibleMate);
+          const mWhite = turn === 'w' ? mateStm : -mateStm;
+          setMateWhite(mWhite);
+          setPossibleMate(
+            mWhite > 0 ? `+M${mWhite}` : mWhite < 0 ? `-M${Math.abs(mWhite)}` : '0',
+          );
+        } else if (message.positionEvaluation !== undefined && message.positionEvaluation !== '') {
           const cpStm = Number(message.positionEvaluation);
           const cpWhite = turn === 'w' ? cpStm : -cpStm;
           setEvaluationCpWhite(cpWhite);
           setPositionEvaluation(cpWhite / 100);
           setMateWhite(null);
           setPossibleMate('');
-        }
-        if (message.possibleMate) {
-          const mateStm = Number(message.possibleMate);
-          const mWhite = turn === 'w' ? mateStm : -mateStm;
-          setMateWhite(mWhite);
-          setPossibleMate(String(mateStm));
-        } else {
-          setMateWhite(null);
         }
         if (message.depth) setDepth(message.depth);
         if (message.pv) setBestLine(message.pv);

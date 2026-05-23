@@ -10,7 +10,7 @@ export type MeResponse = {
 };
 
 export async function getCurrentUser(): Promise<MeResponse> {
-  return apiFetch<MeResponse>('/user/me');
+  return apiFetch<MeResponse>('/user/me', { silent: true });
 }
 
 export async function updateCurrentUser(id: number, body: Partial<{ name: string; avatar: string }>) {

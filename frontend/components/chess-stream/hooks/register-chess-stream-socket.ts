@@ -2,6 +2,7 @@ import type { Dispatch, SetStateAction } from 'react';
 import type { Socket } from 'socket.io-client';
 import type * as mediasoupClient from 'mediasoup-client';
 import { boardStateToFen } from '@/components/chess-stream/lib/board-state-to-fen';
+import { notifyError } from '@/lib/notify';
 import type { ChessStreamRefs } from './chess-stream-ref-types';
 
 const STABLE_THRESHOLD = 5;
@@ -11,7 +12,6 @@ export type ChessStreamSocketRegisterContext = {
   modelPath?: string;
   viewer: boolean;
   refs: ChessStreamRefs;
-  setError: (s: string | null) => void;
   setHasVideoStream: (b: boolean) => void;
   setIsStreaming: (b: boolean) => void;
   setCalibrationInProgress: (b: boolean) => void;
@@ -39,7 +39,6 @@ export function registerChessStreamSocketHandlers(
     modelPath,
     viewer,
     refs,
-    setError,
     setHasVideoStream,
     setIsStreaming,
     setCalibrationInProgress,
@@ -101,18 +100,17 @@ export function registerChessStreamSocketHandlers(
             }, 100);
           });
         } catch {
-          setError('Ваш браузер не поддерживает отображение видеопотока');
+          notifyError('Браузер не поддерживает отображение видеопотока');
         }
       }
     };
     img.onerror = () => {
-      setError('Не удалось загрузить кадр видео');
+      notifyError('Не удалось загрузить кадр видео');
     };
     img.src = `data:image/jpeg;base64,${data.frame}`;
   });
 
   newSocket.on('connect', () => {
-    setError(null);
     if (viewer) {
       newSocket.emit('join-stream', { token: gameToken });
       setIsStreaming(true);
@@ -169,7 +167,7 @@ export function registerChessStreamSocketHandlers(
           newSocket.emit('get-producers', { token: gameToken });
         }
       } catch (error) {
-        setError(`Ошибка инициализации медиапотока: ${(error as Error).message}`);
+        notifyError(`Ошибка инициализации медиапотока: ${(error as Error).message}`);
       }
     },
   );
@@ -182,7 +180,7 @@ export function registerChessStreamSocketHandlers(
           await createConsumer(videoProducer.id);
         }
       } catch (error) {
-        setError(`Ошибка подключения к потоку: ${(error as Error).message}`);
+        notifyError(`Ошибка подключения к потоку: ${(error as Error).message}`);
       }
     } else if (viewer && producers.length === 0 && !consumerRef.current) {
       setTimeout(() => {
@@ -207,7 +205,7 @@ export function registerChessStreamSocketHandlers(
           await createConsumer(data.producerId);
         }
       } catch (error) {
-        setError(`Ошибка подключения к потоку: ${(error as Error).message}`);
+        notifyError(`Ошибка подключения к потоку: ${(error as Error).message}`);
       }
     }
   });
@@ -235,7 +233,6 @@ export function registerChessStreamSocketHandlers(
   });
 
   newSocket.on('calibration-started', (data: { message: string }) => {
-    setError(null);
     setCalibrationInProgress(true);
     setCalibrationCompleted(false);
     setCalibrationMessage(data.message || 'Калибровка доски...');
@@ -246,7 +243,6 @@ export function registerChessStreamSocketHandlers(
   });
 
   newSocket.on('calibration-completed', (data: { message: string; mappingData?: unknown }) => {
-    setError(null);
     setCalibrationInProgress(false);
     setCalibrationCompleted(true);
     setCalibrationMessage(data.message || 'Калибровка выполнена');
@@ -296,12 +292,12 @@ export function registerChessStreamSocketHandlers(
         return [...prev, { san }];
       });
     } else if (data.status === 'error' && data.message) {
-      setError(String(data.message));
+      notifyError(String(data.message));
     }
   });
 
   newSocket.on('error', (error: { message: string }) => {
-    setError(error.message);
+    notifyError(error.message);
   });
 
   newSocket.on('disconnect', (reason) => {
@@ -319,7 +315,6 @@ export function registerChessStreamSocketHandlers(
   });
 
   newSocket.on('reconnect', () => {
-    setError(null);
     if (viewerRef.current) {
       newSocket.emit('join-stream', { token: gameToken });
       newSocket.emit('get-router-rtp-capabilities', { token: gameToken });

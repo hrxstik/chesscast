@@ -13,6 +13,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { ApiError } from '@/lib/api/types';
+import { notifyError } from '@/lib/notify';
 import {
   createPlan,
   disablePlan,
@@ -55,18 +56,16 @@ export function AdminPlansPanel() {
   const [form, setForm] = useState<PlanFormState>(initialForm);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const [pendingPlan, setPendingPlan] = useState<AdminPlanDto | null>(null);
   const [toggling, setToggling] = useState(false);
 
   async function loadPlans() {
     setLoading(true);
-    setError(null);
     try {
       const rows = await fetchAdminPlans();
       setPlans(rows);
     } catch (e) {
-      setError(
+      notifyError(
         e instanceof ApiError ? e.message : 'Не удалось загрузить тарифы (нужен вход супер-админа).',
       );
     } finally {
@@ -81,7 +80,6 @@ export function AdminPlansPanel() {
   async function onCreatePlan(e: React.FormEvent) {
     e.preventDefault();
     setSaving(true);
-    setError(null);
     try {
       await createPlan({
         code: form.code,
@@ -103,7 +101,7 @@ export function AdminPlansPanel() {
       setForm(initialForm);
       await loadPlans();
     } catch (e) {
-      setError(e instanceof ApiError ? e.message : 'Не удалось создать тариф');
+      notifyError(e instanceof ApiError ? e.message : 'Не удалось создать тариф');
     } finally {
       setSaving(false);
     }
@@ -112,7 +110,6 @@ export function AdminPlansPanel() {
   async function confirmToggleActive() {
     if (!pendingPlan) return;
     setToggling(true);
-    setError(null);
     try {
       if (pendingPlan.isActive) {
         await disablePlan(pendingPlan.id);
@@ -122,7 +119,7 @@ export function AdminPlansPanel() {
       setPendingPlan(null);
       await loadPlans();
     } catch (e) {
-      setError(e instanceof ApiError ? e.message : 'Не удалось обновить тариф');
+      notifyError(e instanceof ApiError ? e.message : 'Не удалось обновить тариф');
     } finally {
       setToggling(false);
     }
@@ -140,8 +137,6 @@ export function AdminPlansPanel() {
           <li>Событие записывается в служебный журнал аудита.</li>
         </ul>
       </AdminEffectCallout>
-      {error ? <Text className="text-sm text-destructive">{error}</Text> : null}
-
       <div className="rounded-lg border border-border">
         <div className="border-b border-border px-4 py-2">
           <Text className="text-sm font-medium">Тарифные планы</Text>

@@ -9,16 +9,15 @@ import {
   type AdminServiceLogRow,
 } from "@/lib/api/admin-management";
 import { ApiError } from "@/lib/api/types";
+import { notifyError } from "@/lib/notify";
 
 export function AdminServiceLogsPanel() {
   const [rows, setRows] = useState<AdminServiceLogRow[]>([]);
   const [typeFilter, setTypeFilter] = useState("");
-  const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
   const load = useCallback(async () => {
     setLoading(true);
-    setError(null);
     try {
       const res = await fetchAdminServiceLogs({
         type: typeFilter || undefined,
@@ -26,7 +25,7 @@ export function AdminServiceLogsPanel() {
       });
       setRows(res.items);
     } catch (e) {
-      setError(
+      notifyError(
         e instanceof ApiError ? e.message : "Не удалось загрузить журнал",
       );
     } finally {
@@ -40,7 +39,6 @@ export function AdminServiceLogsPanel() {
 
   return (
     <div className="space-y-4">
-      {error ? <Text className="text-sm text-destructive">{error}</Text> : null}
       <Select
         value={typeFilter}
         onValueChange={setTypeFilter}

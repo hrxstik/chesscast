@@ -5,7 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Text } from "@/components/ui/typography";
 import type { EnginePvRow } from "@/lib/hooks/useEngine";
 
-import type { MoveItem } from '@/components/shared/moves-list';
+import type { MoveItem } from "@/components/shared/moves-list";
 
 type Props = {
   moves: MoveItem[];
@@ -48,14 +48,14 @@ export function StreamAnalysisSidebar({ moves, bestLine, pvRows }: Props) {
                   <Text className="text-xs text-muted-foreground">
                     Линия {row.rank}
                   </Text>
-                  <Text className="mt-0.5 font-mono text-xs break-all">
+                  <Text className="mt-0.5 truncate font-mono text-[10px]! leading-tight sm:text-[12px]!">
                     <span className="text-foreground">{row.scoreLabel}</span>
                     {row.pv ? ` ${row.pv}` : ""}
                   </Text>
                 </div>
               ))
             ) : (
-              <Text className="font-mono text-xs break-all text-muted-foreground">
+              <Text className="truncate font-mono text-[10px] leading-tight text-muted-foreground sm:text-[12px]">
                 {bestLine || "—"}
               </Text>
             )}

@@ -10,7 +10,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
-import { Text } from '@/components/ui/typography';
+import { notifyError } from '@/lib/notify';
 
 export function AdminModerationDialog(props: {
   open: boolean;
@@ -24,28 +24,24 @@ export function AdminModerationDialog(props: {
 }) {
   const [reason, setReason] = useState('');
   const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
   useEffect(() => {
     if (!props.open) {
       setReason('');
-      setError(null);
     }
   }, [props.open]);
 
   async function onSubmit() {
     const r = reason.trim();
     if (r.length < 3) {
-      setError('Укажите причину не короче 3 символов');
+      notifyError('Укажите причину не короче 3 символов');
       return;
     }
     setSaving(true);
-    setError(null);
     try {
       await props.onConfirm(r);
       props.onOpenChange(false);
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Не удалось выполнить действие');
+      notifyError(e instanceof Error ? e.message : 'Не удалось выполнить действие');
     } finally {
       setSaving(false);
     }
@@ -70,7 +66,6 @@ export function AdminModerationDialog(props: {
             onChange={(e) => setReason(e.target.value)}
             placeholder="Например: нарушение правил трансляции"
           />
-          {error ? <Text className="text-sm text-destructive">{error}</Text> : null}
         </div>
         <DialogFooter>
           <Button type="button" variant="outline" onClick={() => props.onOpenChange(false)}>

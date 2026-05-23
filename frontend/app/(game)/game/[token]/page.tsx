@@ -188,7 +188,13 @@ export default function GamePage({ params }: Props) {
             <div>
               <Text className="text-xs text-muted-foreground">Оценка</Text>
               <p className="text-lg font-semibold tabular-nums">
-                {possibleMate ? `#${possibleMate}` : positionEvaluation}
+                {mateWhite != null && mateWhite !== 0
+                  ? mateWhite > 0
+                    ? `+#${mateWhite}`
+                    : `#${mateWhite}`
+                  : positionEvaluation >= 0
+                    ? `+${positionEvaluation.toFixed(2)}`
+                    : positionEvaluation.toFixed(2)}
               </p>
             </div>
             <div>
@@ -204,9 +210,8 @@ export default function GamePage({ params }: Props) {
           </div>
           <div>
             <Text className="text-xs text-muted-foreground">Лучшая линия</Text>
-            <p className="mt-1 break-all font-mono text-xs text-muted-foreground">
-              {bestLine.slice(0, 120)}
-              {bestLine.length > 120 ? "…" : ""}
+            <p className="mt-1 truncate font-mono text-[10px] leading-tight text-muted-foreground sm:text-[11px]">
+              {bestLine}
             </p>
           </div>
         </>

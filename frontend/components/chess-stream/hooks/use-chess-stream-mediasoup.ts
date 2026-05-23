@@ -9,11 +9,11 @@ import {
   type MediasoupTransportPayload,
 } from '../lib/mediasoup-socket.types';
 import { waitSocketEvent } from '../lib/socket-once';
+import { notifyError } from '@/lib/notify';
 
 export function useChessStreamMediasoup(
   gameToken: string,
   refs: ChessStreamRefs,
-  setError: (msg: string | null) => void,
   setHasVideoStream: (v: boolean) => void,
 ) {
   const {
@@ -111,7 +111,7 @@ export function useChessStreamMediasoup(
 
       sendTransport.on('connectionstatechange', (state) => {
         if (state === 'failed' || state === 'disconnected') {
-          setError(`Отправка видео: ${state}. Переподключение…`);
+          notifyError(`Отправка видео: ${state}. Переподключение…`);
           socket.emit('start-stream', { token: gameToken });
         }
       });
@@ -162,7 +162,7 @@ export function useChessStreamMediasoup(
       }
       return producer;
     },
-    [gameToken, socketRef, deviceRef, sendTransportRef, producerRef, setError],
+    [gameToken, socketRef, deviceRef, sendTransportRef, producerRef],
   );
 
   const createConsumer = useCallback(

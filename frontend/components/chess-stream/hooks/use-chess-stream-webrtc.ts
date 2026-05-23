@@ -42,8 +42,6 @@ export function useChessStreamWebRtc({
 
   const [isStreaming, setIsStreaming] = useState(false);
   const [socket, setSocket] = useState<ReturnType<typeof io> | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [cameraError, setCameraError] = useState<string | null>(null);
   const [hasVideoStream, setHasVideoStream] = useState(false);
   const hasVideoStreamRef = useRef(hasVideoStream);
   useEffect(() => {
@@ -68,11 +66,10 @@ export function useChessStreamWebRtc({
   const { initMediasoupDevice, createProducer, createConsumer } = useChessStreamMediasoup(
     gameToken,
     refs,
-    setError,
     setHasVideoStream,
   );
 
-  const { startCamera } = useChessStreamCamera(refs, setHasVideoStream, setCameraError);
+  const { startCamera } = useChessStreamCamera(refs, setHasVideoStream);
 
   const { captureAndSendFrame } = useChessStreamFrameCapture(gameToken, refs, socket);
 
@@ -93,7 +90,6 @@ export function useChessStreamWebRtc({
       modelPath,
       viewer,
       refs,
-      setError,
       setHasVideoStream,
       setIsStreaming,
       setCalibrationInProgress,
@@ -213,8 +209,6 @@ export function useChessStreamWebRtc({
   });
 
   const streamerControlsProps: ChessStreamStreamerControlsProps = {
-    cameraError,
-    error,
     viewer,
     isStreaming,
     calibrationCompleted,

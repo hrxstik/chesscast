@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   ForbiddenException,
   Inject,
   Injectable,
@@ -8,6 +9,7 @@ import {
 } from '@nestjs/common';
 import { GameRepository, type GameWithAccess } from './game.repository';
 import {
+  Color,
   Game,
   GameResult,
   GameStatus,
@@ -397,6 +399,48 @@ export class GameService {
       }
     }
 
+    if (
+      data.whitePlayerId != null &&
+      data.blackPlayerId != null &&
+      data.whitePlayerId === data.blackPlayerId
+    ) {
+      throw new BadRequestException(
+        'Нельзя назначить одного участника на оба цвета',
+      );
+    }
+
+    const playerSlots: { userId: number; color: Color }[] = [];
+    if (data.whitePlayerId != null) {
+      playerSlots.push({ userId: data.whitePlayerId, color: Color.WHITE });
+    }
+    if (data.blackPlayerId != null) {
+      playerSlots.push({ userId: data.blackPlayerId, color: Color.BLACK });
+    }
+
+    if (playerSlots.length > 0 && data.organizationId == null) {
+      throw new BadRequestException(
+        'Игроков можно назначить только для партии организации',
+      );
+    }
+
+    if (playerSlots.length > 0 && data.organizationId != null) {
+      for (const slot of playerSlots) {
+        const member = await this.prisma.userOrganization.findUnique({
+          where: {
+            userId_organizationId: {
+              userId: slot.userId,
+              organizationId: data.organizationId,
+            },
+          },
+        });
+        if (!member) {
+          throw new BadRequestException(
+            'Выбранный игрок не состоит в этой организации',
+          );
+        }
+      }
+    }
+
     const token = crypto.randomUUID();
 
     const createData: Prisma.GameCreateInput = {
@@ -412,8 +456,27 @@ export class GameService {
     };
 
     try {
-      return await this.gameRepository.create(createData);
-    } catch {
+      return await this.prisma.$transaction(async (tx) => {
+        const game = await tx.game.create({ data: createData });
+        if (playerSlots.length > 0) {
+          await tx.userGame.createMany({
+            data: playerSlots.map((slot) => ({
+              userId: slot.userId,
+              gameId: game.id,
+              color: slot.color,
+            })),
+          });
+        }
+        return game;
+      });
+    } catch (e) {
+      if (
+        e instanceof BadRequestException ||
+        e instanceof ForbiddenException ||
+        e instanceof NotFoundException
+      ) {
+        throw e;
+      }
       throw new InternalServerErrorException('Error creating game');
     }
   }

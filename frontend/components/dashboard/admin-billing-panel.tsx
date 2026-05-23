@@ -8,6 +8,8 @@ import {
   type BillingSummaryDto,
 } from "@/lib/api/admin-billing";
 import { ApiError } from "@/lib/api/types";
+import { notifyError } from "@/lib/notify";
+import toast from "react-hot-toast";
 import { Text } from "@/components/ui/typography";
 import { Button } from "@/components/ui/button";
 import { getApiUrl } from "@/lib/utils";
@@ -27,7 +29,6 @@ const CSV_COLUMNS = [
 export function AdminBillingPanel() {
   const [summary, setSummary] = useState<BillingSummaryDto | null>(null);
   const [events, setEvents] = useState<BillingEventRow[]>([]);
-  const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [exporting, setExporting] = useState(false);
   const [from, setFrom] = useState("");
@@ -35,7 +36,6 @@ export function AdminBillingPanel() {
 
   const load = useCallback(async () => {
     setLoading(true);
-    setError(null);
     try {
       const [s, ev] = await Promise.all([
         fetchBillingSummary({
@@ -47,7 +47,7 @@ export function AdminBillingPanel() {
       setSummary(s);
       setEvents(ev.items);
     } catch (e) {
-      setError(
+      notifyError(
         e instanceof ApiError
           ? e.message
           : "Не удалось загрузить бухгалтерию (нужен вход супер-админа).",
@@ -63,7 +63,6 @@ export function AdminBillingPanel() {
 
   async function onExportCsv() {
     setExporting(true);
-    setError(null);
     try {
       const res = await fetch(`${getApiUrl()}/admin/billing/events/export`, {
         credentials: "include",
@@ -79,8 +78,9 @@ export function AdminBillingPanel() {
       a.download = `billing-events-${new Date().toISOString().slice(0, 10)}.csv`;
       a.click();
       URL.revokeObjectURL(url);
+      toast.success("CSV выгружен");
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Не удалось выгрузить CSV");
+      notifyError(e instanceof Error ? e.message : "Не удалось выгрузить CSV");
     } finally {
       setExporting(false);
     }
@@ -92,7 +92,6 @@ export function AdminBillingPanel() {
 
   return (
     <div className="space-y-4">
-      {error ? <Text className="text-sm text-destructive">{error}</Text> : null}
       <div className="flex flex-wrap items-end gap-2">
         <input
           className="h-9 rounded-md border border-input bg-background px-2 text-sm"

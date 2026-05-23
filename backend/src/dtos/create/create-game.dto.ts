@@ -11,4 +11,14 @@ export class CreateGameDto {
   @IsInt()
   @Type(() => Number)
   organizationId?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Type(() => Number)
+  whitePlayerId?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Type(() => Number)
+  blackPlayerId?: number;
 }

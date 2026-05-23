@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useRef } from 'react';
+import { notifyError } from '@/lib/notify';
 import { GameListCard } from '@/components/dashboard/game-list-card';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Loader2 } from 'lucide-react';
@@ -46,6 +47,14 @@ export function OrganizationGamesList(props: {
     return () => obs.disconnect();
   }, [fetchNextPage, hasNextPage, isFetchingNextPage, infinite]);
 
+  useEffect(() => {
+    if (status === 'error' && error) {
+      notifyError(
+        error instanceof Error ? error.message : 'Не удалось загрузить игры',
+      );
+    }
+  }, [status, error]);
+
   if (status === 'pending') {
     return (
       <div className="flex justify-center py-12">
@@ -58,8 +67,8 @@ export function OrganizationGamesList(props: {
     return (
       <Card>
         <CardContent className="pt-6">
-          <p className="text-destructive">
-            {error instanceof Error ? error.message : 'Не удалось загрузить игры'}
+          <p className="text-sm text-muted-foreground">
+            Не удалось загрузить список. Обновите страницу.
           </p>
         </CardContent>
       </Card>

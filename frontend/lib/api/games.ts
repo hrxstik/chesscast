@@ -4,6 +4,8 @@ import type { GamesCursorResponse } from './types';
 export type CreateGameBody = {
   visibility?: 'PRIVATE' | 'PUBLIC';
   organizationId?: number;
+  whitePlayerId?: number;
+  blackPlayerId?: number;
 };
 
 export type CreatedGameDto = {
