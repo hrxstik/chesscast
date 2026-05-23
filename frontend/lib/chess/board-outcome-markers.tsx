@@ -23,15 +23,9 @@ function findKingSquare(fen: string, color: 'w' | 'b'): string | null {
   return null;
 }
 
-export function buildFenFromMoves(
-  moves: string[],
-  initialPosition = 'startpos',
-): string {
+export function buildFenFromMoves(moves: string[]): string {
   try {
-    const chess =
-      initialPosition && initialPosition !== 'startpos'
-        ? new Chess(initialPosition)
-        : new Chess();
+    const chess = new Chess();
     for (const san of moves) {
       const played = chess.move(san, { strict: false });
       if (!played) break;

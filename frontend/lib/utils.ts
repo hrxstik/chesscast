@@ -6,20 +6,25 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
-/** URL REST API (задаётся при старте dev из scripts/lan-env.mjs). */
+/** URL REST API (из NEXT_PUBLIC_NEST_API_URL, задаётся lan-env при dev). */
 export function getApiUrl(): string {
   const pub = process.env.NEXT_PUBLIC_NEST_API_URL?.trim();
   if (pub) return pub.replace(/\/$/, '');
 
   if (typeof window !== 'undefined') {
     const port = process.env.NEXT_PUBLIC_NEST_WS_PORT || '5000';
-    return `${window.location.protocol}//${window.location.hostname}:${port}/api`;
+    const proto = window.location.protocol;
+    return `${proto}//${window.location.hostname}:${port}/api`;
   }
 
   return 'http://127.0.0.1:5000/api';
 }
 
+/** WebSocket напрямую на Nest (wss://LAN:5000/ws). */
 export function getWsUrl(): string {
+  const wsPub = process.env.NEXT_PUBLIC_NEST_WS_URL?.trim();
+  if (wsPub) return wsPub.replace(/\/$/, '');
+
   const api = getApiUrl().replace(/\/api\/?$/, '');
   return `${api.replace(/^http/, 'ws')}/ws`;
 }

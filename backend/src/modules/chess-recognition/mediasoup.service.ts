@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import * as mediasoup from 'mediasoup';
+import { resolveMediasoupAnnouncedIp } from 'src/common/resolve-mediasoup-ip';
 
 type Worker = Awaited<ReturnType<typeof mediasoup.createWorker>>;
 
@@ -108,7 +109,7 @@ export class MediasoupService {
           // Слушаем на всех интерфейсах, а наружный IP берём из MEDIASOUP_ANNOUNCED_IP
           // (например, 192.168.1.143 в локалке)
           ip: '0.0.0.0',
-          announcedIp: process.env.MEDIASOUP_ANNOUNCED_IP || '127.0.0.1',
+          announcedIp: resolveMediasoupAnnouncedIp(),
         },
       ],
       enableUdp: true,
@@ -431,5 +432,10 @@ export class MediasoupService {
     );
 
     return producers;
+  }
+
+  async hasActiveVideoProducer(roomId: string): Promise<boolean> {
+    const producers = await this.getProducers(roomId);
+    return producers.some((p) => p.kind === 'video');
   }
 }

@@ -55,42 +55,65 @@ export class ChessRecognitionGateway
     this.mediasoupService.initializeWorker();
   }
 
+  private parseJwtUserId(sub: unknown): number | null {
+    if (typeof sub === 'number' && Number.isFinite(sub)) {
+      return sub;
+    }
+    if (typeof sub === 'string' && sub.trim()) {
+      const n = Number(sub);
+      return Number.isFinite(n) ? n : null;
+    }
+    return null;
+  }
+
+  private async verifyWsCredential(token: string): Promise<number | null> {
+    try {
+      const payload = await this.jwtService.verifyAsync<{
+        sub: number | string;
+        typ?: string;
+      }>(token);
+      const userId = this.parseJwtUserId(payload.sub);
+      if (userId == null) {
+        this.logger.warn('WS credential: invalid sub in JWT');
+        return null;
+      }
+      return userId;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      this.logger.warn(`WS credential verify failed: ${msg}`);
+    }
+    return null;
+  }
+
   private async resolveSocketUserId(client: Socket): Promise<number | null> {
-    const auth = client.handshake.auth as
-      | { ticket?: string; accessToken?: string }
-      | undefined;
+    const auth = client.handshake.auth as { ticket?: string } | undefined;
+    const queryToken = client.handshake.query?.token;
+    const tokenFromQuery =
+      typeof queryToken === 'string'
+        ? queryToken
+        : Array.isArray(queryToken)
+          ? queryToken[0]
+          : undefined;
+
+    if (tokenFromQuery) {
+      const userId = await this.verifyWsCredential(tokenFromQuery);
+      if (userId != null) return userId;
+    }
 
     if (auth?.ticket) {
-      try {
-        const payload = await this.jwtService.verifyAsync<{
-          sub: number;
-          typ?: string;
-        }>(auth.ticket);
-        if (payload.typ === 'ws' && typeof payload.sub === 'number') {
-          return payload.sub;
-        }
-      } catch {
-        /* fall through */
-      }
+      const userId = await this.verifyWsCredential(auth.ticket);
+      if (userId != null) return userId;
     }
 
     const bearer = client.handshake.headers.authorization;
     if (typeof bearer === 'string' && bearer.startsWith('Bearer ')) {
       try {
         const token = bearer.slice(7).trim();
-        const payload = await this.jwtService.verifyAsync<{ sub: number }>(token);
-        if (typeof payload.sub === 'number') return payload.sub;
-      } catch {
-        /* fall through */
-      }
-    }
-
-    if (auth?.accessToken) {
-      try {
-        const payload = await this.jwtService.verifyAsync<{ sub: number }>(
-          auth.accessToken,
+        const payload = await this.jwtService.verifyAsync<{ sub: number | string }>(
+          token,
         );
-        if (typeof payload.sub === 'number') return payload.sub;
+        const userId = this.parseJwtUserId(payload.sub);
+        if (userId != null) return userId;
       } catch {
         /* fall through */
       }
@@ -109,8 +132,10 @@ export class ChessRecognitionGateway
       );
       const access = cookies[AUTH_COOKIE_NAMES.access];
       if (!access) return null;
-      const payload = await this.jwtService.verifyAsync<{ sub: number }>(access);
-      return typeof payload.sub === 'number' ? payload.sub : null;
+      const payload = await this.jwtService.verifyAsync<{ sub: number | string }>(
+        access,
+      );
+      return this.parseJwtUserId(payload.sub);
     } catch {
       return null;
     }
@@ -141,7 +166,16 @@ export class ChessRecognitionGateway
   }
 
   handleConnection(client: Socket) {
-    this.logger.log(`Client connected: ${client.id}`);
+    const q = client.handshake.query?.token;
+    const hasQueryToken =
+      typeof q === 'string' ? !!q : Array.isArray(q) ? !!q[0] : false;
+    const hasAuthTicket = !!(client.handshake.auth as { ticket?: string })
+      ?.ticket;
+    void this.resolveSocketUserId(client).then((userId) => {
+      this.logger.log(
+        `Client connected: ${client.id} (ws query: ${hasQueryToken}, auth.ticket: ${hasAuthTicket}, userId: ${userId ?? 'none'})`,
+      );
+    });
   }
 
   // Подключение к комнате для просмотра стрима
@@ -154,6 +188,19 @@ export class ChessRecognitionGateway
 
     if (!token) {
       client.emit('error', { message: 'Token is required' });
+      return;
+    }
+
+    const userId = await this.resolveSocketUserId(client);
+    try {
+      await this.gameService.assertCanJoinStreamRoom(token, userId ?? undefined);
+    } catch (e) {
+      const msg =
+        e instanceof Error ? e.message : 'Нет доступа к трансляции';
+      this.logger.warn(
+        `👀 [VIEWER] join-stream denied for client ${client.id}, token ${token}: ${msg}`,
+      );
+      client.emit('error', { message: msg });
       return;
     }
 
@@ -192,7 +239,8 @@ export class ChessRecognitionGateway
       this.logger.warn(`Failed to get producers for viewer: ${error.message}`);
     }
 
-    client.emit('stream-joined', { token });
+    const sync = await this.gameService.getStreamSyncState(token);
+    client.emit('stream-joined', { token, ...sync });
   }
 
   handleDisconnect(client: Socket) {
@@ -244,20 +292,25 @@ export class ChessRecognitionGateway
 
     const userId = await this.resolveSocketUserId(client);
     if (userId == null) {
+      this.logger.warn(
+        `📹 [STREAMER] start-stream rejected: no auth for client ${client.id}, token ${token}`,
+      );
       client.emit('error', { message: 'Требуется авторизация для трансляции' });
       return;
     }
     try {
       await this.gameService.assertCreatorCanStream(userId, token);
     } catch (e) {
-      client.emit('error', {
-        message: e instanceof Error ? e.message : 'Нет доступа к трансляции',
-      });
+      const msg = e instanceof Error ? e.message : 'Нет доступа к трансляции';
+      this.logger.warn(
+        `📹 [STREAMER] start-stream rejected for client ${client.id}, token ${token}: ${msg}`,
+      );
+      client.emit('error', { message: msg });
       return;
     }
 
     this.logger.log(
-      `📹 [STREAMER] Client ${client.id} starting stream for token ${token}`,
+      `📹 [STREAMER] Client ${client.id} starting stream for token ${token} (user ${userId})`,
     );
 
     // Удаляем существующий маппинг при старте стрима (для тестирования)
@@ -313,7 +366,8 @@ export class ChessRecognitionGateway
       `📹 [STREAMER] Client ${client.id} started streaming for token ${token} (${clientsInRoom} clients in room)`,
     );
 
-    client.emit('stream-started', { token });
+    const sync = await this.gameService.getStreamSyncState(token);
+    client.emit('stream-started', { token, ...sync });
   }
 
   @SubscribeMessage('start-game')
@@ -468,7 +522,7 @@ export class ChessRecognitionGateway
           : cwd;
       const defaultModelPath =
         process.env.YOLO_MODEL_PATH ||
-        join(projectRoot, 'chess-recognition', 'bestmerged_new.pt');
+        join(projectRoot, 'chess-recognition', 'models', 'bestmerged_new.pt');
 
       // Запускаем обработку потока только если еще не запущена И маппинг уже есть
       // Если маппинга еще нет, процесс будет запущен после завершения калибровки в handleFrame
@@ -756,7 +810,7 @@ export class ChessRecognitionGateway
           // Средняя яркость должна быть больше 10 (чтобы исключить черные кадры)
           const avgBrightness = stats.channels[0].mean; // Средняя яркость первого канала
 
-          if (avgBrightness < 10) {
+          if (avgBrightness < 5) {
             this.logger.debug(
               `⚠️ [CALIBRATION] Skipping black/empty frame for token ${token} (avg brightness: ${avgBrightness.toFixed(1)})`,
             );
@@ -828,7 +882,7 @@ export class ChessRecognitionGateway
         //           : cwd;
         //       const defaultModelPath =
         //         process.env.YOLO_MODEL_PATH ||
-        //         join(projectRoot, 'chess-recognition', 'bestmerged_new.pt');
+        //         join(projectRoot, 'chess-recognition', 'models', 'bestmerged_new.pt');
 
         //       this.chessRecognitionService.startStreamProcessing(
         //         token,
@@ -888,10 +942,12 @@ export class ChessRecognitionGateway
       // Не запускаем процесс, если он уже был запущен после калибровки или калибровка в процессе
       if (
         !this.chessRecognitionService.hasActiveProcess(token) &&
-        this.chessRecognitionService.hasMapping(token) &&
-        !this.processStartedAfterCalibration.get(token) &&
-        !this.calibrationAttempted.get(token) // Не запускаем, если калибровка еще не завершена
+        this.chessRecognitionService.hasMapping(token)
       ) {
+        this.processStartedAfterCalibration.set(token, true);
+        this.logger.log(
+          `🔄 [FRAME] Starting stream processing for token ${token} (mapping ready)`,
+        );
         const cwd = process.cwd();
         const projectRoot =
           cwd.endsWith('backend') ||
@@ -901,7 +957,7 @@ export class ChessRecognitionGateway
             : cwd;
         const defaultModelPath =
           process.env.YOLO_MODEL_PATH ||
-          join(projectRoot, 'chess-recognition', 'bestmerged_new.pt');
+          join(projectRoot, 'chess-recognition', 'models', 'bestmerged_new.pt');
 
         this.chessRecognitionService.startStreamProcessing(
           token,
@@ -973,31 +1029,57 @@ export class ChessRecognitionGateway
     }
   }
 
+  /** Остановка CV/WebRTC для всех в комнате (телефон + ПК). */
+  private stopStreamForToken(token: string): void {
+    if (token) {
+      this.chessRecognitionService.stopStreamProcessing(token);
+      void this.mediasoupService.closeRoom(token).catch(() => undefined);
+      this.calibrationAttempted.delete(token);
+      this.processStartedAfterCalibration.delete(token);
+      this.lastCalibrationFrames.delete(token);
+      this.stopAutoCalibration(token);
+    }
+    for (const [clientId, t] of [...this.streamers.entries()]) {
+      if (t === token) {
+        this.streamers.delete(clientId);
+      }
+    }
+    const roomId = `stream:${token}`;
+    this.server.to(roomId).emit('stream-stopped', { token });
+  }
+
   @SubscribeMessage('stop-stream')
-  handleStopStream(
+  async handleStopStream(
     @MessageBody() data: { token: string },
     @ConnectedSocket() client: Socket,
   ) {
     const { token } = data;
-
-    if (token) {
-      this.chessRecognitionService.stopStreamProcessing(token);
+    if (!token) {
+      return;
     }
 
-    // Убираем клиента из стримеров
-    this.streamers.delete(client.id);
-    // Очищаем флаги калибровки и процесса при остановке стрима
-    if (token) {
-      this.calibrationAttempted.delete(token);
-      this.processStartedAfterCalibration.delete(token);
-      this.lastCalibrationFrames.delete(token);
-      // Останавливаем автоматическую калибровку
-      this.stopAutoCalibration(token);
+    const isStreamer = this.streamers.get(client.id) === token;
+    if (isStreamer) {
+      this.stopStreamForToken(token);
+      this.clientGameTokens.delete(client.id);
+      client.emit('stream-stopped', { token });
+      return;
     }
 
-    // Уведомляем всех в комнате, что стрим остановлен
-    const roomId = `stream:${token}`;
-    this.server.to(roomId).emit('stream-stopped', { token });
+    const userId = await this.resolveSocketUserId(client);
+    if (userId != null) {
+      try {
+        await this.gameService.assertCreatorOwnsGame(userId, token);
+        this.logger.log(
+          `📹 Creator ${userId} stopped stream remotely for token ${token}`,
+        );
+        this.stopStreamForToken(token);
+        client.emit('stream-stopped', { token });
+        return;
+      } catch {
+        /* не создатель — только отключить себя */
+      }
+    }
 
     this.clientGameTokens.delete(client.id);
     client.emit('stream-stopped', { token });
@@ -1053,6 +1135,7 @@ export class ChessRecognitionGateway
 
           // Останавливаем таймер СРАЗУ, чтобы избежать повторных срабатываний
           this.stopAutoCalibration(token);
+          this.calibrationAttempted.delete(token);
 
           // Проверяем еще раз, что маппинг создан (защита от race condition)
           if (!this.chessRecognitionService.hasMapping(token)) {
@@ -1062,7 +1145,8 @@ export class ChessRecognitionGateway
             return;
           }
 
-          client.emit('calibration-completed', {
+          const roomId = `stream:${token}`;
+          this.server.to(roomId).emit('calibration-completed', {
             message: 'Доска успешно определена автоматически',
             mappingData: calibrationResult.mappingData,
           });
@@ -1095,7 +1179,7 @@ export class ChessRecognitionGateway
               : cwd;
           const defaultModelPath =
             process.env.YOLO_MODEL_PATH ||
-            join(projectRoot, 'chess-recognition', 'bestmerged_new.pt');
+            join(projectRoot, 'chess-recognition', 'models', 'bestmerged_new.pt');
 
           // Устанавливаем флаг ДО запуска процесса (защита от race condition)
           this.processStartedAfterCalibration.set(token, true);
@@ -1116,11 +1200,15 @@ export class ChessRecognitionGateway
                   this.logger.log(
                     `🔍 [DETECTION] Token ${token}: Found ${detInfo.total_detections} pieces (${classesStr})`,
                   );
-                } else {
-                  this.logger.debug(
-                    `🔍 [DETECTION] Token ${token}: No pieces detected${detInfo.message ? ` - ${detInfo.message}` : ''}`,
-                  );
-                }
+              } else {
+                const handNote =
+                  detInfo.hand_detected === true
+                    ? ' (hand on board — position frozen)'
+                    : '';
+                this.logger.log(
+                  `🔍 [DETECTION] Token ${token}: No pieces detected${detInfo.message ? ` - ${detInfo.message}` : ''}${handNote}`,
+                );
+              }
               }
 
               // Отправляем результат стримеру
@@ -1142,10 +1230,21 @@ export class ChessRecognitionGateway
             },
           );
         } else {
-          // Калибровка не удалась - продолжаем попытки (не показываем ошибку пользователю)
           this.logger.debug(
             `⚠️ [AUTO-CALIBRATION] Calibration attempt failed for token ${token}: ${calibrationResult.message}`,
           );
+          const failKey = `cal_fail_emit_${token}`;
+          const lastFail = (this as any)[failKey] as number | undefined;
+          const now = Date.now();
+          if (!lastFail || now - lastFail > 12000) {
+            (this as any)[failKey] = now;
+            const roomId = `stream:${token}`;
+            this.server.to(roomId).emit('calibration-failed', {
+              message:
+                calibrationResult.message ||
+                'Не удалось определить доску. Наведите камеру на доску целиком.',
+            });
+          }
         }
       } catch (error) {
         // Ошибка при калибровке - продолжаем попытки (не показываем ошибку пользователю)

@@ -1,19 +1,21 @@
 """
-Детекция руки на выпрямленном кадре доски через MediaPipe Hands.
-Учитываются только landmarks внутри полигона игрового поля (не область за доской на warped-кадре).
+Детекция руки на выпрямленном кадре доски через MediaPipe Hand Landmarker (Tasks API).
+Учитываются только landmarks внутри полигона игрового поля.
 """
 from __future__ import annotations
 
 import threading
 from dataclasses import dataclass
-from typing import Optional
-
 import cv2
 import mediapipe as mp
 import numpy as np
+from mediapipe.tasks import python as mp_tasks
+from mediapipe.tasks.python import vision
 
-_hands_solution = None
+from model_paths import hand_landmarker_model_path
+
 _hands_lock = threading.Lock()
+_hand_landmarker: vision.HandLandmarker | None = None
 
 
 @dataclass
@@ -22,6 +24,24 @@ class HandDetectionResult:
     landmarks_inside: int
     hands_seen: int
     available: bool
+
+
+def _get_landmarker() -> vision.HandLandmarker:
+    global _hand_landmarker
+    with _hands_lock:
+        if _hand_landmarker is None:
+            options = vision.HandLandmarkerOptions(
+                base_options=mp_tasks.BaseOptions(
+                    model_asset_path=hand_landmarker_model_path(),
+                ),
+                num_hands=2,
+                min_hand_detection_confidence=0.5,
+                min_hand_presence_confidence=0.5,
+                min_tracking_confidence=0.5,
+                running_mode=vision.RunningMode.IMAGE,
+            )
+            _hand_landmarker = vision.HandLandmarker.create_from_options(options)
+        return _hand_landmarker
 
 
 def _point_in_quad(px: float, py: float, quad: np.ndarray) -> bool:
@@ -44,20 +64,6 @@ def board_quad_from_square_corners(square_corners: np.ndarray) -> np.ndarray:
     return np.array([sc[0, 0], sc[0, 8], sc[8, 8], sc[8, 0]], dtype=np.float32)
 
 
-def _get_hands():
-    global _hands_solution
-    with _hands_lock:
-        if _hands_solution is None:
-            _hands_solution = mp.solutions.hands.Hands(
-                static_image_mode=True,
-                max_num_hands=2,
-                model_complexity=0,
-                min_detection_confidence=0.5,
-                min_tracking_confidence=0.5,
-            )
-        return _hands_solution
-
-
 def detect_hand_on_board(
     warped_bgr: np.ndarray,
     square_corners: np.ndarray,
@@ -65,29 +71,31 @@ def detect_hand_on_board(
 ) -> HandDetectionResult:
     """
     Рука считается на доске, если у какой-либо ладони >= min_landmarks_inside
-    landmark-ов (MediaPipe) попадают внутрь полигона игрового поля.
+    landmark-ов попадают внутрь полигона игрового поля.
     """
     empty = HandDetectionResult(False, 0, 0, False)
     if warped_bgr is None or square_corners is None:
         return empty
 
-    hands = _get_hands()
     h, w = warped_bgr.shape[:2]
     if h == 0 or w == 0:
         return HandDetectionResult(False, 0, 0, True)
 
+    landmarker = _get_landmarker()
     rgb = cv2.cvtColor(warped_bgr, cv2.COLOR_BGR2RGB)
-    results = hands.process(rgb)
-    if not results.multi_hand_landmarks:
+    mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
+    results = landmarker.detect(mp_image)
+
+    if not results.hand_landmarks:
         return HandDetectionResult(False, 0, 0, True)
 
     board_quad = board_quad_from_square_corners(square_corners)
     best_inside = 0
-    hands_seen = len(results.multi_hand_landmarks)
+    hands_seen = len(results.hand_landmarks)
 
-    for hand_lm in results.multi_hand_landmarks:
+    for hand_lm in results.hand_landmarks:
         inside = 0
-        for lm in hand_lm.landmark:
+        for lm in hand_lm:
             px = lm.x * w
             py = lm.y * h
             if _point_in_quad(px, py, board_quad):
@@ -99,8 +107,8 @@ def detect_hand_on_board(
 
 
 def close_hand_detector() -> None:
-    global _hands_solution
+    global _hand_landmarker
     with _hands_lock:
-        if _hands_solution is not None:
-            _hands_solution.close()
-            _hands_solution = None
+        if _hand_landmarker is not None:
+            _hand_landmarker.close()
+            _hand_landmarker = None

@@ -22,6 +22,8 @@ export type ChessStreamSocketRegisterContext = {
   setMappingData: Dispatch<SetStateAction<Record<string, unknown> | null>>;
   setPositionFromFen: (fen: string) => void;
   onGameFinished?: () => void;
+  /** Стрим остановлен с другого устройства или сервером. */
+  onStreamStopped?: () => void;
   captureAndSendFrame: () => void;
   initMediasoupDevice: (
     rtp: mediasoupClient.types.RtpCapabilities,
@@ -35,6 +37,20 @@ export function registerChessStreamSocketHandlers(
   newSocket: Socket,
   ctx: ChessStreamSocketRegisterContext,
 ): void {
+  const applyStreamSync = (data: {
+    boardCalibrated?: boolean;
+    gameInProgress?: boolean;
+  }) => {
+    if (data.boardCalibrated) {
+      setCalibrationCompleted(true);
+      setCalibrationInProgress(false);
+      setCalibrationMessage('Доска откалибрована');
+    }
+    if (data.gameInProgress) {
+      setGameStarted(true);
+    }
+  };
+
   const {
     gameToken,
     modelPath,
@@ -50,6 +66,7 @@ export function registerChessStreamSocketHandlers(
     setMappingData,
     setPositionFromFen,
     onGameFinished,
+    onStreamStopped,
     captureAndSendFrame,
     initMediasoupDevice,
     createProducer,
@@ -116,12 +133,28 @@ export function registerChessStreamSocketHandlers(
       newSocket.emit('join-stream', { token: gameToken });
       setIsStreaming(true);
     } else {
-      newSocket.emit('start-stream', { token: gameToken, modelPath });
+      let attempts = 0;
+      const emitStartStream = () => {
+        if (streamRef.current?.active) {
+          newSocket.emit('start-stream', { token: gameToken, modelPath });
+          return;
+        }
+        attempts += 1;
+        if (attempts < 80) {
+          setTimeout(emitStartStream, 100);
+        } else {
+          notifyError(
+            'Камера не готова. Разрешите доступ к камере и нажмите «Запустить видеопоток» снова.',
+          );
+        }
+      };
+      emitStartStream();
     }
   });
 
-  newSocket.on('stream-started', () => {
+  newSocket.on('stream-started', (data?: { boardCalibrated?: boolean; gameInProgress?: boolean }) => {
     setIsStreaming(true);
+    if (data) applyStreamSync(data);
     if (!viewer) {
       setCalibrationCompleted(false);
       setCalibrationInProgress(false);
@@ -141,6 +174,7 @@ export function registerChessStreamSocketHandlers(
       };
       startSendingFrames();
 
+      let producerAttempts = 0;
       const tryCreateProducer = () => {
         if (streamRef.current && !producerRef.current) {
           try {
@@ -148,15 +182,14 @@ export function registerChessStreamSocketHandlers(
           } catch {
             /* ignore */
           }
-        } else {
+          return;
+        }
+        producerAttempts += 1;
+        if (producerAttempts < 100) {
           setTimeout(tryCreateProducer, 100);
         }
       };
-      if (streamRef.current) {
-        tryCreateProducer();
-      } else {
-        setTimeout(tryCreateProducer, 200);
-      }
+      tryCreateProducer();
     }
   });
 
@@ -214,8 +247,9 @@ export function registerChessStreamSocketHandlers(
     }
   });
 
-  newSocket.on('stream-joined', () => {
+  newSocket.on('stream-joined', (data?: { boardCalibrated?: boolean; gameInProgress?: boolean }) => {
     setIsStreaming(true);
+    if (data) applyStreamSync(data);
     if (viewer) {
       try {
         newSocket.emit('get-router-rtp-capabilities', { token: gameToken });
@@ -233,7 +267,9 @@ export function registerChessStreamSocketHandlers(
         setHasVideoStream(false);
       }
       setIsStreaming(false);
+      return;
     }
+    onStreamStopped?.();
   });
 
   newSocket.on('calibration-started', (data: { message: string }) => {
@@ -254,6 +290,14 @@ export function registerChessStreamSocketHandlers(
       frameIntervalRef.current = null;
     }
     onGameFinished?.();
+  });
+
+  newSocket.on('calibration-failed', (data: { message: string }) => {
+    setCalibrationInProgress(true);
+    setCalibrationCompleted(false);
+    setCalibrationMessage(
+      data.message || 'Калибровка не удалась. Наведите камеру на доску.',
+    );
   });
 
   newSocket.on('calibration-completed', (data: { message: string; mappingData?: unknown }) => {
@@ -308,10 +352,10 @@ export function registerChessStreamSocketHandlers(
 
   newSocket.on('error', (error: { message: string }) => {
     const msg = error.message ?? '';
-    if (
-      msg === 'Требуется авторизация для трансляции' &&
-      (streamRef.current || frameIntervalRef.current)
-    ) {
+    if (msg === 'Требуется авторизация для трансляции') {
+      notifyError(
+        'Сессия не передана на сервер. Выйдите и войдите снова на этом устройстве, затем запустите видеопоток.',
+      );
       return;
     }
     notifyError(msg);
@@ -332,13 +376,6 @@ export function registerChessStreamSocketHandlers(
   });
 
   newSocket.on('reconnect', async () => {
-    const { resolveChessStreamSocketAuth } = await import(
-      '@/lib/chess-stream/ws-socket-auth'
-    );
-    const auth = await resolveChessStreamSocketAuth();
-    if (auth.ticket) {
-      newSocket.auth = auth;
-    }
     if (viewerRef.current) {
       newSocket.emit('join-stream', { token: gameToken });
       newSocket.emit('get-router-rtp-capabilities', { token: gameToken });

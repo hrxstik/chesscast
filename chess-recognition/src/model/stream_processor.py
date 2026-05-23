@@ -480,7 +480,9 @@ class StreamProcessor:
                     changed_squares.append((i, j))
         
         if len(changed_squares) != 2:
-            # Если изменений не 2 клетки, сбрасываем ожидаемый ход
+            fallback = self._find_move_by_board_match(current_state)
+            if fallback is not None:
+                return self._confirm_pending_move(fallback, current_state)
             self.pending_move = None
             self.pending_move_frames = 0
             return None
@@ -508,31 +510,62 @@ class StreamProcessor:
                 invalid_moves.append(f"{from_square}{to_square}(error: {str(e)})")
         
         if detected_move is None:
-            # Ход невалидный, сбрасываем ожидание
+            fallback = self._find_move_by_board_match(current_state)
+            if fallback is not None:
+                return self._confirm_pending_move(fallback, current_state)
             self.pending_move = None
             self.pending_move_frames = 0
             return None
-        
-        # Проверяем стабильность хода
+
+        return self._confirm_pending_move(detected_move, current_state)
+
+    def _confirm_pending_move(
+        self,
+        detected_move: chess.Move,
+        current_state: np.ndarray,
+    ) -> Optional[chess.Move]:
         if self.pending_move == detected_move:
-            # Тот же ход, увеличиваем счетчик
             self.pending_move_frames += 1
             if self.pending_move_frames >= self.move_confirmation_frames:
-                # Ход подтвержден, возвращаем его и сбрасываем ожидание
                 confirmed_move = self.pending_move
                 self.last_confirmed_move = confirmed_move
-                self.move_lock_frames = self.move_lock_duration  # Блокируем изменения на несколько кадров
+                self.move_lock_frames = self.move_lock_duration
                 self.pending_move = None
                 self.pending_move_frames = 0
-                # Обновляем previous_board_state на текущее состояние, чтобы предотвратить откат
                 self.previous_board_state = current_state.copy()
                 return confirmed_move
         else:
-            # Новый ход, начинаем отсчет заново
             self.pending_move = detected_move
             self.pending_move_frames = 1
-        
         return None
+
+    def _board_match_score(
+        self,
+        observed: np.ndarray,
+        expected: np.ndarray,
+    ) -> int:
+        return int(np.sum(observed == expected))
+
+    def _find_move_by_board_match(
+        self,
+        current_state: np.ndarray,
+    ) -> Optional[chess.Move]:
+        """Если YOLO шумит (>2 клеток), ищем единственный легальный ход по совпадению позиции."""
+        if self.previous_board_state is None:
+            return None
+        best_move: Optional[chess.Move] = None
+        best_score = -1
+        for move in self.virtual_board.legal_moves:
+            trial = self.virtual_board.copy()
+            trial.push(move)
+            predicted = VirtualBoard(fen=trial.fen()).state()
+            score = self._board_match_score(current_state, predicted)
+            if score > best_score:
+                best_score = score
+                best_move = move
+        if best_move is None or best_score < 56:
+            return None
+        return best_move
     
     def _detect_move(self, current_state: np.ndarray) -> Optional[chess.Move]:
         """Старый метод детекции хода (deprecated, используйте _detect_move_stable)"""

@@ -23,6 +23,8 @@ import { GameSessionPublicDto } from 'src/dtos/game/game-session-public.dto';
 import { GameListItemDto } from 'src/dtos/game/game-list-item.dto';
 import crypto from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
+import { ChessRecognitionService } from '../chess-recognition/chess-recognition.service';
+import { MediasoupService } from '../chess-recognition/mediasoup.service';
 
 @Injectable()
 export class GameService {
@@ -31,6 +33,10 @@ export class GameService {
     @Inject(forwardRef(() => OrganizationService))
     private readonly organizationService: OrganizationService,
     private readonly prisma: PrismaService,
+    @Inject(forwardRef(() => ChessRecognitionService))
+    private readonly chessRecognitionService: ChessRecognitionService,
+    @Inject(forwardRef(() => MediasoupService))
+    private readonly mediasoupService: MediasoupService,
   ) {}
 
   async getByToken(token: string, viewerUserId?: number): Promise<GameWithAccess> {
@@ -42,6 +48,17 @@ export class GameService {
       throw new ForbiddenException('Нет доступа к этой партии');
     }
     return game;
+  }
+
+  async getStreamSyncState(token: string): Promise<{
+    gameInProgress: boolean;
+    boardCalibrated: boolean;
+  }> {
+    const game = await this.gameRepository.findByToken(token);
+    return {
+      gameInProgress: game?.status === GameStatus.IN_PROGRESS,
+      boardCalibrated: this.chessRecognitionService.hasMapping(token),
+    };
   }
 
   async getSessionPublicByToken(
@@ -61,13 +78,17 @@ export class GameService {
     if (!canView) {
       throw new ForbiddenException('Нет доступа к этой партии');
     }
+    const [hasLiveStream, boardCalibrated] = await Promise.all([
+      this.mediasoupService.hasActiveVideoProducer(game.token),
+      Promise.resolve(this.chessRecognitionService.hasMapping(game.token)),
+    ]);
+
     return {
       id: game.id,
       token: game.token,
       result: game.result,
       status: game.status,
       visibility: game.visibility,
-      initialPosition: game.initialPosition,
       moves: game.moves,
       createdAt: game.createdAt,
       organization: game.organization
@@ -80,6 +101,8 @@ export class GameService {
         color: u.color,
       })),
       ...access,
+      hasLiveStream,
+      boardCalibrated,
     };
   }
 
@@ -164,6 +187,51 @@ export class GameService {
   }
 
   /** Создатель партии: активная подписка с canStream (суперадмин — без проверки). */
+  async assertCanWatchLiveByToken(
+    token: string,
+    viewerUserId?: number,
+  ): Promise<void> {
+    const game = await this.gameRepository.findByToken(token);
+    if (!game || game.deletedAt) {
+      throw new NotFoundException(`Game with token ${token} not found`);
+    }
+    const canWatch = await this.canUserWatchLive(game, viewerUserId);
+    if (!canWatch) {
+      throw new ForbiddenException('Нет доступа к трансляции');
+    }
+  }
+
+  /** join-stream: зрители + создатель со второго устройства (remoteMedia). */
+  async assertCanJoinStreamRoom(
+    token: string,
+    userId?: number,
+  ): Promise<void> {
+    const game = await this.gameRepository.findByToken(token);
+    if (!game || game.deletedAt) {
+      throw new NotFoundException(`Game with token ${token} not found`);
+    }
+    const isLive =
+      game.status === GameStatus.PENDING ||
+      game.status === GameStatus.IN_PROGRESS;
+    if (!isLive) {
+      throw new ForbiddenException('Трансляция недоступна');
+    }
+    if (userId != null && game.creatorId === userId) {
+      return;
+    }
+    await this.assertCanWatchLiveByToken(token, userId);
+  }
+
+  async assertCreatorOwnsGame(userId: number, token: string): Promise<void> {
+    const game = await this.gameRepository.findByToken(token);
+    if (!game || game.deletedAt) {
+      throw new NotFoundException('Партия не найдена');
+    }
+    if (game.creatorId !== userId) {
+      throw new ForbiddenException('Нет прав на управление трансляцией');
+    }
+  }
+
   async assertCreatorCanStream(userId: number, token: string): Promise<void> {
     const game = await this.gameRepository.findByToken(token);
     if (!game || game.deletedAt) {
@@ -512,7 +580,6 @@ export class GameService {
       organization: data.organizationId
         ? { connect: { id: data.organizationId } }
         : undefined,
-      initialPosition: 'startpos',
       status: GameStatus.PENDING,
       result: GameResult.CANCELLED,
     };

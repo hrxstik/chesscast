@@ -13,7 +13,6 @@ export type GameSessionPublicDto = {
   result: GameResult;
   status: GameStatus;
   visibility: GameVisibility;
-  initialPosition: string;
   moves: string[];
   createdAt: Date;
   organization: { id: number; name: string } | null;
@@ -21,4 +20,8 @@ export type GameSessionPublicDto = {
   canConduct: boolean;
   canWatchLive: boolean;
   canAnalyze: boolean;
+  /** Есть активный WebRTC producer (трансляция с другого устройства). */
+  hasLiveStream: boolean;
+  /** Сохранён маппинг доски после калибровки. */
+  boardCalibrated: boolean;
 };

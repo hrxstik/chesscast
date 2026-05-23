@@ -146,10 +146,11 @@ def _default_model_path() -> str:
     # src/improved_board_mapping.py -> chess-recognition/
     project_root = Path(__file__).resolve().parent.parent
     for name in ('bestmerged_new.pt', 'bestmerged.pt'):
-        candidate = project_root / name
-        if candidate.exists():
-            return str(candidate)
-    return str(project_root / 'bestmerged_new.pt')
+        for base in (project_root / 'models', project_root):
+            candidate = base / name
+            if candidate.exists():
+                return str(candidate)
+    return str(project_root / 'models' / 'bestmerged_new.pt')
 
 
 def _default_corner_model_path() -> str:
@@ -160,7 +161,8 @@ def _default_corner_model_path() -> str:
     project_root = Path(__file__).resolve().parent.parent
     # Ищем модель в возможных местах (приоритет модели с zoom out аугментацией)
     possible_paths = [
-        project_root / 'models_resnet' / 'best_resnet34_board_corners.pt',  # Старая модель
+        project_root / 'models' / 'best_resnet34_board_corners.pt',
+        project_root / 'models_resnet' / 'best_resnet34_board_corners.pt',
         project_root / 'best_resnet34_board_corners.pt',
         project_root / 'models_resnet' / 'best_resnet18_board_corners.pt',
         project_root / 'best_resnet18_board_corners.pt',

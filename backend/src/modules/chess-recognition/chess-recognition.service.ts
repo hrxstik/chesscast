@@ -5,7 +5,7 @@ import {
   OnModuleInit,
 } from '@nestjs/common';
 import { spawn, ChildProcess } from 'child_process';
-import { join } from 'path';
+import { join, resolve } from 'path';
 import { writeFile, mkdir, unlink } from 'fs/promises';
 import { existsSync, readFileSync } from 'fs';
 
@@ -108,10 +108,10 @@ export class ChessRecognitionService implements OnModuleInit, OnModuleDestroy {
     return {
       yolo:
         process.env.YOLO_MODEL_PATH ||
-        join(chessRoot, 'bestmerged_new.pt'),
+        join(chessRoot, 'models', 'bestmerged_new.pt'),
       corner:
         process.env.CORNER_MODEL_PATH ||
-        join(chessRoot, 'best_resnet34_board_corners.pt'),
+        join(chessRoot, 'models', 'best_resnet34_board_corners.pt'),
     };
   }
 
@@ -128,11 +128,12 @@ export class ChessRecognitionService implements OnModuleInit, OnModuleDestroy {
       this.workerReadyResolve = resolve;
     });
 
+    const pythonBin = this.getPythonBin();
     this.logger.log(
-      `Starting CV inference worker (single YOLO + ResNet): yolo=${yolo}`,
+      `Starting CV inference worker (python=${pythonBin}, yolo=${yolo})`,
     );
 
-    this.worker = spawn(this.getPythonBin(), [
+    this.worker = spawn(pythonBin, [
         script,
         '--mappings-dir',
         this.mappingsDir,
@@ -376,9 +377,19 @@ export class ChessRecognitionService implements OnModuleInit, OnModuleDestroy {
       });
   }
 
+  private readonly sendFrameSkipLogAt = new Map<string, number>();
+
   sendFrame(gameToken: string, frameData: Buffer): void {
     const session = this.sessions.get(gameToken);
     if (!session || !this.worker?.stdin || this.worker.killed) {
+      const now = Date.now();
+      const last = this.sendFrameSkipLogAt.get(gameToken) ?? 0;
+      if (now - last > 5000) {
+        this.sendFrameSkipLogAt.set(gameToken, now);
+        this.logger.warn(
+          `Frame dropped for ${gameToken}: CV session not active (mapping ok=${this.hasMapping(gameToken)}, worker=${!!this.worker && !this.worker.killed})`,
+        );
+      }
       return;
     }
 
@@ -450,6 +461,16 @@ export class ChessRecognitionService implements OnModuleInit, OnModuleDestroy {
   }
 
   private getPythonBin(): string {
-    return process.env.PYTHON_BIN || (process.platform === 'win32' ? 'python' : 'python3');
+    const venvPython =
+      process.platform === 'win32'
+        ? resolve(this.getChessRecognitionRoot(), '.venv', 'Scripts', 'python.exe')
+        : resolve(this.getChessRecognitionRoot(), '.venv', 'bin', 'python3');
+    if (existsSync(venvPython)) {
+      return venvPython;
+    }
+    if (process.env.PYTHON_BIN?.trim()) {
+      return process.env.PYTHON_BIN.trim();
+    }
+    return process.platform === 'win32' ? 'python' : 'python3';
   }
 }

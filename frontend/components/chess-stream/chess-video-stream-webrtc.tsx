@@ -38,12 +38,17 @@ interface ChessVideoStreamProps {
   gameToken: string;
   modelPath?: string;
   viewer?: boolean;
+  /** Ведущий смотрит трансляцию с телефона (без локальной камеры). */
+  remoteMedia?: boolean;
+  onLocalStreamActive?: () => void;
 }
 
 export const ChessVideoStreamWebRTC: React.FC<ChessVideoStreamProps> = ({
   gameToken,
   modelPath,
   viewer = false,
+  remoteMedia = false,
+  onLocalStreamActive,
 }) => {
   const router = useRouter();
   const {
@@ -93,7 +98,7 @@ export const ChessVideoStreamWebRTC: React.FC<ChessVideoStreamProps> = ({
   const finalFen = React.useMemo(
     () =>
       session
-        ? buildFenFromMoves(session.moves, session.initialPosition)
+        ? buildFenFromMoves(session.moves)
         : (chessboardOptions.position as string),
     [session, chessboardOptions.position],
   );
@@ -113,6 +118,10 @@ export const ChessVideoStreamWebRTC: React.FC<ChessVideoStreamProps> = ({
     gameToken,
     modelPath,
     viewer,
+    remoteMedia,
+    onLocalStreamActive,
+    initialBoardCalibrated: session?.boardCalibrated ?? false,
+    initialGameInProgress: session?.status === "IN_PROGRESS",
     setPositionFromFen,
     onGameFinished: () => {
       void loadSession();
@@ -171,9 +180,11 @@ export const ChessVideoStreamWebRTC: React.FC<ChessVideoStreamProps> = ({
               {!hasVideoStream && !videoRef.current?.srcObject ? (
                 <div className="absolute inset-0 flex flex-col items-center justify-center gap-4 bg-black/90 px-4 text-center">
                   <Text className="!mb-0 text-primary-foreground">
-                    {viewerMode ? "Ожидание видеопотока…" : "Видео не запущено"}
+                    {viewerMode || remoteMedia
+                      ? "Подключение к трансляции…"
+                      : "Видео не запущено"}
                   </Text>
-                  {!isStreaming && !viewerMode && !gameFinished ? (
+                  {!isStreaming && !viewerMode && !remoteMedia && !gameFinished ? (
                     <Button type="button" onClick={startStreaming}>
                       Запустить видеопоток
                     </Button>
@@ -182,7 +193,7 @@ export const ChessVideoStreamWebRTC: React.FC<ChessVideoStreamProps> = ({
               ) : null}
               {hasVideoStream && videoRef.current?.srcObject ? (
                 <Badge className="absolute left-2 top-2 z-10" variant="secondary">
-                  {viewerMode ? "Просмотр" : "Камера"}
+                  {viewerMode ? "Просмотр" : remoteMedia ? "Трансляция" : "Камера"}
                 </Badge>
               ) : null}
               <canvas ref={canvasRef} className="hidden" />
@@ -218,7 +229,7 @@ export const ChessVideoStreamWebRTC: React.FC<ChessVideoStreamProps> = ({
             <ChessStreamStreamerControls
               {...streamerControlsProps}
               showControls={!viewerMode && !gameFinished}
-              canStopStream={hasVideoStream}
+              canStopStream={hasVideoStream || (remoteMedia && isStreaming)}
               gameFinished={gameFinished}
               onOpenFinishGame={() => setFinishOpen(true)}
             />

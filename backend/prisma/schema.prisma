@@ -84,7 +84,6 @@ model Game {
   creator    User?          @relation("GameCreator", fields: [creatorId], references: [id])
   creatorId  Int?
 
-  initialPosition String   @default("startpos")
   moves           String[] @default([])
 
   createdAt DateTime  @default(now())

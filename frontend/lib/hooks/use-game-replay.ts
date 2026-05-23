@@ -3,12 +3,9 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Chess } from 'chess.js';
 
-function buildFenTimeline(moves: string[], initialPosition: string): string[] {
+function buildFenTimeline(moves: string[]): string[] {
   try {
-    const chess =
-      initialPosition && initialPosition !== 'startpos'
-        ? new Chess(initialPosition)
-        : new Chess();
+    const chess = new Chess();
     const fens = [chess.fen()];
     for (const san of moves) {
       const played = chess.move(san, { strict: false });
@@ -21,11 +18,8 @@ function buildFenTimeline(moves: string[], initialPosition: string): string[] {
   }
 }
 
-export function useGameReplay(moves: string[], initialPosition = 'startpos') {
-  const fens = useMemo(
-    () => buildFenTimeline(moves, initialPosition),
-    [moves, initialPosition],
-  );
+export function useGameReplay(moves: string[]) {
+  const fens = useMemo(() => buildFenTimeline(moves), [moves]);
   const maxPly = Math.max(0, fens.length - 1);
   const [ply, setPly] = useState(0);
 
@@ -51,7 +45,6 @@ export function useGameReplay(moves: string[], initialPosition = 'startpos') {
     goEnd,
     goPrev,
     goNext,
-    /** Синхронизировать ply с полной линией ходов (после загрузки с API). */
     syncToEnd: useCallback(() => setPly(maxPly), [maxPly]),
   };
 }

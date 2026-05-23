@@ -38,7 +38,6 @@ export async function apiFetch<T>(
   if (body !== undefined && !(body instanceof FormData)) {
     headers.set("Content-Type", "application/json");
   }
-
   const doFetch = async () => {
     try {
       return await fetch(url, {
@@ -89,7 +88,9 @@ export async function apiFetch<T>(
       else if (Array.isArray(raw)) msg = raw.map(String).join(", ");
     }
     const err = new ApiError(msg || "Request failed", res.status, data);
-    if (!options.silent && typeof window !== "undefined") {
+    const quietAuth =
+      msg === "Refresh token missing" || msg === "Authorization token missing";
+    if (!options.silent && !quietAuth && typeof window !== "undefined") {
       toast.error(err.message);
     }
     throw err;

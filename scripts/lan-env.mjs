@@ -53,7 +53,9 @@ export function applyLanDevEnv(opts = {}) {
   }
 
   process.env.LAN_IP = lan;
+  // Браузер напрямую на Nest (mkcert в браузере); без прокси Next → нет TLS-ошибок Node.
   process.env.NEXT_PUBLIC_NEST_API_URL = `${apiOrigin}/api`;
+  process.env.NEXT_PUBLIC_NEST_WS_URL = `${apiOrigin.replace(/^http/, 'ws')}/ws`;
   process.env.NEST_URL = apiOrigin;
   process.env.NEST_INTERNAL_API_URL = `${apiOrigin}/api`;
   process.env.NEXT_PUBLIC_NEST_WS_PORT = apiPort;

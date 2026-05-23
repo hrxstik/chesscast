@@ -19,10 +19,14 @@ export function humanizeErrorMessage(message: string): string {
   if (m === 'Authorization token missing') {
     return 'Требуется вход в аккаунт';
   }
+  if (m === 'Refresh token missing') {
+    return '';
+  }
   return m;
 }
 
 export function notifyError(message: string): void {
   const text = humanizeErrorMessage(message);
+  if (!text) return;
   toast.error(text);
 }

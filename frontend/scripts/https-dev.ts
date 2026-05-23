@@ -2,9 +2,8 @@ import { spawn } from 'child_process';
 import path from 'path';
 import fs from 'fs';
 import { config } from 'dotenv';
-import { applyLanDevEnv, printLanBanner } from '../../scripts/lan-env.mjs';
-
 import { fileURLToPath } from 'url';
+import { applyLanDevEnv, printLanBanner } from '../../scripts/lan-env.mjs';
 
 const frontendDir = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 config({ path: path.join(frontendDir, '.env') });

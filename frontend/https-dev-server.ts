@@ -1,8 +1,7 @@
-import { createServer } from 'https';
-import { parse } from 'url';
-import next from 'next';
-import fs from 'fs';
-import path from 'path';
+import { createServer, type ServerOptions } from 'node:https';
+import { parse } from 'node:url';
+import fs from 'node:fs';
+import path from 'node:path';
 import { config } from 'dotenv';
 import { applyLanDevEnv, printLanBanner } from '../scripts/lan-env.mjs';
 
@@ -15,8 +14,6 @@ const { frontOrigin, apiOrigin, protocol } = applyLanDevEnv({ https: true });
 const dev = process.env.NODE_ENV !== 'production';
 const hostname = process.env.HOSTNAME || '0.0.0.0';
 const port = parseInt(process.env.PORT || '3000', 10);
-const app = next({ dev, hostname, port });
-const handle = app.getRequestHandler();
 
 const certPath = process.env.SSL_CERT_PATH
   ? path.resolve(frontendDir, process.env.SSL_CERT_PATH)
@@ -31,12 +28,18 @@ if (!certPath || !keyPath || !fs.existsSync(certPath) || !fs.existsSync(keyPath)
   process.exit(1);
 }
 
-const httpsOptions = {
+const httpsOptions: ServerOptions = {
   key: fs.readFileSync(keyPath),
   cert: fs.readFileSync(certPath),
 };
 
-app.prepare().then(() => {
+async function main() {
+  const next = (await import('next')).default;
+  const app = next({ dev, hostname, port });
+  const handle = app.getRequestHandler();
+
+  await app.prepare();
+
   createServer(httpsOptions, async (req, res) => {
     try {
       const parsedUrl = parse(req.url!, true);
@@ -53,4 +56,6 @@ app.prepare().then(() => {
     .on('error', (err) => {
       console.error('HTTPS server error:', err);
     });
-});
+}
+
+void main();

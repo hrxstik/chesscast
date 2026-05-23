@@ -7,7 +7,7 @@ import {
 import { JwtService } from '@nestjs/jwt';
 import { Request } from 'express';
 import { AuthSessionService } from '../modules/auth/auth-session.service';
-import { accessTokenFromRequest } from '../auth/access-token-from-request.util';
+import { AUTH_COOKIE_NAMES } from '../auth/auth-cookie.constants';
 
 @Injectable()
 export class JwtAuthGuard implements CanActivate {
@@ -18,33 +18,57 @@ export class JwtAuthGuard implements CanActivate {
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const request: Request = context.switchToHttp().getRequest();
-    const token = accessTokenFromRequest(request);
+    const header = request.headers.authorization;
+    const bearer =
+      typeof header === 'string' && header.startsWith('Bearer ')
+        ? header.slice(7).trim()
+        : null;
+    const cookie = request.cookies?.[AUTH_COOKIE_NAMES.access];
+    const fromCookie =
+      typeof cookie === 'string' && cookie.length > 0 ? cookie : null;
+    const candidates = [bearer, fromCookie].filter(
+      (t): t is string => !!t,
+    );
 
-    if (!token) {
+    if (candidates.length === 0) {
       throw new UnauthorizedException('Authorization token missing');
     }
 
-    try {
-      const payload = (await this.jwtService.verifyAsync(token)) as {
-        sub: number;
-        email?: string;
-        platformRole?: string;
-        jti?: string;
-      };
+    let lastErr: unknown;
+    for (const token of candidates) {
+      try {
+        const payload = (await this.jwtService.verifyAsync(token)) as {
+          sub: number | string;
+          email?: string;
+          platformRole?: string;
+          jti?: string;
+        };
 
-      if (await this.sessions.isAccessTokenRevoked(payload.jti)) {
-        throw new UnauthorizedException('Token revoked');
+        if (await this.sessions.isAccessTokenRevoked(payload.jti)) {
+          throw new UnauthorizedException('Token revoked');
+        }
+
+        const sub =
+          typeof payload.sub === 'number'
+            ? payload.sub
+            : Number(String(payload.sub).trim());
+        if (!Number.isFinite(sub)) {
+          throw new UnauthorizedException('Invalid or expired JWT token');
+        }
+
+        request['user'] = {
+          id: sub,
+          email: payload.email,
+          platformRole: payload.platformRole,
+        };
+        return true;
+      } catch (err) {
+        lastErr = err;
+        if (err instanceof UnauthorizedException) throw err;
       }
-
-      request['user'] = {
-        id: payload.sub,
-        email: payload.email,
-        platformRole: payload.platformRole,
-      };
-      return true;
-    } catch (err) {
-      if (err instanceof UnauthorizedException) throw err;
-      throw new UnauthorizedException('Invalid or expired JWT token');
     }
+
+    if (lastErr instanceof UnauthorizedException) throw lastErr;
+    throw new UnauthorizedException('Invalid or expired JWT token');
   }
 }

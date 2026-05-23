@@ -35,7 +35,6 @@ export default function GamePage({ params }: Props) {
 
   const replay = useGameReplay(
     session?.moves ?? [],
-    session?.initialPosition ?? "startpos",
   );
 
   const isExploring =
@@ -44,7 +43,7 @@ export default function GamePage({ params }: Props) {
   const finalFen = React.useMemo(
     () =>
       session
-        ? buildFenFromMoves(session.moves, session.initialPosition)
+        ? buildFenFromMoves(session.moves)
         : replay.currentFen,
     [session, replay.currentFen],
   );

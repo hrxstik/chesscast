@@ -23,6 +23,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from improved_board_mapping import map_chessboard
 from model.hand_detector import close_hand_detector
 from model.stream_processor import StreamProcessor
+from model_paths import corner_model_path, yolo_model_path
 from shared_models import SharedInferenceModels
 
 MAX_FRAME_SIZE = 10 * 1024 * 1024
@@ -111,30 +112,6 @@ class InferenceWorker:
             self.emit({'event': 'calibrate_result', 'token': msg['token'], **result})
             return
 
-        if cmd == 'frame':
-            token = msg['token']
-            length = int(msg['length'])
-            if length <= 0 or length > MAX_FRAME_SIZE:
-                self.emit({
-                    'event': 'frame_result',
-                    'token': token,
-                    'status': 'error',
-                    'message': f'Invalid frame length: {length}',
-                })
-                return
-            frame_data = sys.stdin.buffer.read(length)
-            if len(frame_data) != length:
-                self.emit({
-                    'event': 'frame_result',
-                    'token': token,
-                    'status': 'error',
-                    'message': 'Incomplete frame data',
-                })
-                return
-            result = self.process_frame(token, frame_data)
-            self.emit({'event': 'frame_result', 'token': token, **result})
-            return
-
         if cmd == 'shutdown':
             close_hand_detector()
             self.emit({'event': 'shutdown'})
@@ -142,24 +119,58 @@ class InferenceWorker:
 
         self.emit({'event': 'error', 'message': f'Unknown command: {cmd}'})
 
+    def process_frame_command(self, msg: dict, buffer: bytes) -> bytes:
+        """Читает length байт JPEG из buffer/stdin (не через текстовую строку)."""
+        token = msg['token']
+        length = int(msg['length'])
+        if length <= 0 or length > MAX_FRAME_SIZE:
+            self.emit({
+                'event': 'frame_result',
+                'token': token,
+                'status': 'error',
+                'message': f'Invalid frame length: {length}',
+            })
+            return buffer
+
+        while len(buffer) < length:
+            chunk = sys.stdin.buffer.read1(65536)
+            if not chunk:
+                self.emit({
+                    'event': 'frame_result',
+                    'token': token,
+                    'status': 'error',
+                    'message': 'Incomplete frame data',
+                })
+                return buffer
+            buffer += chunk
+
+        frame_data = buffer[:length]
+        buffer = buffer[length:]
+        result = self.process_frame(token, frame_data)
+        self.emit({'event': 'frame_result', 'token': token, **result})
+        return buffer
+
     def run(self) -> None:
-        buffer = ''
+        buffer = b''
         while True:
-            chunk = sys.stdin.buffer.read1(4096)
+            chunk = sys.stdin.buffer.read1(65536)
             if not chunk:
                 break
-            buffer += chunk.decode('utf-8', errors='replace')
-            while '\n' in buffer:
-                line, buffer = buffer.split('\n', 1)
+            buffer += chunk
+            while b'\n' in buffer:
+                line, buffer = buffer.split(b'\n', 1)
                 line = line.strip()
                 if not line:
                     continue
                 try:
-                    msg = json.loads(line)
+                    msg = json.loads(line.decode('utf-8'))
                 except json.JSONDecodeError as exc:
                     self.emit({'event': 'error', 'message': f'Invalid JSON: {exc}'})
                     continue
-                self.handle_command(msg)
+                if msg.get('cmd') == 'frame':
+                    buffer = self.process_frame_command(msg, buffer)
+                else:
+                    self.handle_command(msg)
 
 
 def main() -> None:
@@ -169,16 +180,16 @@ def main() -> None:
     parser.add_argument('--corner-model', default=None)
     args = parser.parse_args()
 
-    project_root = Path(__file__).resolve().parent.parent
-    yolo_path = args.yolo_model or str(project_root / 'bestmerged_new.pt')
-    corner_path = args.corner_model or str(
-        project_root / 'best_resnet34_board_corners.pt',
-    )
+    yolo_path = args.yolo_model or yolo_model_path()
+    corner_path = args.corner_model or corner_model_path()
     mappings_dir = Path(args.mappings_dir)
     mappings_dir.mkdir(parents=True, exist_ok=True)
 
+    from model.hand_detector import _get_landmarker
+
     worker = InferenceWorker(mappings_dir)
     worker.init_models(yolo_path, corner_path)
+    _get_landmarker()
     worker.emit({'event': 'ready'})
     worker.run()
 

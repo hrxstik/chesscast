@@ -28,6 +28,10 @@ import { PaymentModule } from '../payment/payment.module';
       }),
     }),
     ConfigModule.forRoot({ isGlobal: true }),
+    JwtModule.register({
+      global: true,
+      secret: process.env.JWT_SECRET_KEY,
+    }),
     UploadModule,
     AuthModule,
     PricingModule,
@@ -37,10 +41,6 @@ import { PaymentModule } from '../payment/payment.module';
     AdminModule,
     SubscriptionModule,
     PaymentModule,
-    JwtModule.register({
-      global: true,
-      secret: process.env.JWT_SECRET_KEY,
-    }),
   ],
   controllers: [AppController],
   providers: [AppService],

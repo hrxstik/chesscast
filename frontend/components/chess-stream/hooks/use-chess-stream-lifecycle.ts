@@ -5,7 +5,8 @@ import type { ChessStreamRefs } from './chess-stream-ref-types';
 
 /** Поллинг video.srcObject, автоподключение зрителя, get-producers, размонтирование. */
 export function useChessStreamLifecycle(params: {
-  viewer: boolean;
+  mediaViewer: boolean;
+  remoteMedia?: boolean;
   gameToken: string;
   refs: ChessStreamRefs;
   socket: import('socket.io-client').Socket | null;
@@ -15,7 +16,8 @@ export function useChessStreamLifecycle(params: {
   connectWebSocket: () => void | Promise<void>;
 }) {
   const {
-    viewer,
+    mediaViewer,
+    remoteMedia = false,
     gameToken,
     refs,
     socket,
@@ -24,7 +26,16 @@ export function useChessStreamLifecycle(params: {
     setHasVideoStream,
     connectWebSocket,
   } = params;
-  const { videoRef, streamRef, streamBackupRef, consumerRef, deviceRef, socketRef, frameIntervalRef } = refs;
+  const {
+    videoRef,
+    streamRef,
+    streamBackupRef,
+    consumerRef,
+    producerRef,
+    deviceRef,
+    socketRef,
+    frameIntervalRef,
+  } = refs;
 
   useEffect(() => {
     const updateVideoState = () => {
@@ -76,20 +87,20 @@ export function useChessStreamLifecycle(params: {
   }, [videoRef, streamRef, streamBackupRef, hasVideoStreamRef, setHasVideoStream]);
 
   useEffect(() => {
-    if (viewer && !socket && !isStreaming) {
+    if (mediaViewer && !socket && !isStreaming) {
       void connectWebSocket();
     }
-  }, [viewer, socket, isStreaming, connectWebSocket]);
+  }, [mediaViewer, socket, isStreaming, connectWebSocket]);
 
   useEffect(() => {
-    if (!viewer || consumerRef.current) return;
+    if (!mediaViewer || consumerRef.current) return;
     const interval = setInterval(() => {
       if (socketRef.current && !consumerRef.current && deviceRef.current) {
         socketRef.current.emit('get-producers', { token: gameToken });
       }
     }, 2000);
     return () => clearInterval(interval);
-  }, [viewer, gameToken, consumerRef, deviceRef, socketRef]);
+  }, [mediaViewer, gameToken, consumerRef, deviceRef, socketRef]);
 
   useEffect(() => {
     return () => {
@@ -97,23 +108,42 @@ export function useChessStreamLifecycle(params: {
         clearInterval(frameIntervalRef.current);
         frameIntervalRef.current = null;
       }
-      if (streamRef.current) {
-        streamRef.current.getTracks().forEach((track) => track.stop());
-        streamRef.current = null;
+      const isLocalStreamer = !!producerRef.current || (!remoteMedia && !!streamRef.current);
+      if (isLocalStreamer) {
+        if (streamRef.current) {
+          streamRef.current.getTracks().forEach((track) => track.stop());
+          streamRef.current = null;
+        }
+        if (streamBackupRef.current) {
+          streamBackupRef.current.getTracks().forEach((track) => track.stop());
+          streamBackupRef.current = null;
+        }
       }
-      if (streamBackupRef.current) {
-        streamBackupRef.current.getTracks().forEach((track) => track.stop());
-        streamBackupRef.current = null;
+      if (consumerRef.current) {
+        consumerRef.current.close();
+        consumerRef.current = null;
       }
       if (videoRef.current) {
         videoRef.current.srcObject = null;
       }
       const currentSocket = socketRef.current;
       if (currentSocket) {
-        currentSocket.emit('stop-stream', { token: gameToken });
+        if (isLocalStreamer) {
+          currentSocket.emit('stop-stream', { token: gameToken });
+        }
         currentSocket.disconnect();
         socketRef.current = null;
       }
     };
-  }, [gameToken, frameIntervalRef, streamRef, streamBackupRef, videoRef, socketRef]);
+  }, [
+    gameToken,
+    remoteMedia,
+    frameIntervalRef,
+    producerRef,
+    streamRef,
+    streamBackupRef,
+    consumerRef,
+    videoRef,
+    socketRef,
+  ]);
 }

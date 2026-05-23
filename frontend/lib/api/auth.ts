@@ -33,6 +33,7 @@ export async function refreshSession(): Promise<void> {
   await apiFetch<{ ok: boolean }>('/auth/refresh', {
     method: 'POST',
     skipAuth: true,
+    silent: true,
   });
 }
 
@@ -40,9 +41,11 @@ export async function logoutRequest(): Promise<void> {
   await apiFetch('/auth/logout', { method: 'POST' });
 }
 
-/** Тикет для Socket.IO (обход проблем с cookie в WS handshake). */
+/** Краткоживущий тикет для Socket.IO (обход cookies в WS handshake на :3000→:5000). */
 export async function fetchWsTicket(): Promise<string> {
-  const res = await apiFetch<{ ticket: string }>('/auth/ws-ticket');
+  const res = await apiFetch<{ ticket: string }>('/auth/ws-ticket', {
+    silent: true,
+  });
   return res.ticket;
 }
 
