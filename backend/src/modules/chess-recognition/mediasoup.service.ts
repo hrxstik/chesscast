@@ -9,6 +9,9 @@ interface MediaRoom {
   transports: Map<string, mediasoup.types.WebRtcTransport>;
   producers: Map<string, mediasoup.types.Producer>;
   consumers: Map<string, mediasoup.types.Consumer>;
+  transportOwners: Map<string, string>;
+  producerTransportId: Map<string, string>;
+  consumerTransportId: Map<string, string>;
 }
 
 @Injectable()
@@ -85,6 +88,9 @@ export class MediasoupService {
       transports: new Map(),
       producers: new Map(),
       consumers: new Map(),
+      transportOwners: new Map(),
+      producerTransportId: new Map(),
+      consumerTransportId: new Map(),
     };
 
     this.rooms.set(roomId, room);
@@ -117,23 +123,21 @@ export class MediasoupService {
       preferUdp: true,
     });
 
-    room.transports.set(clientId, transport);
+    room.transports.set(transport.id, transport);
+    room.transportOwners.set(transport.id, clientId);
 
     transport.on('dtlsstatechange', (dtlsState) => {
       if (dtlsState === 'closed') {
         this.logger.log(
-          `Transport ${clientId} DTLS state changed to closed, closing transport`,
+          `Transport ${transport.id} DTLS state changed to closed, closing transport`,
         );
-        transport.close();
-        room.transports.delete(clientId);
-        this.logger.log(`Transport ${clientId} closed`);
+        this.closeTransportInternal(room, roomId, transport.id);
       }
     });
 
     transport.on('@close', () => {
-      this.logger.log(`Transport ${clientId} @close event fired`);
-      room.transports.delete(clientId);
-      this.logger.log(`Transport ${clientId} closed`);
+      this.logger.log(`Transport ${transport.id} @close event fired`);
+      this.closeTransportInternal(room, roomId, transport.id);
     });
 
     return {
@@ -146,7 +150,7 @@ export class MediasoupService {
 
   async connectTransport(
     roomId: string,
-    clientId: string,
+    transportId: string,
     dtlsParameters: mediasoup.types.DtlsParameters,
   ) {
     const room = this.rooms.get(roomId);
@@ -154,30 +158,34 @@ export class MediasoupService {
       throw new Error(`Room ${roomId} not found`);
     }
 
-    const transport = room.transports.get(clientId);
+    const transport = room.transports.get(transportId);
     if (!transport) {
-      throw new Error(`Transport ${clientId} not found`);
+      throw new Error(`Transport ${transportId} not found`);
     }
 
+    if (transport.dtlsState === 'connected') {
+      this.logger.debug(`Transport ${transportId} already connected`);
+      return;
+    }
     await transport.connect({ dtlsParameters });
-    this.logger.log(`Transport ${clientId} connected:`, {
+    this.logger.log(`Transport ${transportId} connected:`, {
       iceState: transport.iceState,
       dtlsState: transport.dtlsState,
     });
 
     // Отслеживаем изменения состояния transport
     transport.on('icestatechange', (state) => {
-      this.logger.log(`Transport ${clientId} ICE state changed: ${state}`);
+      this.logger.log(`Transport ${transportId} ICE state changed: ${state}`);
       // Проверяем проблемные состояния ICE (disconnected - единственное проблемное состояние в типе IceState)
       if (state === 'disconnected') {
-        this.logger.warn(`⚠️ Transport ${clientId} ICE state: ${state}`);
+        this.logger.warn(`⚠️ Transport ${transportId} ICE state: ${state}`);
       }
     });
 
     transport.on('dtlsstatechange', (state) => {
-      this.logger.log(`Transport ${clientId} DTLS state changed: ${state}`);
+      this.logger.log(`Transport ${transportId} DTLS state changed: ${state}`);
       if (state === 'failed' || state === 'closed') {
-        this.logger.warn(`⚠️ Transport ${clientId} DTLS state: ${state}`);
+        this.logger.warn(`⚠️ Transport ${transportId} DTLS state: ${state}`);
       }
     });
   }
@@ -193,9 +201,9 @@ export class MediasoupService {
       throw new Error(`Room ${roomId} not found`);
     }
 
-    const transport = room.transports.get(clientId);
+    const transport = room.transports.get(transportId);
     if (!transport) {
-      throw new Error(`Transport ${clientId} not found`);
+      throw new Error(`Transport ${transportId} not found`);
     }
 
     // Проверяем состояние transport перед созданием producer
@@ -220,6 +228,7 @@ export class MediasoupService {
     });
 
     room.producers.set(producer.id, producer);
+    room.producerTransportId.set(producer.id, transport.id);
     this.logger.log(
       `Producer ${producer.id} created and saved in room ${roomId}. Total producers in room: ${room.producers.size}`,
     );
@@ -228,6 +237,7 @@ export class MediasoupService {
     producer.on('transportclose', () => {
       producer.close();
       room.producers.delete(producer.id);
+      room.producerTransportId.delete(producer.id);
       this.logger.log(
         `Producer ${producer.id} removed from room ${roomId} due to transport close`,
       );
@@ -236,6 +246,7 @@ export class MediasoupService {
     producer.on('@close', () => {
       this.logger.log(`Producer ${producer.id} @close event fired`);
       room.producers.delete(producer.id);
+      room.producerTransportId.delete(producer.id);
     });
 
     // Логируем состояние producer
@@ -325,9 +336,9 @@ export class MediasoupService {
       throw new Error(`Room ${roomId} not found`);
     }
 
-    const transport = room.transports.get(clientId);
+    const transport = room.transports.get(transportId);
     if (!transport) {
-      throw new Error(`Transport ${clientId} not found`);
+      throw new Error(`Transport ${transportId} not found`);
     }
 
     const producer = room.producers.get(producerId);
@@ -342,6 +353,7 @@ export class MediasoupService {
     });
 
     room.consumers.set(consumer.id, consumer);
+    room.consumerTransportId.set(consumer.id, transport.id);
 
     // Логируем состояние consumer
     this.logger.log(`Consumer ${consumer.id} created:`, {
@@ -355,12 +367,14 @@ export class MediasoupService {
     consumer.on('transportclose', () => {
       consumer.close();
       room.consumers.delete(consumer.id);
+      room.consumerTransportId.delete(consumer.id);
       this.logger.log(`Consumer ${consumer.id} removed due to transport close`);
     });
 
     consumer.on('@close', () => {
       this.logger.log(`Consumer ${consumer.id} @close event fired`);
       room.consumers.delete(consumer.id);
+      room.consumerTransportId.delete(consumer.id);
     });
 
     return {
@@ -390,13 +404,79 @@ export class MediasoupService {
     }
   }
 
+  /** Закрыть producer/consumer/transport, router комнаты оставить для переподключения зрителей. */
+  async closeStreamMedia(roomId: string) {
+    const room = this.rooms.get(roomId);
+    if (!room) {
+      return;
+    }
+
+    for (const consumer of room.consumers.values()) {
+      consumer.close();
+    }
+    for (const producer of room.producers.values()) {
+      producer.close();
+    }
+    for (const transport of room.transports.values()) {
+      transport.close();
+    }
+    room.consumers.clear();
+    room.producers.clear();
+    room.transports.clear();
+    room.consumerTransportId.clear();
+    room.producerTransportId.clear();
+    room.transportOwners.clear();
+    this.logger.log(`Stream media cleared in room ${roomId} (router kept)`);
+  }
+
+  closeClientMedia(roomId: string, clientId: string): void {
+    const room = this.rooms.get(roomId);
+    if (!room) return;
+    const transportIds = [...room.transportOwners.entries()]
+      .filter(([, ownerClientId]) => ownerClientId === clientId)
+      .map(([transportId]) => transportId);
+    for (const transportId of transportIds) {
+      this.closeTransportInternal(room, roomId, transportId);
+    }
+  }
+
+  private closeTransportInternal(
+    room: MediaRoom,
+    roomId: string,
+    transportId: string,
+  ): void {
+    const transport = room.transports.get(transportId);
+    if (!transport) return;
+    for (const [consumerId, ownerTransportId] of [...room.consumerTransportId.entries()]) {
+      if (ownerTransportId === transportId) {
+        const consumer = room.consumers.get(consumerId);
+        consumer?.close();
+        room.consumers.delete(consumerId);
+        room.consumerTransportId.delete(consumerId);
+      }
+    }
+    for (const [producerId, ownerTransportId] of [...room.producerTransportId.entries()]) {
+      if (ownerTransportId === transportId) {
+        const producer = room.producers.get(producerId);
+        producer?.close();
+        room.producers.delete(producerId);
+        room.producerTransportId.delete(producerId);
+      }
+    }
+    if (!transport.closed) {
+      transport.close();
+    }
+    room.transports.delete(transportId);
+    room.transportOwners.delete(transportId);
+    this.logger.log(`Transport ${transportId} closed in room ${roomId}`);
+  }
+
   async closeRoom(roomId: string) {
     const room = this.rooms.get(roomId);
     if (!room) {
       return;
     }
 
-    // Закрываем все транспорты
     for (const transport of room.transports.values()) {
       transport.close();
     }
@@ -426,10 +506,6 @@ export class MediasoupService {
       id: producer.id,
       kind: producer.kind,
     }));
-
-    this.logger.log(
-      `Found ${producers.length} producers in room ${roomId}: ${producers.map((p) => `${p.id}(${p.kind})`).join(', ')}`,
-    );
 
     return producers;
   }

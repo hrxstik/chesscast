@@ -855,6 +855,9 @@ def map_chessboard(image: np.ndarray,
         
         # Шаг 3: Генерируем равномерную сетку клеток 8x8
         square_corners = _generate_uniform_square_grid(warped_image, SQUARE_COUNT)
+        if np.asarray(square_corners).shape != (9, 9, 2):
+            result['error'] = 'Invalid square grid generated during calibration'
+            return result
         
         result['square_corners'] = square_corners.tolist()
         result['is_empty'] = pieces_count == 0

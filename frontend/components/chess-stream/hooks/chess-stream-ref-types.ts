@@ -22,4 +22,7 @@ export type ChessStreamRefs = {
   viewerRef: RefObject<boolean>;
   lastProducerIdRef: RefObject<string | null>;
   mediaReconnectingRef: RefObject<boolean>;
+  pendingProducerIdRef: RefObject<string | null>;
+  mediaSessionRef: RefObject<import('./chess-stream-media-session').ChessStreamMediaSessionState>;
+  localStreamingRef: RefObject<boolean>;
 };

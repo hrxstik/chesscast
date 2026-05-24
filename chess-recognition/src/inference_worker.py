@@ -47,7 +47,7 @@ class InferenceWorker:
 
     def register(self, token: str) -> None:
         if token in self.sessions:
-            return
+            del self.sessions[token]
         self.sessions[token] = StreamProcessor(
             model_path=self.model_path,
             game_token=token,
@@ -61,7 +61,7 @@ class InferenceWorker:
             del self.sessions[token]
             print(f'[WORKER] Session unregistered: {token}', file=sys.stderr, flush=True)
 
-    def process_frame(self, token: str, frame_data: bytes) -> dict:
+    def process_frame(self, token: str, frame_data: bytes, *, hand_probe_only: bool = False) -> dict:
         processor = self.sessions.get(token)
         if processor is None:
             return {'status': 'error', 'message': f'Unknown session: {token}'}
@@ -71,7 +71,7 @@ class InferenceWorker:
         if frame is None:
             return {'status': 'error', 'message': 'Failed to decode image'}
 
-        return processor.process_frame(frame)
+        return processor.process_frame(frame, hand_probe_only=hand_probe_only)
 
     def calibrate_auto(self, token: str, image_path: str) -> dict:
         image = cv2.imread(image_path)
@@ -146,7 +146,8 @@ class InferenceWorker:
 
         frame_data = buffer[:length]
         buffer = buffer[length:]
-        result = self.process_frame(token, frame_data)
+        hand_probe_only = bool(msg.get('hand_probe'))
+        result = self.process_frame(token, frame_data, hand_probe_only=hand_probe_only)
         self.emit({'event': 'frame_result', 'token': token, **result})
         return buffer
 

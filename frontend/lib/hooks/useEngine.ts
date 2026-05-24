@@ -346,13 +346,17 @@ export function useEngine(initialFen?: string, opts?: UseEngineOptions): UseEngi
   const setPositionFromFen = useCallback(
     (fen: string) => {
       try {
-        new Chess(fen);
+        const normalized = new Chess(fen).fen();
+        if (normalized === chessGameRef.current.fen()) {
+          return;
+        }
         chessGameRef.current.load(fen);
         evalSessionRef.current += 1;
         engineRef.current?.stop();
         const loaded = chessGameRef.current.fen();
         prepareNewSearch(loaded);
         setChessPosition(loaded);
+        onFenChange?.(loaded);
         queueMicrotask(() => {
           if (engineRef.current) findBestMoveRef.current();
         });
@@ -360,7 +364,7 @@ export function useEngine(initialFen?: string, opts?: UseEngineOptions): UseEngi
         console.warn('⚠️ Failed to set position from FEN:', fen.substring(0, 50), error);
       }
     },
-    [prepareNewSearch],
+    [prepareNewSearch, onFenChange],
   );
 
   return {

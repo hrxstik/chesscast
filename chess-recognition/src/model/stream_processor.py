@@ -5,13 +5,19 @@ import cv2
 import numpy as np
 import json
 import sys
-from typing import Optional, Dict, Callable, List, Tuple
+from typing import Any, Optional, Dict, Callable, List, Tuple
 from collections import Counter
 from pathlib import Path
 from model.yolo11_detector import YOLO11Detector, BoardStateMapper
 from model.virtual_board import VirtualBoard
 from model.hand_detector import detect_hand_on_board
 import chess
+
+# ID фигур (как в BoardStateMapper / virtual_board)
+_PIECE_ID_TO_SYMBOL = {
+    0: 'P', 1: 'R', 2: 'B', 3: 'N', 4: 'K', 5: 'Q',
+    6: 'p', 7: 'r', 8: 'b', 11: 'n', 9: 'k', 10: 'q',
+}
 
 
 class StreamProcessor:
@@ -83,7 +89,10 @@ class StreamProcessor:
         # Стабилизация состояний доски: храним последние N состояний для усреднения
         # Каждый элемент - это tuple (board_state, confidence_map)
         self.board_state_history = []  # type: List[Tuple[np.ndarray, np.ndarray]]
-        self.history_size = 5
+        self.history_size = 10
+        self.last_stable_board_state = None  # type: Optional[np.ndarray]
+
+        self._virtual_board_synced = False
         
         # Стабилизация ходов: ход должен быть стабильным в нескольких кадрах (~3 FPS)
         self.pending_move = None  # type: Optional[chess.Move]
@@ -95,9 +104,9 @@ class StreamProcessor:
         self.move_lock_frames = 0
         self.move_lock_duration = 3
 
-        # Рука на поле (MediaPipe Hands): подтверждение несколькими кадрами подряд
-        self.hand_confirm_frames = 2
-        self.hand_landmarks_inside_min = 3
+        # Рука на поле (MediaPipe Hands): фриз с первого кадра
+        self.hand_confirm_frames = 1
+        self.hand_landmarks_inside_min = 2
         self._hand_frames = 0
         
     def _load_mapping(self) -> Optional[Dict]:
@@ -133,7 +142,49 @@ class StreamProcessor:
     
     
     
-    def process_frame(self, frame: np.ndarray) -> Dict:
+    def _hand_detections_info(
+        self,
+        hand_result,
+        hand_detected: bool,
+    ) -> Dict[str, Any]:
+        return {
+            'total_detections': 0,
+            'hand_detected': hand_detected,
+            'hand_raw_detected': hand_result.detected,
+            'hand_landmarks_inside': hand_result.landmarks_inside,
+            'hand_hands_seen': hand_result.hands_seen,
+            'hand_mediapipe_available': hand_result.available,
+        }
+
+    def _frozen_board_state(self) -> Optional[np.ndarray]:
+        if self.last_stable_board_state is not None:
+            return self.last_stable_board_state.copy()
+        if self.previous_board_state is not None:
+            return self.previous_board_state.copy()
+        if self.board_state_history:
+            return self._stabilize_board_state(self.board_state_history)
+        return None
+
+    def _build_hand_frozen_result(self, hand_info: Dict[str, Any]) -> Dict:
+        frozen = self._frozen_board_state()
+        board_list = (
+            frozen.tolist()
+            if frozen is not None
+            else [[-1] * 8 for _ in range(8)]
+        )
+        return {
+            'status': 'processed',
+            'hand_frozen': True,
+            'tracks': {},
+            'board_state': board_list,
+            'tracks_count': 0,
+            'detections_info': {
+                **hand_info,
+                'message': 'Hand on board — showing last stable position',
+            },
+        }
+
+    def process_frame(self, frame: np.ndarray, *, hand_probe_only: bool = False) -> Dict:
         """
         Обработка одного кадра с использованием ByteTrack трекинга
         
@@ -199,28 +250,22 @@ class StreamProcessor:
             self._hand_frames += 1
         else:
             self._hand_frames = 0
-        hand_detected = hand_result.available and self._hand_frames >= self.hand_confirm_frames
+        hand_on_board = hand_result.available and hand_result.detected
+        hand_detected = hand_on_board
+        hand_info = self._hand_detections_info(hand_result, hand_detected)
 
-        if hand_detected:
-            if len(self.board_state_history) > 0:
-                frozen_board = self._stabilize_board_state(self.board_state_history)
-            elif self.previous_board_state is not None:
-                frozen_board = self.previous_board_state
-            else:
-                frozen_board = np.ones((8, 8), dtype=np.int32) * -1
+        if hand_probe_only:
             return {
-                'status': 'processed',
-                'tracks': {},
-                'board_state': frozen_board.tolist(),
-                'tracks_count': 0,
+                'status': 'hand_probe',
+                'detection_skipped': True,
                 'detections_info': {
-                    'total_detections': 0,
-                    'hand_detected': True,
-                    'hand_landmarks_inside': hand_result.landmarks_inside,
-                    'hand_mediapipe_available': hand_result.available,
-                    'message': 'Hand on board — position frozen',
+                    **hand_info,
+                    'message': 'Hand probe — piece detection skipped',
                 },
             }
+
+        if hand_on_board:
+            return self._build_hand_frozen_result(hand_info)
 
         try:
             # Детекция идет на warped изображении (после перспективной трансформации)
@@ -270,12 +315,10 @@ class StreamProcessor:
             tracks_for_board = filtered_tracks
 
             detections_info = {
+                **hand_info,
                 'total_detections': len(tracks),
                 'filtered_detections': len(filtered_tracks),
                 'board_mapped_detections': len(tracks_for_board),
-                'hand_detected': hand_detected,
-                'hand_landmarks_inside': hand_result.landmarks_inside,
-                'hand_mediapipe_available': hand_result.available,
                 'classes_detected': {},
                 'detections_by_class': {},
             }
@@ -315,28 +358,35 @@ class StreamProcessor:
 
         if self.index_map is None:
             tracks_for_orientation = (
-                board_filtered_tracks if 'board_filtered_tracks' in locals() else tracks_for_board
+                board_filtered_tracks
+                if 'board_filtered_tracks' in locals()
+                else tracks_for_board
             )
-            self._try_init_orientation(board_state_raw, tracks=tracks_for_orientation)
+            self._try_init_orientation(
+                board_state_raw, tracks=tracks_for_orientation,
+            )
 
         if self.index_map is not None:
-            current_board_state_raw = self._apply_index_map(board_state_raw)
+            current_board_state = self._apply_index_map(board_state_raw)
         else:
-            current_board_state_raw = board_state_raw
+            current_board_state = board_state_raw
 
         current_confidence_map_raw = np.zeros((8, 8), dtype=np.float32)
-
         self.board_state_history.append(
-            (current_board_state_raw.copy(), current_confidence_map_raw.copy()),
+            (current_board_state.copy(), current_confidence_map_raw.copy()),
         )
         if len(self.board_state_history) > self.history_size:
             self.board_state_history.pop(0)
-
         current_board_state = self._stabilize_board_state(self.board_state_history)
+        current_board_state = self._sanitize_board_against_virtual(current_board_state)
+
+        if self.index_map is not None and not self._virtual_board_synced:
+            self._try_sync_virtual_board_from_detection(current_board_state)
 
         move = None
-        if self.initialized and self.previous_board_state is not None:
-            move = self._detect_move_stable(current_board_state)
+        move_debug: Optional[Dict[str, Any]] = None
+        if self.initialized and self.previous_board_state is not None and not hand_on_board:
+            move, move_debug = self._detect_move_stable(current_board_state)
         
         # Счетчик кадров для периодического логирования
         if not hasattr(self, '_frame_count'):
@@ -357,12 +407,18 @@ class StreamProcessor:
             'tracks': tracks_dict,
             'board_state': current_board_state.tolist(),
             'tracks_count': len(tracks),
-            'detections_info': detections_info  # Добавляем информацию о детекциях
+            'detections_info': detections_info,
         }
-        
+        if move_debug is not None:
+            result['move_debug'] = move_debug
+
         if move:
             result['move'] = move.uci()
             result['move_san'] = self.virtual_board.san(move)
+            score = 64
+            if move_debug and move_debug.get('board_match_score') is not None:
+                score = int(move_debug['board_match_score'])
+            result['move_match_score'] = score
             
             # Обновление виртуальной доски
             self.virtual_board.push(move)
@@ -371,14 +427,13 @@ class StreamProcessor:
             if self.on_move_detected:
                 self.on_move_detected(move, current_board_state)
         
-        # Обновление состояния
-        # Обновляем previous_board_state всегда на стабилизированное состояние
-        # Это позволяет сравнивать стабилизированные состояния между кадрами
-        # Инициализация previous_board_state при первом кадре
-        if self.previous_board_state is None:
-            self.previous_board_state = current_board_state.copy()
-        else:
-            self.previous_board_state = current_board_state.copy()
+        # Обновляем эталон только без руки и после накопления history_size кадров
+        if not hand_on_board and len(self.board_state_history) >= self.history_size:
+            self.last_stable_board_state = current_board_state.copy()
+            if self.previous_board_state is None:
+                self.previous_board_state = current_board_state.copy()
+            else:
+                self.previous_board_state = current_board_state.copy()
 
         if not self.initialized:
             self.initialized = True
@@ -434,7 +489,7 @@ class StreamProcessor:
                     # Используем значение только если его вес >= 60% от общего веса
                     if best_weight >= total_weight * 0.6:
                         stabilized[i, j] = best_piece_id
-                    elif len(history) >= 5 and len(weighted_votes) > 1:
+                    elif len(history) >= self.history_size and len(weighted_votes) > 1:
                         # Если история большая и есть несколько вариантов, проверяем второй
                         sorted_votes = sorted(weighted_votes.items(), key=lambda x: x[1], reverse=True)
                         second_weight = sorted_votes[1][1]
@@ -453,13 +508,86 @@ class StreamProcessor:
         
         return stabilized
     
-    def _detect_move_stable(self, current_state: np.ndarray) -> Optional[chess.Move]:
+    def _board_state_to_chess_board(self, state: np.ndarray) -> Optional[chess.Board]:
+        """Конвертация 8×8 ID в chess.Board (ряд 0 = 8-я горизонталь)."""
+        board = chess.Board()
+        board.clear_board()
+        has_white_king = False
+        has_black_king = False
+        for i in range(8):
+            for j in range(8):
+                piece_id = int(state[i, j])
+                if piece_id < 0:
+                    continue
+                symbol = _PIECE_ID_TO_SYMBOL.get(piece_id)
+                if not symbol:
+                    continue
+                rank = 8 - i
+                square = chess.square(j, rank - 1)
+                try:
+                    board.set_piece_at(square, chess.Piece.from_symbol(symbol))
+                except ValueError:
+                    return None
+                if symbol == 'K':
+                    has_white_king = True
+                elif symbol == 'k':
+                    has_black_king = True
+        if not has_white_king or not has_black_king:
+            return None
+        board.turn = chess.WHITE
+        return board
+
+    def _try_sync_virtual_board_from_detection(self, observed: np.ndarray) -> None:
+        filled = int(np.sum(observed != -1))
+        if filled < 24:
+            return
+        built = self._board_state_to_chess_board(observed)
+        if built is None:
+            return
+        self.virtual_board = VirtualBoard(fen=built.fen())
+        self._virtual_board_synced = True
+        print(
+            f'[CV] virtual_board synced from camera ({filled} occupied squares)',
+            file=sys.stderr,
+            flush=True,
+        )
+
+    def _virtual_board_state(self) -> np.ndarray:
+        return self.virtual_board.state()
+
+    def _sanitize_board_against_virtual(self, observed: np.ndarray) -> np.ndarray:
+        """
+        Если YOLO «телепортировал» фигуры (конь через 6 клеток и т.п.) — откат к
+        virtual_board / last_stable, пока diff не объясняется одним легальным ходом.
+        """
+        if not self._virtual_board_synced:
+            return observed
+
+        virtual_state = self._virtual_board_state()
+        diff_vs_virtual = int(np.sum(observed != virtual_state))
+        if diff_vs_virtual <= 2:
+            return observed
+
+        move, score, _reject = self._find_move_by_board_match(observed)
+        if move is not None and score >= 60:
+            return observed
+
+        if self.last_stable_board_state is not None:
+            return self.last_stable_board_state.copy()
+        return virtual_state.copy()
+
+    def _detect_move_stable(
+        self, current_state: np.ndarray,
+    ) -> Tuple[Optional[chess.Move], Optional[Dict[str, Any]]]:
         """
         Определение хода с проверкой стабильности изменений
         Ход должен быть стабильным в нескольких кадрах подряд
         """
+        debug: Dict[str, Any] = {}
         if self.previous_board_state is None:
-            return None
+            return None, debug
+
+        debug['changed_squares'] = int(np.sum(current_state != self.previous_board_state))
         
         # Если недавно был подтвержден ход, игнорируем изменения в течение нескольких кадров
         # Это предотвращает откаты ходов из-за нестабильных детекций
@@ -467,7 +595,7 @@ class StreamProcessor:
             self.move_lock_frames -= 1
             # Обновляем previous_board_state на текущее, чтобы игнорировать изменения
             self.previous_board_state = current_state.copy()
-            return None
+            return None, debug
         
         # Находим различия
         diff = current_state - self.previous_board_state
@@ -480,12 +608,17 @@ class StreamProcessor:
                     changed_squares.append((i, j))
         
         if len(changed_squares) != 2:
-            fallback = self._find_move_by_board_match(current_state)
+            fallback, match_score, reject = self._find_move_by_board_match(current_state)
+            debug['board_match_score'] = match_score
+            if reject:
+                debug['board_match_reject'] = reject
             if fallback is not None:
-                return self._confirm_pending_move(fallback, current_state)
+                debug['board_match_move'] = fallback.uci()
+                confirmed = self._confirm_pending_move(fallback, current_state)
+                return confirmed, debug
             self.pending_move = None
             self.pending_move_frames = 0
-            return None
+            return None, debug
         
         # Конвертация в UCI формат
         columns = list("abcdefgh")
@@ -510,20 +643,34 @@ class StreamProcessor:
                 invalid_moves.append(f"{from_square}{to_square}(error: {str(e)})")
         
         if detected_move is None:
-            fallback = self._find_move_by_board_match(current_state)
+            fallback, match_score, reject = self._find_move_by_board_match(current_state)
+            debug['board_match_score'] = match_score
+            if reject:
+                debug['board_match_reject'] = reject
             if fallback is not None:
-                return self._confirm_pending_move(fallback, current_state)
+                debug['board_match_move'] = fallback.uci()
+                confirmed = self._confirm_pending_move(fallback, current_state)
+                return confirmed, debug
             self.pending_move = None
             self.pending_move_frames = 0
-            return None
+            return None, debug
 
-        return self._confirm_pending_move(detected_move, current_state)
+        confirmed = self._confirm_pending_move(detected_move, current_state)
+        return confirmed, debug
 
     def _confirm_pending_move(
         self,
         detected_move: chess.Move,
         current_state: np.ndarray,
     ) -> Optional[chess.Move]:
+        if self.move_confirmation_frames <= 1:
+            self.last_confirmed_move = detected_move
+            self.move_lock_frames = self.move_lock_duration
+            self.pending_move = None
+            self.pending_move_frames = 0
+            self.previous_board_state = current_state.copy()
+            return detected_move
+
         if self.pending_move == detected_move:
             self.pending_move_frames += 1
             if self.pending_move_frames >= self.move_confirmation_frames:
@@ -549,27 +696,42 @@ class StreamProcessor:
     def _find_move_by_board_match(
         self,
         current_state: np.ndarray,
-    ) -> Optional[chess.Move]:
-        """Если YOLO шумит (>2 клеток), ищем единственный легальный ход по совпадению позиции."""
+    ) -> Tuple[Optional[chess.Move], int, Optional[str]]:
+        """Если YOLO шумит (>2 клеток), ищем легальный ход по совпадению позиции."""
         if self.previous_board_state is None:
-            return None
+            return None, -1, 'no_previous_state'
         best_move: Optional[chess.Move] = None
         best_score = -1
+        second_score = -1
         for move in self.virtual_board.legal_moves:
             trial = self.virtual_board.copy()
             trial.push(move)
             predicted = VirtualBoard(fen=trial.fen()).state()
             score = self._board_match_score(current_state, predicted)
             if score > best_score:
+                second_score = best_score
                 best_score = score
                 best_move = move
-        if best_move is None or best_score < 56:
-            return None
-        return best_move
+            elif score > second_score:
+                second_score = score
+        baseline = self._board_match_score(
+            current_state,
+            VirtualBoard(fen=self.virtual_board.fen()).state(),
+        )
+        min_score = 60
+        if best_move is None or best_score < min_score:
+            return None, best_score, 'score_too_low'
+        if best_score < baseline + 6:
+            return None, best_score, 'no_improvement'
+        margin = best_score - second_score if second_score >= 0 else best_score
+        if second_score >= 0 and margin < 5:
+            return None, best_score, 'ambiguous_match'
+        return best_move, best_score, None
     
     def _detect_move(self, current_state: np.ndarray) -> Optional[chess.Move]:
         """Старый метод детекции хода (deprecated, используйте _detect_move_stable)"""
-        return self._detect_move_stable(current_state)
+        move, _ = self._detect_move_stable(current_state)
+        return move
 
     # ==================== Ориентация доски ====================
 
@@ -800,6 +962,25 @@ class StreamProcessor:
         if orientation_from_bbox:
             print(f"[ORIENTATION] Applying {best_orientation} based on bbox (ignoring threshold)", file=sys.stderr, flush=True)
 
+        # Уточняем: среди 4 поворотов берём максимальный score с канонической стартовой позицией
+        refined_orientation = best_orientation
+        refined_score = best_score
+        for name in ('identity', 'rot90', 'rot180', 'rot270'):
+            state_oriented = self._apply_orientation(board_state_raw, name)
+            score = self._score_orientation(state_oriented, canonical)
+            if score > refined_score:
+                refined_score = score
+                refined_orientation = name
+        if refined_orientation != best_orientation:
+            print(
+                f"[ORIENTATION] Refined {best_orientation} -> {refined_orientation} "
+                f'(score {best_score:.3f} -> {refined_score:.3f})',
+                file=sys.stderr,
+                flush=True,
+            )
+        best_orientation = refined_orientation
+        best_score = refined_score
+
         # Строим index_map для найденной ориентации:
         # index_map[i_oriented, j_oriented] = (i_raw, j_raw)
         index_map = np.zeros((8, 8, 2), dtype=np.int32)
@@ -828,7 +1009,20 @@ class StreamProcessor:
             return
 
         self.index_map = index_map
+        self._save_index_map_to_mapping_file()
         print(f"[ORIENTATION] Auto-orientation succeeded: {best_orientation}", file=sys.stderr, flush=True)
+
+    def _save_index_map_to_mapping_file(self) -> None:
+        if self.index_map is None or not self.mapping_data:
+            return
+        try:
+            mapping_file = self.mapping_dir / f'{self.game_token}_mapping.json'
+            payload = dict(self.mapping_data)
+            payload['index_map'] = self.index_map.tolist()
+            with open(mapping_file, 'w', encoding='utf-8') as f:
+                json.dump(payload, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            print(f"[ORIENTATION] Failed to save index_map: {e}", file=sys.stderr, flush=True)
 
     def _visualize_mapping(self, original_frame: np.ndarray, warped_frame: np.ndarray) -> None:
         """

@@ -14,7 +14,10 @@ export interface FrameDetectionsInfo {
   classes_detected?: Record<string, number>;
   message?: string;
   hand_detected?: boolean;
+  hand_raw_detected?: boolean;
   hand_landmarks_inside?: number;
+  hand_hands_seen?: number;
+  hand_mediapipe_available?: boolean;
 }
 
 /** Ответ Python worker на кадр (frame-processed). */
@@ -22,6 +25,15 @@ export interface FrameProcessedResult {
   detections_info?: FrameDetectionsInfo;
   move?: string;
   move_san?: string;
+  move_match_score?: number;
+  move_debug?: {
+    changed_squares?: number;
+    board_match_score?: number;
+    board_match_reject?: string;
+    board_match_move?: string;
+    hand_blocks_move_detect?: number;
+  };
+  detection_skipped?: boolean;
   fen?: string;
   success?: boolean;
   error?: string;
@@ -56,6 +68,7 @@ export class ChessRecognitionService implements OnModuleInit, OnModuleDestroy {
   private stderrBuffer = '';
 
   private readonly sessions = new Map<string, StreamSession>();
+  private readonly cvFrameInFlight = new Map<string, boolean>();
   private readonly pendingCalibrations = new Map<
     string,
     (msg: WorkerMessage) => void
@@ -97,21 +110,23 @@ export class ChessRecognitionService implements OnModuleInit, OnModuleDestroy {
   }
 
   private getChessRecognitionRoot(): string {
-    return (
+    const raw =
       process.env.CHESS_RECOGNITION_DIR ||
-      join(this.getProjectRoot(), 'chess-recognition')
-    );
+      join(this.getProjectRoot(), 'chess-recognition');
+    return resolve(raw);
   }
 
   private getModelPaths(): { yolo: string; corner: string } {
     const chessRoot = this.getChessRecognitionRoot();
     return {
-      yolo:
+      yolo: resolve(
         process.env.YOLO_MODEL_PATH ||
-        join(chessRoot, 'models', 'bestmerged_new.pt'),
-      corner:
+          join(chessRoot, 'models', 'bestmerged_new.pt'),
+      ),
+      corner: resolve(
         process.env.CORNER_MODEL_PATH ||
-        join(chessRoot, 'models', 'best_resnet34_board_corners.pt'),
+          join(chessRoot, 'models', 'best_resnet34_board_corners.pt'),
+      ),
     };
   }
 
@@ -120,29 +135,50 @@ export class ChessRecognitionService implements OnModuleInit, OnModuleDestroy {
       return;
     }
 
+    const chessRoot = this.getChessRecognitionRoot();
     const { yolo, corner } = this.getModelPaths();
-    const script = join(this.getChessRecognitionRoot(), 'src', 'inference_worker.py');
+    const script = join(chessRoot, 'src', 'inference_worker.py');
+    const srcDir = join(chessRoot, 'src');
+
+    if (!existsSync(script)) {
+      throw new Error(`CV worker script not found: ${script}`);
+    }
+    if (!existsSync(yolo)) {
+      throw new Error(`YOLO model not found: ${yolo}`);
+    }
+    if (!existsSync(corner)) {
+      throw new Error(`Corner model not found: ${corner}`);
+    }
 
     this.workerReady = false;
     this.workerReadyPromise = new Promise<void>((resolve) => {
       this.workerReadyResolve = resolve;
     });
 
-    const pythonBin = this.getPythonBin();
+    const pythonBin = resolve(this.getPythonBin());
     this.logger.log(
       `Starting CV inference worker (python=${pythonBin}, yolo=${yolo})`,
     );
 
-    this.worker = spawn(pythonBin, [
+    this.worker = spawn(
+      pythonBin,
+      [
         script,
         '--mappings-dir',
-        this.mappingsDir,
+        resolve(this.mappingsDir),
         '--yolo-model',
         yolo,
         '--corner-model',
         corner,
       ],
-      { stdio: ['pipe', 'pipe', 'pipe'] },
+      {
+        stdio: ['pipe', 'pipe', 'pipe'],
+        cwd: srcDir,
+        env: {
+          ...process.env,
+          PYTHONPATH: srcDir,
+        },
+      },
     );
 
     this.worker.stdout?.on('data', (data: Buffer) => {
@@ -191,7 +227,10 @@ export class ChessRecognitionService implements OnModuleInit, OnModuleDestroy {
   }
 
   private async ensureWorkerReady(): Promise<void> {
-    if (!this.worker) {
+    if (!this.worker || this.worker.killed) {
+      this.worker = null;
+      this.workerReady = false;
+      this.workerReadyPromise = null;
       this.startWorker();
     }
     if (this.workerReady) {
@@ -261,6 +300,7 @@ export class ChessRecognitionService implements OnModuleInit, OnModuleDestroy {
     }
 
     if (event === 'frame_result' && msg.token) {
+      this.cvFrameInFlight.set(msg.token, false);
       const session = this.sessions.get(msg.token);
       if (!session) {
         return;
@@ -310,7 +350,15 @@ export class ChessRecognitionService implements OnModuleInit, OnModuleDestroy {
   async calibrateBoard(
     gameToken: string,
     imageBuffer: Buffer,
+    options?: { force?: boolean },
   ): Promise<{ success: boolean; message: string; mappingData?: unknown }> {
+    if (!options?.force && this.hasValidMapping(gameToken)) {
+      return {
+        success: true,
+        message: 'Mapping already exists',
+        mappingData: this.getMapping(gameToken),
+      };
+    }
     try {
       const tempImagePath = join(
         this.mappingsDir,
@@ -355,20 +403,17 @@ export class ChessRecognitionService implements OnModuleInit, OnModuleDestroy {
     onFrameProcessed: (result: FrameProcessedResult) => void,
     onError: (error: Error) => void,
   ): void {
-    if (this.sessions.has(gameToken)) {
-      this.logger.warn(
-        `Stream processing already active for token ${gameToken}`,
-      );
-      return;
-    }
-
+    const hadSession = this.sessions.has(gameToken);
     this.sessions.set(gameToken, { onFrameProcessed, onError });
 
     void this.ensureWorkerReady()
       .then(() => {
+        if (hadSession) {
+          this.sendCommand({ cmd: 'unregister', token: gameToken });
+        }
         this.sendCommand({ cmd: 'register', token: gameToken });
         this.logger.log(
-          `Stream session registered in CV worker for token ${gameToken}`,
+          `Stream session registered in CV worker for token ${gameToken}${hadSession ? ' (reloaded)' : ''}`,
         );
       })
       .catch((error) => {
@@ -379,26 +424,52 @@ export class ChessRecognitionService implements OnModuleInit, OnModuleDestroy {
 
   private readonly sendFrameSkipLogAt = new Map<string, number>();
 
-  sendFrame(gameToken: string, frameData: Buffer): void {
+  sendFrame(
+    gameToken: string,
+    frameData: Buffer,
+    options?: { handProbe?: boolean },
+  ): void {
     const session = this.sessions.get(gameToken);
-    if (!session || !this.worker?.stdin || this.worker.killed) {
+    if (!this.worker?.stdin || this.worker.killed) {
       const now = Date.now();
       const last = this.sendFrameSkipLogAt.get(gameToken) ?? 0;
       if (now - last > 5000) {
         this.sendFrameSkipLogAt.set(gameToken, now);
         this.logger.warn(
-          `Frame dropped for ${gameToken}: CV session not active (mapping ok=${this.hasMapping(gameToken)}, worker=${!!this.worker && !this.worker.killed})`,
+          `Frame dropped for ${gameToken}: CV worker not running (restart backend; check worker startup logs)`,
+        );
+      }
+      return;
+    }
+    if (!session) {
+      const now = Date.now();
+      const last = this.sendFrameSkipLogAt.get(gameToken) ?? 0;
+      if (now - last > 5000) {
+        this.sendFrameSkipLogAt.set(gameToken, now);
+        this.logger.warn(
+          `Frame dropped for ${gameToken}: CV stream session not registered (mapping ok=${this.hasMapping(gameToken)})`,
         );
       }
       return;
     }
 
+    if (this.cvFrameInFlight.get(gameToken)) {
+      return;
+    }
+
     try {
+      this.cvFrameInFlight.set(gameToken, true);
       this.sendCommand(
-        { cmd: 'frame', token: gameToken, length: frameData.length },
+        {
+          cmd: 'frame',
+          token: gameToken,
+          length: frameData.length,
+          ...(options?.handProbe ? { hand_probe: true } : {}),
+        },
         frameData,
       );
     } catch (error) {
+      this.cvFrameInFlight.set(gameToken, false);
       this.logger.warn(
         `Failed to send frame for token ${gameToken}: ${(error as Error).message}`,
       );
@@ -408,6 +479,7 @@ export class ChessRecognitionService implements OnModuleInit, OnModuleDestroy {
 
   stopStreamProcessing(gameToken: string): void {
     this.sessions.delete(gameToken);
+    this.cvFrameInFlight.delete(gameToken);
     if (!this.worker?.stdin || this.worker.killed) {
       return;
     }
@@ -426,6 +498,27 @@ export class ChessRecognitionService implements OnModuleInit, OnModuleDestroy {
   hasMapping(gameToken: string): boolean {
     const mappingPath = join(this.mappingsDir, `${gameToken}_mapping.json`);
     return existsSync(mappingPath);
+  }
+
+  hasValidMapping(gameToken: string): boolean {
+    const mapping = this.getMapping(gameToken);
+    if (!mapping || typeof mapping !== 'object') {
+      return false;
+    }
+    const record = mapping as { success?: boolean; square_corners?: unknown };
+    if (record.success === false) {
+      return false;
+    }
+    const squareCorners = record.square_corners;
+    if (!Array.isArray(squareCorners) || squareCorners.length !== 9) {
+      return false;
+    }
+    for (const row of squareCorners) {
+      if (!Array.isArray(row) || row.length !== 9) {
+        return false;
+      }
+    }
+    return true;
   }
 
   getMapping(gameToken: string): unknown | null {
@@ -461,10 +554,11 @@ export class ChessRecognitionService implements OnModuleInit, OnModuleDestroy {
   }
 
   private getPythonBin(): string {
+    const chessRoot = this.getChessRecognitionRoot();
     const venvPython =
       process.platform === 'win32'
-        ? resolve(this.getChessRecognitionRoot(), '.venv', 'Scripts', 'python.exe')
-        : resolve(this.getChessRecognitionRoot(), '.venv', 'bin', 'python3');
+        ? join(chessRoot, '.venv', 'Scripts', 'python.exe')
+        : join(chessRoot, '.venv', 'bin', 'python3');
     if (existsSync(venvPython)) {
       return venvPython;
     }

@@ -30,7 +30,7 @@ export const MovesList: React.FC<MovesListProps> = ({ moves }) => {
   });
 
   return (
-    <div className="text-sm max-h-64 overflow-y-auto border rounded-md p-2 bg-background">
+    <div className="text-sm border rounded-md p-2 bg-background">
       <table className="w-full text-left text-xs md:text-sm">
         <tbody>
           {rows.map((row) => (

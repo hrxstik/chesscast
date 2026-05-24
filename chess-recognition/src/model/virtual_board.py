@@ -20,8 +20,8 @@ class VirtualBoard(chess.Board):
     "n": 11
   }
 
-  def __init__(self, **kwargs) -> None:
-    super().__init__(**kwargs)
+  def __init__(self, *args, **kwargs) -> None:
+    super().__init__(*args, **kwargs)
 
   def state(self) -> np.array:
     piece_map = np.ones(64) * -1

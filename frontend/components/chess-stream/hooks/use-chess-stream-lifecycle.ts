@@ -3,7 +3,7 @@
 import { useEffect, type RefObject } from 'react';
 import type { ChessStreamRefs } from './chess-stream-ref-types';
 
-/** Поллинг video.srcObject, автоподключение зрителя, get-producers, размонтирование. */
+/** Поллинг video.srcObject, автоподключение зрителя, размонтирование. */
 export function useChessStreamLifecycle(params: {
   mediaViewer: boolean;
   remoteMedia?: boolean;
@@ -14,6 +14,7 @@ export function useChessStreamLifecycle(params: {
   hasVideoStreamRef: RefObject<boolean>;
   setHasVideoStream: (v: boolean) => void;
   connectWebSocket: () => void | Promise<void>;
+  tryConsumePending: () => void | Promise<void>;
 }) {
   const {
     mediaViewer,
@@ -25,6 +26,7 @@ export function useChessStreamLifecycle(params: {
     hasVideoStreamRef,
     setHasVideoStream,
     connectWebSocket,
+    tryConsumePending,
   } = params;
   const {
     videoRef,
@@ -32,9 +34,9 @@ export function useChessStreamLifecycle(params: {
     streamBackupRef,
     consumerRef,
     producerRef,
-    deviceRef,
     socketRef,
     frameIntervalRef,
+    localStreamingRef,
   } = refs;
 
   useEffect(() => {
@@ -49,6 +51,7 @@ export function useChessStreamLifecycle(params: {
           streamRef.current = streamBackupRef.current;
         }
         setHasVideoStream(true);
+        void tryConsumePending();
         return;
       }
       const videoStream = video.srcObject as MediaStream | null;
@@ -70,7 +73,10 @@ export function useChessStreamLifecycle(params: {
 
     updateVideoState();
     const interval = setInterval(updateVideoState, 2000);
-    const handleVideoEvent = () => updateVideoState();
+    const handleVideoEvent = () => {
+      updateVideoState();
+      void tryConsumePending();
+    };
     const video = videoRef.current;
     if (video) {
       const events = ['loadedmetadata', 'play', 'playing', 'canplay', 'loadeddata'];
@@ -84,7 +90,14 @@ export function useChessStreamLifecycle(params: {
       };
     }
     return () => clearInterval(interval);
-  }, [videoRef, streamRef, streamBackupRef, hasVideoStreamRef, setHasVideoStream]);
+  }, [
+    videoRef,
+    streamRef,
+    streamBackupRef,
+    hasVideoStreamRef,
+    setHasVideoStream,
+    tryConsumePending,
+  ]);
 
   useEffect(() => {
     if (mediaViewer && !socket && !isStreaming) {
@@ -93,22 +106,13 @@ export function useChessStreamLifecycle(params: {
   }, [mediaViewer, socket, isStreaming, connectWebSocket]);
 
   useEffect(() => {
-    if (!mediaViewer || consumerRef.current) return;
-    const interval = setInterval(() => {
-      if (socketRef.current && !consumerRef.current && deviceRef.current) {
-        socketRef.current.emit('get-producers', { token: gameToken });
-      }
-    }, 2000);
-    return () => clearInterval(interval);
-  }, [mediaViewer, gameToken, consumerRef, deviceRef, socketRef]);
-
-  useEffect(() => {
     return () => {
       if (frameIntervalRef.current) {
         clearInterval(frameIntervalRef.current);
         frameIntervalRef.current = null;
       }
-      const isLocalStreamer = !!producerRef.current || (!remoteMedia && !!streamRef.current);
+      const isLocalStreamer =
+        !!producerRef.current || (!remoteMedia && !!localStreamingRef.current);
       if (isLocalStreamer) {
         if (streamRef.current) {
           streamRef.current.getTracks().forEach((track) => track.stop());
@@ -127,10 +131,8 @@ export function useChessStreamLifecycle(params: {
         videoRef.current.srcObject = null;
       }
       const currentSocket = socketRef.current;
-      if (currentSocket) {
-        if (isLocalStreamer) {
-          currentSocket.emit('stop-stream', { token: gameToken });
-        }
+      if (currentSocket && isLocalStreamer) {
+        currentSocket.emit('stop-stream', { token: gameToken });
         currentSocket.disconnect();
         socketRef.current = null;
       }
@@ -145,5 +147,6 @@ export function useChessStreamLifecycle(params: {
     consumerRef,
     videoRef,
     socketRef,
+    localStreamingRef,
   ]);
 }

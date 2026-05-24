@@ -42,10 +42,10 @@ export function useChessStreamWebRtc({
   onGameFinished,
 }: UseChessStreamWebRtcParams) {
   const mediaViewer = viewer || remoteMedia;
-  const [localStreaming, setLocalStreaming] = useState(false);
-  const localStreamingRef = useRef(false);
-  const socketAsViewer = mediaViewer && !localStreaming && !localStreamingRef.current;
   const refs = useChessStreamRefs();
+  const [localStreaming, setLocalStreaming] = useState(false);
+  const localStreamingRef = refs.localStreamingRef;
+  const socketAsViewer = mediaViewer && !localStreaming && !localStreamingRef.current;
   const {
     videoRef,
     canvasRef,
@@ -101,7 +101,7 @@ export function useChessStreamWebRtc({
     }
   }, [initialGameInProgress]);
 
-  const { initMediasoupDevice, createProducer, createConsumer } = useChessStreamMediasoup(
+  const { initMediasoupDevice, createProducer, createConsumer, tryConsumePending, teardownAllMedia, closeRecvSide } = useChessStreamMediasoup(
     gameToken,
     refs,
     setHasVideoStream,
@@ -157,6 +157,9 @@ export function useChessStreamWebRtc({
       initMediasoupDevice,
       createProducer,
       createConsumer,
+      tryConsumePending,
+      teardownAllMedia,
+      closeRecvSide,
     });
 
     setSocket(newSocket);
@@ -173,43 +176,27 @@ export function useChessStreamWebRtc({
     initMediasoupDevice,
     createProducer,
     createConsumer,
+    tryConsumePending,
+    teardownAllMedia,
+    closeRecvSide,
     setPositionFromFen,
     onGameFinished,
   ]);
 
   const releaseMediaResources = useCallback(
-    (opts?: { keepSocket?: boolean }) => {
+    (opts?: { keepSocket?: boolean; viewerOnly?: boolean }) => {
       if (frameIntervalRef.current) {
         clearInterval(frameIntervalRef.current);
         frameIntervalRef.current = null;
       }
-      if (producerRef.current) {
-        producerRef.current.close();
-        producerRef.current = null;
-      }
-      if (consumerRef.current) {
-        consumerRef.current.close();
-        consumerRef.current = null;
-      }
-      if (sendTransportRef.current) {
-        sendTransportRef.current.close();
-        sendTransportRef.current = null;
-      }
-      if (recvTransportRef.current) {
-        recvTransportRef.current.close();
-        recvTransportRef.current = null;
-      }
-      if (!remoteMedia && streamRef.current) {
+      teardownAllMedia();
+      if (!opts?.viewerOnly && !remoteMedia && streamRef.current) {
         streamRef.current.getTracks().forEach((track) => track.stop());
         streamRef.current = null;
       }
-      if (!remoteMedia && streamBackupRef.current) {
+      if (!opts?.viewerOnly && !remoteMedia && streamBackupRef.current) {
         streamBackupRef.current.getTracks().forEach((track) => track.stop());
         streamBackupRef.current = null;
-      }
-      if (videoRef.current) {
-        videoRef.current.srcObject = null;
-        setHasVideoStream(false);
       }
       if (!opts?.keepSocket) {
         const currentSocket = socket || socketRef.current;
@@ -219,33 +206,30 @@ export function useChessStreamWebRtc({
           socketRef.current = null;
         }
       }
-      setIsStreaming(false);
-      setCalibrationInProgress(false);
-      setCalibrationCompleted(false);
-      setCalibrationMessage(null);
-      setGameStarted(false);
+      if (!opts?.viewerOnly) {
+        setIsStreaming(false);
+        setCalibrationInProgress(false);
+        setCalibrationMessage(null);
+        setGameStarted(false);
+      }
     },
     [
       remoteMedia,
       frameIntervalRef,
-      producerRef,
-      consumerRef,
-      sendTransportRef,
-      recvTransportRef,
       streamRef,
       streamBackupRef,
-      videoRef,
       socket,
       socketRef,
-      setHasVideoStream,
+      teardownAllMedia,
     ],
   );
 
   const handleStreamStopped = useCallback(() => {
-    releaseMediaResources({ keepSocket: remoteMedia });
+    releaseMediaResources({ keepSocket: remoteMedia, viewerOnly: remoteMedia });
     localStreamingRef.current = false;
+    refs.localStreamingRef.current = false;
     setLocalStreaming(false);
-  }, [releaseMediaResources, remoteMedia]);
+  }, [releaseMediaResources, remoteMedia, refs.localStreamingRef, localStreamingRef]);
 
   useEffect(() => {
     onStreamStoppedRef.current = handleStreamStopped;
@@ -254,12 +238,14 @@ export function useChessStreamWebRtc({
   const stopStreaming = useCallback(() => {
     const currentSocket = socket || socketRef.current;
     currentSocket?.emit('stop-stream', { token: gameToken });
+    localStreamingRef.current = false;
+    refs.localStreamingRef.current = false;
+    setLocalStreaming(false);
     if (remoteMedia) {
-      releaseMediaResources({ keepSocket: true });
+      releaseMediaResources({ keepSocket: true, viewerOnly: true });
+      setHasVideoStream(false);
       return;
     }
-    localStreamingRef.current = false;
-    setLocalStreaming(false);
     releaseMediaResources();
   }, [
     gameToken,
@@ -267,12 +253,16 @@ export function useChessStreamWebRtc({
     socket,
     socketRef,
     releaseMediaResources,
+    localStreamingRef,
+    refs.localStreamingRef,
+    setHasVideoStream,
   ]);
 
   const startStreaming = useCallback(async () => {
     const forceLocal = !viewer;
     if (forceLocal) {
       localStreamingRef.current = true;
+      refs.localStreamingRef.current = true;
       setLocalStreaming(true);
       onLocalStreamActive?.();
       const authState = useAuthStore.getState();
@@ -322,6 +312,7 @@ export function useChessStreamWebRtc({
     hasVideoStreamRef,
     setHasVideoStream,
     connectWebSocket,
+    tryConsumePending,
   });
 
   const streamerControlsProps: Omit<
@@ -353,6 +344,5 @@ export function useChessStreamWebRtc({
     gameStarted,
     moves,
     streamerControlsProps,
-    hasVideoStream,
   };
 }

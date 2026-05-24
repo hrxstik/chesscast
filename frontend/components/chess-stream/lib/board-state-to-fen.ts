@@ -1,7 +1,8 @@
 /**
  * board_state: 8×8, ID фигур как в stream_processor.py → FEN плоскости + хвост ` w - - 0 1`.
+ * Возвращает null, если позиция неполная (нет обоих королей) — не подставляем фейковую.
  */
-export function boardStateToFen(boardState: number[][]): string {
+export function boardStateToFen(boardState: number[][]): string | null {
   const pieceMap: Record<number, string> = {
     0: 'P',
     1: 'R',
@@ -16,6 +17,12 @@ export function boardStateToFen(boardState: number[][]): string {
     10: 'q',
     11: 'n',
   };
+
+  const hasWhiteKing = boardState.some((row) => row.some((cell) => cell === 4));
+  const hasBlackKing = boardState.some((row) => row.some((cell) => cell === 9));
+  if (!hasWhiteKing || !hasBlackKing) {
+    return null;
+  }
 
   let fen = '';
   for (let row = 0; row < 8; row++) {
@@ -50,14 +57,9 @@ export function boardStateToFen(boardState: number[][]): string {
     }
   }
 
-  const hasWhiteKing = boardState.some((row) => row.some((cell) => cell === 4));
-  const hasBlackKing = boardState.some((row) => row.some((cell) => cell === 9));
-  if (!hasWhiteKing || !hasBlackKing || fen === '8/8/8/8/8/8/8/8') {
-    return '8/8/8/8/8/8/8/4K2k w - - 0 1';
+  if (fen === '8/8/8/8/8/8/8/8') {
+    return null;
   }
-  fen += ' w - - 0 1';
-  if (!hasWhiteKing || !hasBlackKing) {
-    return '8/8/8/8/8/8/8/4K2k w - - 0 1';
-  }
-  return fen;
+
+  return `${fen} w - - 0 1`;
 }

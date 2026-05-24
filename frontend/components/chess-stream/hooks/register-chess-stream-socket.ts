@@ -2,10 +2,9 @@ import type { Dispatch, SetStateAction } from 'react';
 import type { Socket } from 'socket.io-client';
 import type * as mediasoupClient from 'mediasoup-client';
 import { boardStateToFen } from '@/components/chess-stream/lib/board-state-to-fen';
+import { BOARD_FEN_STABLE_FRAMES, CV_FRAME_INTERVAL_MS } from '@/lib/stream-config';
 import { notifyError } from '@/lib/notify';
 import type { ChessStreamRefs } from './chess-stream-ref-types';
-
-const STABLE_THRESHOLD = 5;
 
 export type ChessStreamSocketRegisterContext = {
   gameToken: string;
@@ -22,7 +21,6 @@ export type ChessStreamSocketRegisterContext = {
   setMappingData: Dispatch<SetStateAction<Record<string, unknown> | null>>;
   setPositionFromFen: (fen: string) => void;
   onGameFinished?: () => void;
-  /** Стрим остановлен с другого устройства или сервером. */
   onStreamStopped?: () => void;
   captureAndSendFrame: () => void;
   initMediasoupDevice: (
@@ -30,6 +28,9 @@ export type ChessStreamSocketRegisterContext = {
   ) => Promise<mediasoupClient.types.Device | null>;
   createProducer: (stream: MediaStream) => Promise<unknown>;
   createConsumer: (producerId: string) => Promise<unknown>;
+  tryConsumePending: () => void | Promise<void>;
+  teardownAllMedia: () => void;
+  closeRecvSide: () => void;
 };
 
 /** Регистрирует все обработчики Socket.IO для chess-stream (без JSX). */
@@ -71,6 +72,9 @@ export function registerChessStreamSocketHandlers(
     initMediasoupDevice,
     createProducer,
     createConsumer,
+    tryConsumePending,
+    teardownAllMedia,
+    closeRecvSide,
   } = ctx;
 
   const {
@@ -79,13 +83,32 @@ export function registerChessStreamSocketHandlers(
     consumerRef,
     deviceRef,
     producerRef,
+    recvTransportRef,
     streamRef,
     frameIntervalRef,
     socketRef,
     boardStateHistoryRef,
-    boardStateStableCountRef,
+    consumerCreatingRef,
     viewerRef,
+    localStreamingRef,
+    pendingProducerIdRef,
   } = refs;
+
+  const requestViewerConnect = () => {
+    if (!viewerRef.current) return;
+    if (consumerRef.current) return;
+    try {
+      newSocket.emit('get-router-rtp-capabilities', { token: gameToken });
+    } catch {
+      /* ignore */
+    }
+  };
+
+  const schedulePendingConsume = () => {
+    window.setTimeout(() => {
+      void tryConsumePending();
+    }, 0);
+  };
 
   newSocket.on('video-frame', (data: { token: string; frame: string }) => {
     if (consumerRef.current || (viewerRef.current && deviceRef.current)) {
@@ -132,33 +155,38 @@ export function registerChessStreamSocketHandlers(
     if (viewer) {
       newSocket.emit('join-stream', { token: gameToken });
       setIsStreaming(true);
-    } else {
-      let attempts = 0;
-      const emitStartStream = () => {
-        if (streamRef.current?.active) {
-          newSocket.emit('start-stream', { token: gameToken, modelPath });
-          return;
-        }
-        attempts += 1;
-        if (attempts < 80) {
-          setTimeout(emitStartStream, 100);
-        } else {
-          notifyError(
-            'Камера не готова. Разрешите доступ к камере и нажмите «Запустить видеопоток» снова.',
-          );
-        }
-      };
-      emitStartStream();
+      requestViewerConnect();
+    } else if (localStreamingRef.current) {
+      newSocket.emit('start-stream', { token: gameToken, modelPath });
     }
   });
 
   newSocket.on('stream-started', (data?: { boardCalibrated?: boolean; gameInProgress?: boolean }) => {
     setIsStreaming(true);
-    if (data) applyStreamSync(data);
     if (!viewer) {
       setCalibrationCompleted(false);
-      setCalibrationInProgress(false);
-      setCalibrationMessage('Ожидание калибровки доски…');
+      setCalibrationInProgress(true);
+      setCalibrationMessage('Определение доски…');
+      setGameStarted(false);
+    } else if (data?.gameInProgress) {
+      setGameStarted(true);
+    }
+    if (data?.boardCalibrated && !viewer) {
+      applyStreamSync(data);
+    }
+    if (viewer) {
+      if (!consumerRef.current) {
+        closeRecvSide();
+        deviceRef.current = null;
+        consumerCreatingRef.current = false;
+        pendingProducerIdRef.current = null;
+        requestViewerConnect();
+      }
+    }
+    if (!viewer && localStreamingRef.current) {
+      if (frameIntervalRef.current) {
+        clearInterval(frameIntervalRef.current);
+      }
       const startSendingFrames = () => {
         if (
           videoRef.current &&
@@ -167,29 +195,16 @@ export function registerChessStreamSocketHandlers(
         ) {
           frameIntervalRef.current = setInterval(() => {
             captureAndSendFrame();
-          }, 333);
+          }, CV_FRAME_INTERVAL_MS);
         } else {
           setTimeout(startSendingFrames, 100);
         }
       };
       startSendingFrames();
 
-      let producerAttempts = 0;
-      const tryCreateProducer = () => {
-        if (streamRef.current && !producerRef.current) {
-          try {
-            newSocket.emit('get-router-rtp-capabilities', { token: gameToken });
-          } catch {
-            /* ignore */
-          }
-          return;
-        }
-        producerAttempts += 1;
-        if (producerAttempts < 100) {
-          setTimeout(tryCreateProducer, 100);
-        }
-      };
-      tryCreateProducer();
+      if (streamRef.current && !producerRef.current) {
+        newSocket.emit('get-router-rtp-capabilities', { token: gameToken });
+      }
     }
   });
 
@@ -198,10 +213,11 @@ export function registerChessStreamSocketHandlers(
     async (rtpCapabilities: mediasoupClient.types.RtpCapabilities) => {
       try {
         await initMediasoupDevice(rtpCapabilities);
-        if (!viewer && streamRef.current && !producerRef.current) {
+        if (!viewer && streamRef.current && !producerRef.current && localStreamingRef.current) {
           await createProducer(streamRef.current);
         } else if (viewer) {
           newSocket.emit('get-producers', { token: gameToken });
+          schedulePendingConsume();
         }
       } catch (error) {
         notifyError(`Ошибка инициализации медиапотока: ${(error as Error).message}`);
@@ -210,63 +226,61 @@ export function registerChessStreamSocketHandlers(
   );
 
   newSocket.on('producers', async (producers: Array<{ id: string; kind: string }>) => {
-    if (viewer && producers.length > 0 && !consumerRef.current) {
-      try {
-        const videoProducer = producers.find((p) => p.kind === 'video');
-        if (videoProducer && deviceRef.current) {
-          await createConsumer(videoProducer.id);
-        }
-      } catch (error) {
-        notifyError(`Ошибка подключения к потоку: ${(error as Error).message}`);
+    if (!viewerRef.current || consumerRef.current) return;
+    const videoProducer = producers.find((p) => p.kind === 'video');
+    if (!videoProducer) {
+      if (producers.length === 0) {
+        setTimeout(() => {
+          if (socketRef.current && !consumerRef.current && viewerRef.current) {
+            socketRef.current.emit('get-producers', { token: gameToken });
+          }
+        }, 1000);
       }
-    } else if (viewer && producers.length === 0 && !consumerRef.current) {
-      setTimeout(() => {
-        if (socketRef.current && !consumerRef.current) {
-          socketRef.current.emit('get-producers', { token: gameToken });
-        }
-      }, 1000);
+      return;
+    }
+    if (!deviceRef.current) {
+      pendingProducerIdRef.current = videoProducer.id;
+      newSocket.emit('get-router-rtp-capabilities', { token: gameToken });
+      return;
+    }
+  if (!videoRef.current) {
+      pendingProducerIdRef.current = videoProducer.id;
+      schedulePendingConsume();
+      return;
+    }
+    try {
+      await createConsumer(videoProducer.id);
+    } catch (error) {
+      notifyError(`Ошибка подключения к потоку: ${(error as Error).message}`);
     }
   });
 
   newSocket.on('producer-created', async (data: { producerId: string; token: string }) => {
-    if (viewer && data.token === gameToken && !consumerRef.current) {
-      try {
-        if (!deviceRef.current) {
-          newSocket.emit('get-router-rtp-capabilities', { token: gameToken });
-          setTimeout(() => {
-            if (socketRef.current && !consumerRef.current) {
-              socketRef.current.emit('get-producers', { token: gameToken });
-            }
-          }, 500);
-        } else {
-          await createConsumer(data.producerId);
-        }
-      } catch (error) {
-        notifyError(`Ошибка подключения к потоку: ${(error as Error).message}`);
-      }
+    if (!viewerRef.current || data.token !== gameToken || consumerRef.current) {
+      return;
     }
+    pendingProducerIdRef.current = data.producerId;
+    if (!deviceRef.current) {
+      newSocket.emit('get-router-rtp-capabilities', { token: gameToken });
+      return;
+    }
+    schedulePendingConsume();
   });
 
   newSocket.on('stream-joined', (data?: { boardCalibrated?: boolean; gameInProgress?: boolean }) => {
     setIsStreaming(true);
     if (data) applyStreamSync(data);
     if (viewer) {
-      try {
-        newSocket.emit('get-router-rtp-capabilities', { token: gameToken });
-        newSocket.emit('get-producers', { token: gameToken });
-      } catch {
-        /* ignore */
-      }
+      requestViewerConnect();
     }
   });
 
   newSocket.on('stream-stopped', () => {
     if (viewer) {
-      if (videoRef.current) {
-        videoRef.current.srcObject = null;
-        setHasVideoStream(false);
-      }
+      teardownAllMedia();
+      setHasVideoStream(false);
       setIsStreaming(false);
+      boardStateHistoryRef.current = [];
       return;
     }
     onStreamStopped?.();
@@ -310,26 +324,30 @@ export function registerChessStreamSocketHandlers(
   });
 
   newSocket.on('frame-processed', (data: Record<string, unknown>) => {
+    if (data.detection_skipped || data.hand_frozen) {
+      return;
+    }
+
     if (data.board_state && Array.isArray(data.board_state)) {
       try {
         const fen = boardStateToFen(data.board_state as number[][]);
-        const history = boardStateHistoryRef.current;
-        history.push(fen);
-        if (history.length > 8) {
-          history.shift();
-        }
-        const lastN = history.slice(-STABLE_THRESHOLD);
-        const isStable =
-          lastN.length === STABLE_THRESHOLD && lastN.every((f) => f === fen);
-        if (isStable) {
-          boardStateStableCountRef.current = STABLE_THRESHOLD;
-          try {
-            setPositionFromFen(fen);
-          } catch {
-            /* ignore FEN */
+        if (fen) {
+          const history = boardStateHistoryRef.current;
+          history.push(fen);
+          if (history.length > BOARD_FEN_STABLE_FRAMES) {
+            history.shift();
           }
-        } else {
-          boardStateStableCountRef.current = 0;
+          const lastN = history.slice(-BOARD_FEN_STABLE_FRAMES);
+          const isStable =
+            lastN.length === BOARD_FEN_STABLE_FRAMES &&
+            lastN.every((f) => f === fen);
+          if (isStable) {
+            try {
+              setPositionFromFen(fen);
+            } catch {
+              /* ignore FEN */
+            }
+          }
         }
       } catch {
         /* ignore */
@@ -362,8 +380,8 @@ export function registerChessStreamSocketHandlers(
   });
 
   newSocket.on('disconnect', (reason) => {
-    setIsStreaming(false);
     if (reason === 'io server disconnect') {
+      setIsStreaming(false);
       setCalibrationInProgress(false);
       setCalibrationCompleted(false);
       setCalibrationMessage(null);
@@ -372,15 +390,15 @@ export function registerChessStreamSocketHandlers(
         clearInterval(frameIntervalRef.current);
         frameIntervalRef.current = null;
       }
+      teardownAllMedia();
     }
   });
 
   newSocket.on('reconnect', async () => {
     if (viewerRef.current) {
       newSocket.emit('join-stream', { token: gameToken });
-      newSocket.emit('get-router-rtp-capabilities', { token: gameToken });
-      newSocket.emit('get-producers', { token: gameToken });
-    } else if (streamRef.current) {
+      requestViewerConnect();
+    } else if (localStreamingRef.current) {
       newSocket.emit('start-stream', { token: gameToken, modelPath });
     }
   });

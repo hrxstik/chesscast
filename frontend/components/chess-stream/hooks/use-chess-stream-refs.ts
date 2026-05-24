@@ -4,6 +4,7 @@ import { useMemo, useRef } from 'react';
 import type { Socket } from 'socket.io-client';
 import * as mediasoupClient from 'mediasoup-client';
 import type { ChessStreamRefs } from './chess-stream-ref-types';
+import { createMediaSessionState } from './chess-stream-media-session';
 
 export function useChessStreamRefs(): ChessStreamRefs {
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -26,6 +27,9 @@ export function useChessStreamRefs(): ChessStreamRefs {
   const viewerRef = useRef(false);
   const lastProducerIdRef = useRef<string | null>(null);
   const mediaReconnectingRef = useRef(false);
+  const pendingProducerIdRef = useRef<string | null>(null);
+  const mediaSessionRef = useRef(createMediaSessionState());
+  const localStreamingRef = useRef(false);
 
   return useMemo(
     () => ({
@@ -47,6 +51,9 @@ export function useChessStreamRefs(): ChessStreamRefs {
       viewerRef,
       lastProducerIdRef,
       mediaReconnectingRef,
+      pendingProducerIdRef,
+      mediaSessionRef,
+      localStreamingRef,
     }),
     [
       videoRef,
@@ -67,6 +74,9 @@ export function useChessStreamRefs(): ChessStreamRefs {
       viewerRef,
       lastProducerIdRef,
       mediaReconnectingRef,
+      pendingProducerIdRef,
+      mediaSessionRef,
+      localStreamingRef,
     ],
   );
 }
