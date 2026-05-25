@@ -4,12 +4,9 @@
  */
 export const STREAM_VIDEO_ASPECT_RATIO = 3 / 4;
 
-/** ~10 FPS для CV-кадров на backend */
+/** ~10 FPS: 10 кадров → один снимок позиции (~1 с), ходы на фронте по diff FEN */
 export const CV_FRAME_INTERVAL_MS = 100;
-
-/** Сколько одинаковых FEN подряд нужно для обновления виртуальной доски */
-export const BOARD_FEN_STABLE_FRAMES = 10;
 
 /** Tailwind: контейнер под превью камеры / входящий поток */
 export const streamVideoContainerClass =
-  'relative w-full max-h-[min(85vh,920px)] overflow-hidden rounded-xl bg-black aspect-[3/4]';
+  "relative w-full max-h-[min(85vh,920px)] overflow-hidden rounded-xl bg-black aspect-[3/4]";

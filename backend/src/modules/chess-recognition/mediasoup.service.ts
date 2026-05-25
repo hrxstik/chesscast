@@ -168,14 +168,13 @@ export class MediasoupService {
       return;
     }
     await transport.connect({ dtlsParameters });
-    this.logger.log(`Transport ${transportId} connected:`, {
+    this.logger.debug(`Transport ${transportId} connected`, {
       iceState: transport.iceState,
       dtlsState: transport.dtlsState,
     });
 
-    // Отслеживаем изменения состояния transport
     transport.on('icestatechange', (state) => {
-      this.logger.log(`Transport ${transportId} ICE state changed: ${state}`);
+      this.logger.debug(`Transport ${transportId} ICE state: ${state}`);
       // Проверяем проблемные состояния ICE (disconnected - единственное проблемное состояние в типе IceState)
       if (state === 'disconnected') {
         this.logger.warn(`⚠️ Transport ${transportId} ICE state: ${state}`);
@@ -183,7 +182,7 @@ export class MediasoupService {
     });
 
     transport.on('dtlsstatechange', (state) => {
-      this.logger.log(`Transport ${transportId} DTLS state changed: ${state}`);
+      this.logger.debug(`Transport ${transportId} DTLS state: ${state}`);
       if (state === 'failed' || state === 'closed') {
         this.logger.warn(`⚠️ Transport ${transportId} DTLS state: ${state}`);
       }
@@ -213,8 +212,8 @@ export class MediasoupService {
       iceState: transport.iceState,
       dtlsState: transport.dtlsState,
     };
-    this.logger.log(
-      `Transport state before creating producer:`,
+    this.logger.debug(
+      `Transport state before creating producer`,
       transportState,
     );
 
@@ -248,74 +247,6 @@ export class MediasoupService {
       room.producers.delete(producer.id);
       room.producerTransportId.delete(producer.id);
     });
-
-    // Логируем состояние producer
-    this.logger.log(`Producer ${producer.id} state:`, {
-      id: producer.id,
-      kind: producer.kind,
-      paused: producer.paused,
-      closed: producer.closed,
-    });
-
-    // Проверяем статистику producer через небольшую задержку
-    setTimeout(async () => {
-      try {
-        const stats = await producer.getStats();
-        const statsArray = Array.isArray(stats) ? stats : Object.values(stats);
-
-        // Логируем все типы статистики для диагностики
-        const statsTypes = statsArray.map((s: any) => s.type);
-        this.logger.log(`Producer ${producer.id} stats after 2s:`, {
-          statsCount: statsArray.length,
-          statsTypes,
-          allStats: statsArray.map((s: any) => ({
-            type: s.type,
-            timestamp: s.timestamp,
-            bytesSent: s.bytesSent,
-            packetsSent: s.packetsSent,
-            bytesReceived: s.bytesReceived,
-            packetsReceived: s.packetsReceived,
-            framesEncoded: s.framesEncoded,
-            framesDecoded: s.framesDecoded,
-            framesSent: s.framesSent,
-            framesReceived: s.framesReceived,
-            width: s.width,
-            height: s.height,
-            frameWidth: s.frameWidth,
-            frameHeight: s.frameHeight,
-          })),
-        });
-
-        const videoStats = statsArray.find(
-          (s: any) => s.type === 'outbound-rtp',
-        ) as any;
-
-        if (!videoStats) {
-          this.logger.warn(
-            `⚠️ Producer ${producer.id} has no outbound-rtp stats! Available types: ${statsTypes.join(', ')}`,
-          );
-        } else {
-          this.logger.log(`Producer ${producer.id} outbound-rtp stats:`, {
-            bytesSent: videoStats.bytesSent || 0,
-            packetsSent: videoStats.packetsSent || 0,
-            framesEncoded: videoStats.framesEncoded,
-            framesSent: videoStats.framesSent,
-            width: videoStats.width,
-            height: videoStats.height,
-            frameWidth: videoStats.frameWidth,
-            frameHeight: videoStats.frameHeight,
-          });
-
-          if (videoStats.bytesSent === 0) {
-            this.logger.warn(
-              `⚠️ Producer ${producer.id} is not sending any data! Transport ICE state: ${transport.iceState}, DTLS: ${transport.dtlsState}`,
-            );
-          }
-        }
-      } catch (error) {
-        this.logger.warn(`Failed to get producer stats: ${error.message}`);
-      }
-    }, 2000);
 
     return {
       id: producer.id,
@@ -356,13 +287,7 @@ export class MediasoupService {
     room.consumerTransportId.set(consumer.id, transport.id);
 
     // Логируем состояние consumer
-    this.logger.log(`Consumer ${consumer.id} created:`, {
-      id: consumer.id,
-      producerId: consumer.producerId,
-      kind: consumer.kind,
-      paused: consumer.paused,
-      closed: consumer.closed,
-    });
+    this.logger.debug(`Consumer ${consumer.id} created for producer ${consumer.producerId}`);
 
     consumer.on('transportclose', () => {
       consumer.close();
@@ -398,9 +323,9 @@ export class MediasoupService {
 
     if (consumer.paused) {
       consumer.resume();
-      this.logger.log(`Consumer ${consumerId} resumed`);
+      this.logger.debug(`Consumer ${consumerId} resumed`);
     } else {
-      this.logger.log(`Consumer ${consumerId} was already resumed`);
+      this.logger.debug(`Consumer ${consumerId} already resumed`);
     }
   }
 

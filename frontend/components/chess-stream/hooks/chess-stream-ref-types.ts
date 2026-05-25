@@ -16,8 +16,8 @@ export type ChessStreamRefs = {
   producerRef: RefObject<mediasoupClient.types.Producer | null>;
   consumerRef: RefObject<mediasoupClient.types.Consumer | null>;
   consumerCreatingRef: RefObject<boolean>;
-  boardStateHistoryRef: RefObject<string[]>;
-  boardStateStableCountRef: RefObject<number>;
+  /** Последний FEN с сервера (для вывода хода как diff позиций). */
+  lastStreamFenRef: RefObject<string | null>;
   gameStartedRef: RefObject<boolean>;
   viewerRef: RefObject<boolean>;
   lastProducerIdRef: RefObject<string | null>;

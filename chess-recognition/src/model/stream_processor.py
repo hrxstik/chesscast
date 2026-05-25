@@ -9,7 +9,6 @@ from typing import Any, Optional, Dict, Callable, List, Tuple
 from collections import Counter
 from pathlib import Path
 from model.yolo11_detector import YOLO11Detector, BoardStateMapper
-from model.virtual_board import VirtualBoard
 from model.hand_detector import detect_hand_on_board
 import chess
 
@@ -73,41 +72,13 @@ class StreamProcessor:
         # Маппер для преобразования треков в состояние доски
         self.board_mapper = BoardStateMapper()
         
-        # Виртуальная доска для валидации ходов
-        self.virtual_board = VirtualBoard()
-        
-        # Предыдущее состояние доски
-        self.previous_board_state = None
-        
-        # Флаг инициализации (для первого кадра)
-        self.initialized = False
-
         # Ориентация доски (сырые индексы -> ориентированные, где a1 внизу слева)
-        # index_map[i, j] = (i_raw, j_raw)
         self.index_map = None  # type: Optional[np.ndarray]
-        
-        # Стабилизация состояний доски: храним последние N состояний для усреднения
-        # Каждый элемент - это tuple (board_state, confidence_map)
+
+        # Голосование: 10 кадров @ 10 FPS → один снимок позиции на фронт
         self.board_state_history = []  # type: List[Tuple[np.ndarray, np.ndarray]]
         self.history_size = 10
-        self.last_stable_board_state = None  # type: Optional[np.ndarray]
-
-        self._virtual_board_synced = False
-        
-        # Стабилизация ходов: ход должен быть стабильным в нескольких кадрах (~3 FPS)
-        self.pending_move = None  # type: Optional[chess.Move]
-        self.pending_move_frames = 0
-        self.move_confirmation_frames = 3
-        
-        # Предотвращение откатов: храним последний подтвержденный ход
-        self.last_confirmed_move = None  # type: Optional[chess.Move]
-        self.move_lock_frames = 0
-        self.move_lock_duration = 3
-
-        # Рука на поле (MediaPipe Hands): фриз с первого кадра
-        self.hand_confirm_frames = 1
-        self.hand_landmarks_inside_min = 2
-        self._hand_frames = 0
+        self.hand_landmarks_inside_min = 1
         
     def _load_mapping(self) -> Optional[Dict]:
         """Загрузка данных маппинга"""
@@ -156,32 +127,21 @@ class StreamProcessor:
             'hand_mediapipe_available': hand_result.available,
         }
 
-    def _frozen_board_state(self) -> Optional[np.ndarray]:
-        if self.last_stable_board_state is not None:
-            return self.last_stable_board_state.copy()
-        if self.previous_board_state is not None:
-            return self.previous_board_state.copy()
-        if self.board_state_history:
-            return self._stabilize_board_state(self.board_state_history)
-        return None
-
-    def _build_hand_frozen_result(self, hand_info: Dict[str, Any]) -> Dict:
-        frozen = self._frozen_board_state()
-        board_list = (
-            frozen.tolist()
-            if frozen is not None
-            else [[-1] * 8 for _ in range(8)]
+    def _history_hand_info(
+        self,
+        hand_result,
+        *,
+        history_frozen: bool,
+    ) -> Dict[str, Any]:
+        hand_detected = (
+            hand_result.available
+            and hand_result.landmarks_inside >= self.hand_landmarks_inside_min
         )
         return {
-            'status': 'processed',
-            'hand_frozen': True,
-            'tracks': {},
-            'board_state': board_list,
-            'tracks_count': 0,
-            'detections_info': {
-                **hand_info,
-                'message': 'Hand on board — showing last stable position',
-            },
+            **self._hand_detections_info(hand_result, hand_detected),
+            'history_frozen': history_frozen,
+            'history_frames': len(self.board_state_history),
+            'history_target': self.history_size,
         }
 
     def process_frame(self, frame: np.ndarray, *, hand_probe_only: bool = False) -> Dict:
@@ -246,26 +206,22 @@ class StreamProcessor:
             square_corners_grid,
             min_landmarks_inside=self.hand_landmarks_inside_min,
         )
-        if hand_result.detected:
-            self._hand_frames += 1
-        else:
-            self._hand_frames = 0
-        hand_on_board = hand_result.available and hand_result.detected
-        hand_detected = hand_on_board
-        hand_info = self._hand_detections_info(hand_result, hand_detected)
+        hand_on_board = (
+            hand_result.available
+            and hand_result.landmarks_inside >= self.hand_landmarks_inside_min
+        )
 
-        if hand_probe_only:
+        if hand_probe_only or hand_on_board:
             return {
-                'status': 'hand_probe',
-                'detection_skipped': True,
-                'detections_info': {
-                    **hand_info,
-                    'message': 'Hand probe — piece detection skipped',
-                },
+                'status': 'processed',
+                'board_snapshot': False,
+                'history_frozen': hand_on_board,
+                'hand_detected': hand_on_board,
+                'detections_info': self._history_hand_info(
+                    hand_result,
+                    history_frozen=hand_on_board,
+                ),
             }
-
-        if hand_on_board:
-            return self._build_hand_frozen_result(hand_info)
 
         try:
             # Детекция идет на warped изображении (после перспективной трансформации)
@@ -315,7 +271,7 @@ class StreamProcessor:
             tracks_for_board = filtered_tracks
 
             detections_info = {
-                **hand_info,
+                **self._history_hand_info(hand_result, history_frozen=False),
                 'total_detections': len(tracks),
                 'filtered_detections': len(filtered_tracks),
                 'board_mapped_detections': len(tracks_for_board),
@@ -371,75 +327,48 @@ class StreamProcessor:
         else:
             current_board_state = board_state_raw
 
-        current_confidence_map_raw = np.zeros((8, 8), dtype=np.float32)
+        confidence_map = np.zeros((8, 8), dtype=np.float32)
+        for i in range(8):
+            for j in range(8):
+                if current_board_state[i, j] != -1:
+                    confidence_map[i, j] = 1.0
+
         self.board_state_history.append(
-            (current_board_state.copy(), current_confidence_map_raw.copy()),
+            (current_board_state.copy(), confidence_map.copy()),
         )
-        if len(self.board_state_history) > self.history_size:
-            self.board_state_history.pop(0)
-        current_board_state = self._stabilize_board_state(self.board_state_history)
-        current_board_state = self._sanitize_board_against_virtual(current_board_state)
 
-        if self.index_map is not None and not self._virtual_board_synced:
-            self._try_sync_virtual_board_from_detection(current_board_state)
+        history_frames = len(self.board_state_history)
+        if history_frames < self.history_size:
+            return {
+                'status': 'processed',
+                'board_snapshot': False,
+                'history_frozen': False,
+                'hand_detected': False,
+                'detections_info': detections_info,
+            }
 
-        move = None
-        move_debug: Optional[Dict[str, Any]] = None
-        if self.initialized and self.previous_board_state is not None and not hand_on_board:
-            move, move_debug = self._detect_move_stable(current_board_state)
-        
-        # Счетчик кадров для периодического логирования
-        if not hasattr(self, '_frame_count'):
-            self._frame_count = 0
-        self._frame_count += 1
-        
-        # Форматирование треков для ответа
-        tracks_dict = {}
-        for track in tracks:
-            tracks_dict[str(track['track_id'])] = {
+        voted_state = self._stabilize_board_state(self.board_state_history)
+        self.board_state_history.clear()
+
+        tracks_dict = {
+            str(track['track_id']): {
                 'bbox': track['bbox'],
                 'class': track['class_name'],
-                'confidence': track['confidence']
+                'confidence': track['confidence'],
             }
-        
-        result = {
+            for track in tracks
+        }
+
+        return {
             'status': 'processed',
+            'board_snapshot': True,
+            'history_frozen': False,
+            'hand_detected': False,
             'tracks': tracks_dict,
-            'board_state': current_board_state.tolist(),
+            'board_state': voted_state.tolist(),
             'tracks_count': len(tracks),
             'detections_info': detections_info,
         }
-        if move_debug is not None:
-            result['move_debug'] = move_debug
-
-        if move:
-            result['move'] = move.uci()
-            result['move_san'] = self.virtual_board.san(move)
-            score = 64
-            if move_debug and move_debug.get('board_match_score') is not None:
-                score = int(move_debug['board_match_score'])
-            result['move_match_score'] = score
-            
-            # Обновление виртуальной доски
-            self.virtual_board.push(move)
-            
-            # Вызов callback
-            if self.on_move_detected:
-                self.on_move_detected(move, current_board_state)
-        
-        # Обновляем эталон только без руки и после накопления history_size кадров
-        if not hand_on_board and len(self.board_state_history) >= self.history_size:
-            self.last_stable_board_state = current_board_state.copy()
-            if self.previous_board_state is None:
-                self.previous_board_state = current_board_state.copy()
-            else:
-                self.previous_board_state = current_board_state.copy()
-
-        if not self.initialized:
-            self.initialized = True
-            filled_count = np.sum(current_board_state != -1)
-        
-        return result
     
     def _stabilize_board_state(self, history: List[Tuple[np.ndarray, np.ndarray]]) -> np.ndarray:
         """
@@ -536,202 +465,6 @@ class StreamProcessor:
             return None
         board.turn = chess.WHITE
         return board
-
-    def _try_sync_virtual_board_from_detection(self, observed: np.ndarray) -> None:
-        filled = int(np.sum(observed != -1))
-        if filled < 24:
-            return
-        built = self._board_state_to_chess_board(observed)
-        if built is None:
-            return
-        self.virtual_board = VirtualBoard(fen=built.fen())
-        self._virtual_board_synced = True
-        print(
-            f'[CV] virtual_board synced from camera ({filled} occupied squares)',
-            file=sys.stderr,
-            flush=True,
-        )
-
-    def _virtual_board_state(self) -> np.ndarray:
-        return self.virtual_board.state()
-
-    def _sanitize_board_against_virtual(self, observed: np.ndarray) -> np.ndarray:
-        """
-        Если YOLO «телепортировал» фигуры (конь через 6 клеток и т.п.) — откат к
-        virtual_board / last_stable, пока diff не объясняется одним легальным ходом.
-        """
-        if not self._virtual_board_synced:
-            return observed
-
-        virtual_state = self._virtual_board_state()
-        diff_vs_virtual = int(np.sum(observed != virtual_state))
-        if diff_vs_virtual <= 2:
-            return observed
-
-        move, score, _reject = self._find_move_by_board_match(observed)
-        if move is not None and score >= 60:
-            return observed
-
-        if self.last_stable_board_state is not None:
-            return self.last_stable_board_state.copy()
-        return virtual_state.copy()
-
-    def _detect_move_stable(
-        self, current_state: np.ndarray,
-    ) -> Tuple[Optional[chess.Move], Optional[Dict[str, Any]]]:
-        """
-        Определение хода с проверкой стабильности изменений
-        Ход должен быть стабильным в нескольких кадрах подряд
-        """
-        debug: Dict[str, Any] = {}
-        if self.previous_board_state is None:
-            return None, debug
-
-        debug['changed_squares'] = int(np.sum(current_state != self.previous_board_state))
-        
-        # Если недавно был подтвержден ход, игнорируем изменения в течение нескольких кадров
-        # Это предотвращает откаты ходов из-за нестабильных детекций
-        if self.move_lock_frames > 0:
-            self.move_lock_frames -= 1
-            # Обновляем previous_board_state на текущее, чтобы игнорировать изменения
-            self.previous_board_state = current_state.copy()
-            return None, debug
-        
-        # Находим различия
-        diff = current_state - self.previous_board_state
-        
-        # Находим измененные клетки
-        changed_squares = []
-        for i in range(8):
-            for j in range(8):
-                if diff[i, j] != 0:
-                    changed_squares.append((i, j))
-        
-        if len(changed_squares) != 2:
-            fallback, match_score, reject = self._find_move_by_board_match(current_state)
-            debug['board_match_score'] = match_score
-            if reject:
-                debug['board_match_reject'] = reject
-            if fallback is not None:
-                debug['board_match_move'] = fallback.uci()
-                confirmed = self._confirm_pending_move(fallback, current_state)
-                return confirmed, debug
-            self.pending_move = None
-            self.pending_move_frames = 0
-            return None, debug
-        
-        # Конвертация в UCI формат
-        columns = list("abcdefgh")
-        rows = list("87654321")
-        
-        squares_uci = []
-        for i, j in changed_squares:
-            squares_uci.append(f"{columns[j]}{rows[i]}")
-        
-        # Пробуем оба направления (откуда -> куда)
-        detected_move = None
-        invalid_moves = []
-        for from_square, to_square in [(squares_uci[0], squares_uci[1]), (squares_uci[1], squares_uci[0])]:
-            try:
-                move = chess.Move.from_uci(from_square + to_square)
-                if move in self.virtual_board.legal_moves:
-                    detected_move = move
-                    break
-                else:
-                    invalid_moves.append(f"{from_square}{to_square}")
-            except Exception as e:
-                invalid_moves.append(f"{from_square}{to_square}(error: {str(e)})")
-        
-        if detected_move is None:
-            fallback, match_score, reject = self._find_move_by_board_match(current_state)
-            debug['board_match_score'] = match_score
-            if reject:
-                debug['board_match_reject'] = reject
-            if fallback is not None:
-                debug['board_match_move'] = fallback.uci()
-                confirmed = self._confirm_pending_move(fallback, current_state)
-                return confirmed, debug
-            self.pending_move = None
-            self.pending_move_frames = 0
-            return None, debug
-
-        confirmed = self._confirm_pending_move(detected_move, current_state)
-        return confirmed, debug
-
-    def _confirm_pending_move(
-        self,
-        detected_move: chess.Move,
-        current_state: np.ndarray,
-    ) -> Optional[chess.Move]:
-        if self.move_confirmation_frames <= 1:
-            self.last_confirmed_move = detected_move
-            self.move_lock_frames = self.move_lock_duration
-            self.pending_move = None
-            self.pending_move_frames = 0
-            self.previous_board_state = current_state.copy()
-            return detected_move
-
-        if self.pending_move == detected_move:
-            self.pending_move_frames += 1
-            if self.pending_move_frames >= self.move_confirmation_frames:
-                confirmed_move = self.pending_move
-                self.last_confirmed_move = confirmed_move
-                self.move_lock_frames = self.move_lock_duration
-                self.pending_move = None
-                self.pending_move_frames = 0
-                self.previous_board_state = current_state.copy()
-                return confirmed_move
-        else:
-            self.pending_move = detected_move
-            self.pending_move_frames = 1
-        return None
-
-    def _board_match_score(
-        self,
-        observed: np.ndarray,
-        expected: np.ndarray,
-    ) -> int:
-        return int(np.sum(observed == expected))
-
-    def _find_move_by_board_match(
-        self,
-        current_state: np.ndarray,
-    ) -> Tuple[Optional[chess.Move], int, Optional[str]]:
-        """Если YOLO шумит (>2 клеток), ищем легальный ход по совпадению позиции."""
-        if self.previous_board_state is None:
-            return None, -1, 'no_previous_state'
-        best_move: Optional[chess.Move] = None
-        best_score = -1
-        second_score = -1
-        for move in self.virtual_board.legal_moves:
-            trial = self.virtual_board.copy()
-            trial.push(move)
-            predicted = VirtualBoard(fen=trial.fen()).state()
-            score = self._board_match_score(current_state, predicted)
-            if score > best_score:
-                second_score = best_score
-                best_score = score
-                best_move = move
-            elif score > second_score:
-                second_score = score
-        baseline = self._board_match_score(
-            current_state,
-            VirtualBoard(fen=self.virtual_board.fen()).state(),
-        )
-        min_score = 60
-        if best_move is None or best_score < min_score:
-            return None, best_score, 'score_too_low'
-        if best_score < baseline + 6:
-            return None, best_score, 'no_improvement'
-        margin = best_score - second_score if second_score >= 0 else best_score
-        if second_score >= 0 and margin < 5:
-            return None, best_score, 'ambiguous_match'
-        return best_move, best_score, None
-    
-    def _detect_move(self, current_state: np.ndarray) -> Optional[chess.Move]:
-        """Старый метод детекции хода (deprecated, используйте _detect_move_stable)"""
-        move, _ = self._detect_move_stable(current_state)
-        return move
 
     # ==================== Ориентация доски ====================
 

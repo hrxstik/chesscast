@@ -210,7 +210,6 @@ export function useChessStreamWebRtc({
         setIsStreaming(false);
         setCalibrationInProgress(false);
         setCalibrationMessage(null);
-        setGameStarted(false);
       }
     },
     [
@@ -297,6 +296,7 @@ export function useChessStreamWebRtc({
   const handleStartGame = useCallback(() => {
     if (!calibrationCompleted) return;
     setMoves([]);
+    refs.lastStreamFenRef.current = null;
     const s = socket || socketRef.current;
     s?.emit('start-game', { token: gameToken });
     setGameStarted(true);

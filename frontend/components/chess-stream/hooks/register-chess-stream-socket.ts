@@ -2,7 +2,8 @@ import type { Dispatch, SetStateAction } from 'react';
 import type { Socket } from 'socket.io-client';
 import type * as mediasoupClient from 'mediasoup-client';
 import { boardStateToFen } from '@/components/chess-stream/lib/board-state-to-fen';
-import { BOARD_FEN_STABLE_FRAMES, CV_FRAME_INTERVAL_MS } from '@/lib/stream-config';
+import { inferSanMoveBetweenFens } from '@/components/chess-stream/lib/infer-san-between-fens';
+import { CV_FRAME_INTERVAL_MS } from '@/lib/stream-config';
 import { notifyError } from '@/lib/notify';
 import type { ChessStreamRefs } from './chess-stream-ref-types';
 
@@ -87,8 +88,9 @@ export function registerChessStreamSocketHandlers(
     streamRef,
     frameIntervalRef,
     socketRef,
-    boardStateHistoryRef,
     consumerCreatingRef,
+    lastStreamFenRef,
+    gameStartedRef,
     viewerRef,
     localStreamingRef,
     pendingProducerIdRef,
@@ -167,8 +169,13 @@ export function registerChessStreamSocketHandlers(
       setCalibrationCompleted(false);
       setCalibrationInProgress(true);
       setCalibrationMessage('Определение доски…');
-      setGameStarted(false);
+      if (!data?.gameInProgress) {
+        setGameStarted(false);
+      }
     } else if (data?.gameInProgress) {
+      setGameStarted(true);
+    }
+    if (!viewer && data?.gameInProgress) {
       setGameStarted(true);
     }
     if (data?.boardCalibrated && !viewer) {
@@ -280,9 +287,11 @@ export function registerChessStreamSocketHandlers(
       teardownAllMedia();
       setHasVideoStream(false);
       setIsStreaming(false);
-      boardStateHistoryRef.current = [];
       return;
     }
+    setCalibrationCompleted(false);
+    setCalibrationInProgress(false);
+    setCalibrationMessage(null);
     onStreamStopped?.();
   });
 
@@ -293,6 +302,7 @@ export function registerChessStreamSocketHandlers(
   });
 
   newSocket.on('game-started', () => {
+    lastStreamFenRef.current = null;
     setGameStarted(true);
   });
 
@@ -324,7 +334,7 @@ export function registerChessStreamSocketHandlers(
   });
 
   newSocket.on('frame-processed', (data: Record<string, unknown>) => {
-    if (data.detection_skipped || data.hand_frozen) {
+    if (data.board_snapshot !== true) {
       return;
     }
 
@@ -332,38 +342,27 @@ export function registerChessStreamSocketHandlers(
       try {
         const fen = boardStateToFen(data.board_state as number[][]);
         if (fen) {
-          const history = boardStateHistoryRef.current;
-          history.push(fen);
-          if (history.length > BOARD_FEN_STABLE_FRAMES) {
-            history.shift();
-          }
-          const lastN = history.slice(-BOARD_FEN_STABLE_FRAMES);
-          const isStable =
-            lastN.length === BOARD_FEN_STABLE_FRAMES &&
-            lastN.every((f) => f === fen);
-          if (isStable) {
-            try {
-              setPositionFromFen(fen);
-            } catch {
-              /* ignore FEN */
+          const prevFen = lastStreamFenRef.current;
+          if (prevFen && prevFen !== fen && gameStartedRef.current) {
+            const san = inferSanMoveBetweenFens(prevFen, fen);
+            if (san) {
+              setMoves((prev) => {
+                const last = prev[prev.length - 1];
+                if (last?.san === san) return prev;
+                return [...prev, { san }];
+              });
+              newSocket.emit('report-move', { token: gameToken, san });
             }
           }
+          lastStreamFenRef.current = fen;
+          setPositionFromFen(fen);
         }
       } catch {
-        /* ignore */
+        /* ignore FEN */
       }
     }
 
-    if (data.move_san) {
-      const san = String(data.move_san);
-      setMoves((prev) => {
-        const lastMove = prev[prev.length - 1];
-        if (lastMove?.san === san) {
-          return prev;
-        }
-        return [...prev, { san }];
-      });
-    } else if (data.status === 'error' && data.message) {
+    if (data.status === 'error' && data.message) {
       notifyError(String(data.message));
     }
   });

@@ -273,9 +273,7 @@ export class GameService {
     if (!game || game.deletedAt || game.status === GameStatus.FINISHED) {
       return;
     }
-    if (game.status === GameStatus.PENDING) {
-      await this.markInProgressByToken(token);
-    } else if (game.status !== GameStatus.IN_PROGRESS) {
+    if (game.status !== GameStatus.IN_PROGRESS) {
       return;
     }
     const added = await this.gameRepository.appendSanMoveByToken(

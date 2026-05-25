@@ -20,9 +20,8 @@ export function useChessStreamRefs(): ChessStreamRefs {
   const producerRef = useRef<mediasoupClient.types.Producer | null>(null);
   const consumerRef = useRef<mediasoupClient.types.Consumer | null>(null);
   const consumerCreatingRef = useRef(false);
+  const lastStreamFenRef = useRef<string | null>(null);
 
-  const boardStateHistoryRef = useRef<string[]>([]);
-  const boardStateStableCountRef = useRef(0);
   const gameStartedRef = useRef(false);
   const viewerRef = useRef(false);
   const lastProducerIdRef = useRef<string | null>(null);
@@ -45,8 +44,7 @@ export function useChessStreamRefs(): ChessStreamRefs {
       producerRef,
       consumerRef,
       consumerCreatingRef,
-      boardStateHistoryRef,
-      boardStateStableCountRef,
+      lastStreamFenRef,
       gameStartedRef,
       viewerRef,
       lastProducerIdRef,
@@ -68,8 +66,7 @@ export function useChessStreamRefs(): ChessStreamRefs {
       producerRef,
       consumerRef,
       consumerCreatingRef,
-      boardStateHistoryRef,
-      boardStateStableCountRef,
+      lastStreamFenRef,
       gameStartedRef,
       viewerRef,
       lastProducerIdRef,

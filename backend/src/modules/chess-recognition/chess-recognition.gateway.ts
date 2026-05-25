@@ -46,15 +46,7 @@ export class ChessRecognitionGateway
     new Map(); // token -> таймер автоматической калибровки
   /** До завершения калибровки в этой сессии стрима — не используем старый маппинг. */
   private readonly recalibrationPending = new Set<string>();
-  private readonly handLogAt = new Map<string, number>();
-  private readonly moveDebugLogAt = new Map<string, number>();
-  /** Пока рука в кадре — не шлём кадры в CV (кроме лёгкого hand_probe). WebRTC не трогаем. */
-  private readonly cvHandBlocksDetection = new Map<string, boolean>();
-  private readonly cvHandProbeLastAt = new Map<string, number>();
   private readonly cvFrameSkipLogAt = new Map<string, number>();
-  /** После ухода руки первый кадр — только probe, не full CV. */
-  private readonly cvHandRecoveryPending = new Set<string>();
-  private static readonly CV_HAND_PROBE_MS = 100;
 
   constructor(
     private readonly chessRecognitionService: ChessRecognitionService,
@@ -152,25 +144,6 @@ export class ChessRecognitionGateway
     }
   }
 
-  private persistDetectedSanMove(
-    token: string,
-    result: FrameProcessedResult,
-  ): void {
-    const san = result.move_san?.trim();
-    const matchScore = result.move_match_score ?? 0;
-    if (!san || matchScore < 60) {
-      return;
-    }
-    void this.gameService.appendSanMoveByToken(token, san).then((outcome) => {
-      if (outcome?.autoFinished && outcome.result) {
-        this.broadcastGameFinished(token, outcome.result);
-        this.logger.log(
-          `🏁 Auto-finished game ${token} after mate (${outcome.result})`,
-        );
-      }
-    });
-  }
-
   /** Завершение партии: уведомить комнату, остановить CV и WebRTC. */
   broadcastGameFinished(token: string, result?: string): void {
     this.chessRecognitionService.stopStreamProcessing(token);
@@ -179,58 +152,15 @@ export class ChessRecognitionGateway
     this.server.to(roomId).emit('game-finished', { token, result });
   }
 
-  private updateCvHandSkipFromResult(
-    token: string,
-    result: FrameProcessedResult,
-  ): void {
-    const detInfo = result?.detections_info;
-    if (!detInfo) {
-      return;
-    }
-    const landmarks = detInfo.hand_landmarks_inside ?? 0;
-    if (detInfo.hand_detected || detInfo.hand_raw_detected) {
-      this.cvHandBlocksDetection.set(token, true);
-    } else if (!detInfo.hand_raw_detected && landmarks === 0) {
-      if (this.cvHandBlocksDetection.get(token)) {
-        this.cvHandRecoveryPending.add(token);
-      }
-      this.cvHandBlocksDetection.set(token, false);
-    }
-  }
-
-  private resolveCvFrameSendMode(token: string): 'full' | 'probe' | 'skip' {
-    if (this.cvHandRecoveryPending.has(token)) {
-      this.cvHandRecoveryPending.delete(token);
-      this.cvHandProbeLastAt.set(token, Date.now());
-      return 'probe';
-    }
-    if (!this.cvHandBlocksDetection.get(token)) {
-      return 'full';
-    }
-    const now = Date.now();
-    const lastProbe = this.cvHandProbeLastAt.get(token) ?? 0;
-    if (now - lastProbe >= ChessRecognitionGateway.CV_HAND_PROBE_MS) {
-      this.cvHandProbeLastAt.set(token, now);
-      return 'probe';
-    }
-    return 'skip';
-  }
-
   private deliverFrameProcessed(
     token: string,
     client: Socket,
     result: FrameProcessedResult,
     options: { toRoom?: boolean },
   ): void {
-    this.updateCvHandSkipFromResult(token, result);
-
-    if (result.detection_skipped) {
-      this.logCvFrameResult(token, result);
+    if (result.board_snapshot !== true) {
       return;
     }
-
-    this.logCvFrameResult(token, result);
-    this.logCvMoveDebug(token, result);
 
     client.emit('frame-processed', result);
 
@@ -238,34 +168,10 @@ export class ChessRecognitionGateway
       const roomId = `stream:${token}`;
       client.to(roomId).emit('frame-processed', result);
     }
-
-    if (result?.move_san) {
-      this.persistDetectedSanMove(token, result);
-      this.logger.log(
-        `♟️ Move detected for token ${token}: ${result.move_san} (${result.move ?? 'uci'})`,
-      );
-    }
-  }
-
-  private logCvFrameResult(_token: string, _result: FrameProcessedResult): void {
-    /* per-frame CV logs disabled — too noisy at 10 FPS */
-  }
-
-  private logCvMoveDebug(_token: string, _result: FrameProcessedResult): void {
-    /* move debug throttled logs disabled */
   }
 
   handleConnection(client: Socket) {
-    const q = client.handshake.query?.token;
-    const hasQueryToken =
-      typeof q === 'string' ? !!q : Array.isArray(q) ? !!q[0] : false;
-    const hasAuthTicket = !!(client.handshake.auth as { ticket?: string })
-      ?.ticket;
-    void this.resolveSocketUserId(client).then((userId) => {
-      this.logger.log(
-        `Client connected: ${client.id} (ws query: ${hasQueryToken}, auth.ticket: ${hasAuthTicket}, userId: ${userId ?? 'none'})`,
-      );
-    });
+    void this.resolveSocketUserId(client);
   }
 
   // Подключение к комнате для просмотра стрима
@@ -299,30 +205,10 @@ export class ChessRecognitionGateway
     client.join(roomId);
     this.clientGameTokens.set(client.id, token);
 
-    // Получаем количество клиентов в комнате для логирования
-    let clientsInRoom = 0;
-    try {
-      const adapter = this.server.sockets.adapter;
-      if (adapter && adapter.rooms) {
-        const room = adapter.rooms.get(roomId);
-        clientsInRoom = room ? Array.from(room).length : 0;
-      }
-    } catch (error) {
-      // Игнорируем ошибку
-    }
-
-    this.logger.log(
-      `👀 [VIEWER] Client ${client.id} joined stream room for token ${token} (${clientsInRoom} clients in room)`,
-    );
-
     // Проверяем, есть ли уже producer в комнате mediasoup
     try {
       const producers = await this.mediasoupService.getProducers(token);
       if (producers.length > 0) {
-        this.logger.log(
-          `👀 [VIEWER] Found ${producers.length} existing producers, sending to client ${client.id}`,
-        );
-        // Отправляем существующие producers сразу после присоединения к комнате
         client.emit('producers', producers);
       }
     } catch (error) {
@@ -351,17 +237,11 @@ export class ChessRecognitionGateway
       if (gameToken) {
         this.stopStreamForToken(gameToken);
       }
-      this.logger.log(
-        `Streamer ${client.id} disconnected, stopping stream for token ${gameToken}`,
-      );
     } else {
-      // Для зрителей просто удаляем из clientRooms, но не закрываем комнату
       if (roomId) {
         this.clientRooms.delete(client.id);
       }
     }
-
-    this.logger.log(`Client disconnected: ${client.id}`);
   }
 
   @SubscribeMessage('start-stream')
@@ -394,10 +274,6 @@ export class ChessRecognitionGateway
       client.emit('error', { message: msg });
       return;
     }
-
-    this.logger.log(
-      `📹 [STREAMER] Client ${client.id} starting stream for token ${token} (user ${userId})`,
-    );
 
     // Каждый старт стрима — новая калибровка (камера могла съехать)
     this.chessRecognitionService.stopStreamProcessing(token);
@@ -441,22 +317,6 @@ export class ChessRecognitionGateway
     const roomId = `stream:${token}`;
     client.join(roomId);
 
-    // Получаем количество клиентов в комнате для логирования
-    let clientsInRoom = 0;
-    try {
-      const adapter = this.server.sockets.adapter;
-      if (adapter && adapter.rooms) {
-        const room = adapter.rooms.get(roomId);
-        clientsInRoom = room ? Array.from(room).length : 0;
-      }
-    } catch (error) {
-      // Игнорируем ошибку
-    }
-
-    this.logger.log(
-      `📹 [STREAMER] Client ${client.id} started streaming for token ${token} (${clientsInRoom} clients in room)`,
-    );
-
     const sync = await this.gameService.getStreamSyncState(token);
     const payload = {
       token,
@@ -488,6 +348,16 @@ export class ChessRecognitionGateway
     }
     try {
       await this.gameService.assertCreatorCanStream(userId, token);
+      if (
+        !this.chessRecognitionService.hasValidMapping(token) ||
+        this.recalibrationPending.has(token)
+      ) {
+        client.emit('error', {
+          message:
+            'Сначала откалибруйте доску: запустите видеопоток и дождитесь завершения калибровки',
+        });
+        return;
+      }
       await this.gameService.markInProgressByToken(token);
     } catch (e) {
       client.emit('error', {
@@ -498,6 +368,33 @@ export class ChessRecognitionGateway
     const roomId = `stream:${token}`;
     this.server.to(roomId).emit('game-started', { token });
     client.emit('game-started', { token });
+  }
+
+  @SubscribeMessage('report-move')
+  async handleReportMove(
+    @MessageBody() data: { token: string; san: string },
+    @ConnectedSocket() client: Socket,
+  ) {
+    const { token, san } = data;
+    if (!token || !san?.trim()) {
+      return;
+    }
+    const userId = await this.resolveSocketUserId(client);
+    if (userId == null) {
+      return;
+    }
+    try {
+      await this.gameService.assertCreatorCanStream(userId, token);
+      const outcome = await this.gameService.appendSanMoveByToken(
+        token,
+        san.trim(),
+      );
+      if (outcome?.autoFinished && outcome.result) {
+        this.broadcastGameFinished(token, outcome.result);
+      }
+    } catch {
+      /* ignore */
+    }
   }
 
   @SubscribeMessage('get-router-rtp-capabilities')
@@ -511,17 +408,10 @@ export class ChessRecognitionGateway
       return;
     }
 
-    this.logger.log(
-      `📹 [MEDIASOUP] Client ${client.id} requested RTP capabilities for token ${token}`,
-    );
-
     try {
       const rtpCapabilities =
         await this.mediasoupService.getRouterRtpCapabilities(token);
       client.emit('router-rtp-capabilities', rtpCapabilities);
-      this.logger.log(
-        `✅ [MEDIASOUP] RTP capabilities sent to client ${client.id}`,
-      );
     } catch (error) {
       this.logger.error(
         `❌ [MEDIASOUP] Error getting RTP capabilities: ${error.message}`,
@@ -594,10 +484,6 @@ export class ChessRecognitionGateway
       return;
     }
 
-    this.logger.log(
-      `📹 [STREAMER] Creating producer for client ${client.id}, token ${token}`,
-    );
-
     try {
       // Убеждаемся, что комната существует перед созданием producer
       await this.mediasoupService.createRoom(token);
@@ -607,10 +493,6 @@ export class ChessRecognitionGateway
         client.id,
         transportId,
         rtpParameters,
-      );
-
-      this.logger.log(
-        `✅ [STREAMER] Producer created: ${producer.id} for token ${token}`,
       );
 
       // Запускаем обработку потока для этого токена
@@ -632,9 +514,6 @@ export class ChessRecognitionGateway
         this.chessRecognitionService.hasValidMapping(token) &&
         !this.recalibrationPending.has(token)
       ) {
-        this.logger.log(
-          `📹 [STREAMER] Starting stream processing for token ${token} in handleProduce`,
-        );
         this.chessRecognitionService.startStreamProcessing(
           token,
           defaultModelPath,
@@ -645,16 +524,6 @@ export class ChessRecognitionGateway
             client.emit('error', { message: error.message });
           },
         );
-      } else {
-        if (this.chessRecognitionService.hasActiveProcess(token)) {
-          this.logger.log(
-            `📹 [STREAMER] Stream processing already active for token ${token}, skipping duplicate start`,
-          );
-        } else {
-          this.logger.log(
-            `📹 [STREAMER] Waiting for calibration to complete before starting stream processing for token ${token}`,
-          );
-        }
       }
 
       this.clientGameTokens.set(client.id, token);
@@ -662,22 +531,6 @@ export class ChessRecognitionGateway
 
       // Уведомляем всех в комнате о новом producer
       const roomId = `stream:${token}`;
-
-      // Получаем количество клиентов в комнате для логирования
-      let clientsInRoom = 0;
-      try {
-        const adapter = this.server.sockets.adapter;
-        if (adapter && adapter.rooms) {
-          const room = adapter.rooms.get(roomId);
-          clientsInRoom = room ? Array.from(room).length : 0;
-        }
-      } catch (error) {
-        // Игнорируем ошибку
-      }
-
-      this.logger.log(
-        `📹 [STREAMER] Notifying ${clientsInRoom} clients in room ${roomId} about new producer ${producer.id}`,
-      );
 
       // Отправляем событие всем в комнате (включая зрителей)
       this.server.to(roomId).emit('producer-created', {
@@ -711,10 +564,6 @@ export class ChessRecognitionGateway
       return;
     }
 
-    this.logger.log(
-      `👀 [VIEWER] Client ${client.id} requesting consumer for producer ${producerId}, token ${token}`,
-    );
-
     try {
       const consumer = await this.mediasoupService.createConsumer(
         token,
@@ -722,10 +571,6 @@ export class ChessRecognitionGateway
         transportId,
         producerId,
         rtpCapabilities,
-      );
-
-      this.logger.log(
-        `✅ [VIEWER] Consumer created: ${consumer.id} for client ${client.id}`,
       );
 
       this.clientRooms.set(client.id, token);
@@ -749,15 +594,8 @@ export class ChessRecognitionGateway
       return;
     }
 
-    this.logger.log(
-      `👀 [VIEWER] Client ${client.id} requesting resume for consumer ${consumerId}, token ${token}`,
-    );
-
     try {
       await this.mediasoupService.resumeConsumer(token, consumerId);
-      this.logger.log(
-        `✅ [VIEWER] Consumer ${consumerId} resumed for client ${client.id}`,
-      );
       client.emit('consumer-resumed', { consumerId });
     } catch (error) {
       this.logger.error(
@@ -778,26 +616,14 @@ export class ChessRecognitionGateway
       return;
     }
 
-    this.logger.log(
-      `👀 [VIEWER] Client ${client.id} requested producers for token ${token}`,
-    );
-
     try {
-      // Убеждаемся, что комната существует (если нет - создаем, но producers будет пустым)
       try {
         await this.mediasoupService.getRouterRtpCapabilities(token);
-        this.logger.log(`👀 [VIEWER] Room ${token} exists`);
-      } catch (error) {
-        this.logger.warn(
-          `👀 [VIEWER] Room ${token} does not exist yet, creating it...`,
-        );
+      } catch {
         await this.mediasoupService.createRoom(token);
       }
 
       const producers = await this.mediasoupService.getProducers(token);
-      this.logger.log(
-        `✅ [VIEWER] Sending ${producers.length} producers to client ${client.id} for token ${token}`,
-      );
       client.emit('producers', producers);
     } catch (error) {
       this.logger.error(
@@ -874,9 +700,6 @@ export class ChessRecognitionGateway
           const avgBrightness = stats.channels[0].mean; // Средняя яркость первого канала
 
           if (avgBrightness < 5) {
-            this.logger.debug(
-              `⚠️ [CALIBRATION] Skipping black/empty frame for token ${token} (avg brightness: ${avgBrightness.toFixed(1)})`,
-            );
             // Не сохраняем черный кадр
           } else {
             // Сохраняем валидный кадр для калибровки
@@ -892,9 +715,6 @@ export class ChessRecognitionGateway
         // Уведомляем пользователя только один раз
         if (!this.calibrationAttempted.get(token)) {
           this.calibrationAttempted.set(token, true);
-          this.logger.log(
-            `No mapping found for token ${token}, starting automatic calibration...`,
-          );
           client.emit('calibration-started', {
             message:
               'Определение доски... Пожалуйста, подождите. Вы можете двигать камеру - будет использован последний кадр.',
@@ -1034,14 +854,7 @@ export class ChessRecognitionGateway
 
       // Отправка бинарного кадра в процесс обработки
       try {
-        const sendMode = this.resolveCvFrameSendMode(token);
-        if (sendMode === 'skip') {
-          /* hand on board — skip full CV frame */
-        } else {
-          this.chessRecognitionService.sendFrame(token, frameBuffer, {
-            handProbe: sendMode === 'probe',
-          });
-        }
+        this.chessRecognitionService.sendFrame(token, frameBuffer);
       } catch (error) {
         this.logger.warn(
           `⚠️ [FRAME] Failed to send frame to Python process for token ${token}: ${error.message}`,
@@ -1063,10 +876,7 @@ export class ChessRecognitionGateway
       this.calibrationAttempted.delete(token);
       this.processStartedAfterCalibration.delete(token);
       this.lastCalibrationFrames.delete(token);
-      this.cvHandBlocksDetection.delete(token);
-      this.cvHandProbeLastAt.delete(token);
       this.cvFrameSkipLogAt.delete(token);
-      this.cvHandRecoveryPending.delete(token);
       this.recalibrationPending.delete(token);
       this.stopAutoCalibration(token);
     }
@@ -1101,9 +911,6 @@ export class ChessRecognitionGateway
     if (userId != null) {
       try {
         await this.gameService.assertCreatorOwnsGame(userId, token);
-        this.logger.log(
-          `📹 Creator ${userId} stopped stream remotely for token ${token}`,
-        );
         this.stopStreamForToken(token);
         client.emit('stream-stopped', { token });
         return;
@@ -1151,21 +958,12 @@ export class ChessRecognitionGateway
       }
 
       try {
-        this.logger.log(
-          `🔄 [AUTO-CALIBRATION] Attempting automatic calibration for token ${token}`,
-        );
-
         const calibrationResult =
           await this.chessRecognitionService.calibrateBoard(token, lastFrame, {
             force: true,
           });
 
         if (calibrationResult.success) {
-          // Успешная калибровка!
-          this.logger.log(
-            `✅ [AUTO-CALIBRATION] Automatic calibration succeeded for token ${token}`,
-          );
-
           // Останавливаем таймер СРАЗУ, чтобы избежать повторных срабатываний
           this.stopAutoCalibration(token);
           this.calibrationAttempted.delete(token);
@@ -1195,9 +993,6 @@ export class ChessRecognitionGateway
           }
 
           if (this.chessRecognitionService.hasActiveProcess(token)) {
-            this.logger.log(
-              `🔄 Restarting stream processing for token ${token} after auto calibration`,
-            );
             this.chessRecognitionService.stopStreamProcessing(token);
             // Увеличиваем задержку, чтобы процесс успел полностью закрыться
             await new Promise((resolve) => setTimeout(resolve, 500));
@@ -1229,9 +1024,6 @@ export class ChessRecognitionGateway
             },
           );
         } else {
-          this.logger.debug(
-            `⚠️ [AUTO-CALIBRATION] Calibration attempt failed for token ${token}: ${calibrationResult.message}`,
-          );
           const failKey = `cal_fail_emit_${token}`;
           const lastFail = (this as any)[failKey] as number | undefined;
           const now = Date.now();
@@ -1264,9 +1056,6 @@ export class ChessRecognitionGateway
     if (timer) {
       clearInterval(timer);
       this.autoCalibrationTimers.delete(token);
-      this.logger.log(
-        `🛑 [AUTO-CALIBRATION] Stopped automatic calibration for token ${token}`,
-      );
     }
   }
 

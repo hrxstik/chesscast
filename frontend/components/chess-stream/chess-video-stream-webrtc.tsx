@@ -120,7 +120,7 @@ export const ChessVideoStreamWebRTC: React.FC<ChessVideoStreamProps> = ({
     viewer,
     remoteMedia,
     onLocalStreamActive,
-    initialBoardCalibrated: session?.boardCalibrated ?? false,
+    initialBoardCalibrated: false,
     initialGameInProgress: session?.status === "IN_PROGRESS",
     setPositionFromFen,
     onGameFinished: () => {

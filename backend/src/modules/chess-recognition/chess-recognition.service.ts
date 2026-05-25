@@ -34,6 +34,9 @@ export interface FrameProcessedResult {
     hand_blocks_move_detect?: number;
   };
   detection_skipped?: boolean;
+  board_snapshot?: boolean;
+  history_frozen?: boolean;
+  hand_detected?: boolean;
   fen?: string;
   success?: boolean;
   error?: string;
@@ -69,6 +72,8 @@ export class ChessRecognitionService implements OnModuleInit, OnModuleDestroy {
 
   private readonly sessions = new Map<string, StreamSession>();
   private readonly cvFrameInFlight = new Map<string, boolean>();
+  private readonly cvFrameSentAt = new Map<string, number>();
+  private static readonly CV_FRAME_IN_FLIGHT_TIMEOUT_MS = 8000;
   private readonly pendingCalibrations = new Map<
     string,
     (msg: WorkerMessage) => void
@@ -301,6 +306,7 @@ export class ChessRecognitionService implements OnModuleInit, OnModuleDestroy {
 
     if (event === 'frame_result' && msg.token) {
       this.cvFrameInFlight.set(msg.token, false);
+      this.cvFrameSentAt.delete(msg.token);
       const session = this.sessions.get(msg.token);
       if (!session) {
         return;
@@ -454,11 +460,30 @@ export class ChessRecognitionService implements OnModuleInit, OnModuleDestroy {
     }
 
     if (this.cvFrameInFlight.get(gameToken)) {
-      return;
+      const sentAt = this.cvFrameSentAt.get(gameToken) ?? 0;
+      const stuckMs = Date.now() - sentAt;
+      if (
+        sentAt > 0 &&
+        stuckMs >= ChessRecognitionService.CV_FRAME_IN_FLIGHT_TIMEOUT_MS
+      ) {
+        this.cvFrameInFlight.set(gameToken, false);
+        this.cvFrameSentAt.delete(gameToken);
+        const now = Date.now();
+        const last = this.sendFrameSkipLogAt.get(gameToken) ?? 0;
+        if (now - last > 5000) {
+          this.sendFrameSkipLogAt.set(gameToken, now);
+          this.logger.warn(
+            `CV frame pipeline reset for ${gameToken}: no frame_result for ${stuckMs}ms`,
+          );
+        }
+      } else {
+        return;
+      }
     }
 
     try {
       this.cvFrameInFlight.set(gameToken, true);
+      this.cvFrameSentAt.set(gameToken, Date.now());
       this.sendCommand(
         {
           cmd: 'frame',
@@ -470,6 +495,7 @@ export class ChessRecognitionService implements OnModuleInit, OnModuleDestroy {
       );
     } catch (error) {
       this.cvFrameInFlight.set(gameToken, false);
+      this.cvFrameSentAt.delete(gameToken);
       this.logger.warn(
         `Failed to send frame for token ${gameToken}: ${(error as Error).message}`,
       );
@@ -480,6 +506,7 @@ export class ChessRecognitionService implements OnModuleInit, OnModuleDestroy {
   stopStreamProcessing(gameToken: string): void {
     this.sessions.delete(gameToken);
     this.cvFrameInFlight.delete(gameToken);
+    this.cvFrameSentAt.delete(gameToken);
     if (!this.worker?.stdin || this.worker.killed) {
       return;
     }
