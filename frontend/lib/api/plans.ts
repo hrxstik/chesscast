@@ -15,9 +15,10 @@ export type PlanDto = {
   streamQualityLevel: 'LOW' | 'MEDIUM' | 'HIGH';
 };
 
+/** SSR: актуальные тарифы с API при каждом запросе страницы (без ISR). */
 export async function fetchPlans(): Promise<PlanDto[]> {
   const res = await serverApiFetch(`/${ApiRoutes.GET_PRICING}`, {
-    next: { revalidate: 600 },
+    cache: 'no-store',
   });
   if (!res.ok) {
     throw new Error(
