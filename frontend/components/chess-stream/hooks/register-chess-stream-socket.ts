@@ -91,6 +91,7 @@ export function registerChessStreamSocketHandlers(
     consumerCreatingRef,
     lastStreamFenRef,
     gameStartedRef,
+    skipCvBoardRef,
     viewerRef,
     localStreamingRef,
     pendingProducerIdRef,
@@ -334,7 +335,7 @@ export function registerChessStreamSocketHandlers(
   });
 
   newSocket.on('frame-processed', (data: Record<string, unknown>) => {
-    if (data.board_snapshot !== true) {
+    if (data.board_snapshot !== true || skipCvBoardRef.current) {
       return;
     }
 

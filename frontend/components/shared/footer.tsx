@@ -16,7 +16,7 @@ const Footer = () => {
               support@chesscast.com
             </a>
           </p>
-          <p>&copy; {new Date().getFullYear()} ChessCast. Все права защищены.</p>
+          <p>&copy; {new Date().getFullYear()}. Все права защищены.</p>
         </div>
       </Container>
     </footer>

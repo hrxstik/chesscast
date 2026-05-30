@@ -1,12 +1,11 @@
 import { Chess } from 'chess.js';
 
-/** Сравниваем только расстановку (без счётчиков ходов). */
 function placement(fen: string): string {
   return fen.trim().split(/\s+/)[0] ?? '';
 }
 
 /**
- * Один легальный ход между двумя FEN (после стабилизации на сервере).
+ * Один легальный ход между двумя FEN (точное совпадение расстановки после хода).
  */
 export function inferSanMoveBetweenFens(
   prevFen: string,
@@ -18,18 +17,21 @@ export function inferSanMoveBetweenFens(
     return null;
   }
 
-  try {
-    const game = new Chess(prevFen);
-    for (const uci of game.moves()) {
-      const trial = new Chess(prevFen);
-      const moved = trial.move(uci);
-      if (!moved) continue;
-      if (placement(trial.fen()) === next) {
-        return moved.san;
+  for (const stm of ['w', 'b'] as const) {
+    try {
+      const base = `${prev} ${stm} - - 0 1`;
+      const game = new Chess(base);
+      for (const uci of game.moves()) {
+        const trial = new Chess(base);
+        const moved = trial.move(uci);
+        if (!moved) continue;
+        if (placement(trial.fen()) === next) {
+          return moved.san;
+        }
       }
+    } catch {
+      continue;
     }
-  } catch {
-    return null;
   }
   return null;
 }

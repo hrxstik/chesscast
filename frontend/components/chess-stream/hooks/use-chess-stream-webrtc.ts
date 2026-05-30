@@ -342,7 +342,10 @@ export function useChessStreamWebRtc({
     calibrationInProgress,
     calibrationMessage,
     gameStarted,
+    setGameStarted,
     moves,
+    setMoves,
+    refs,
     streamerControlsProps,
   };
 }

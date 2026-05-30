@@ -19,6 +19,8 @@ export type ChessStreamRefs = {
   /** Последний FEN с сервера (для вывода хода как diff позиций). */
   lastStreamFenRef: RefObject<string | null>;
   gameStartedRef: RefObject<boolean>;
+  /** Демо для диплома: не перезаписывать доску с CV */
+  skipCvBoardRef: RefObject<boolean>;
   viewerRef: RefObject<boolean>;
   lastProducerIdRef: RefObject<string | null>;
   mediaReconnectingRef: RefObject<boolean>;

@@ -1,6 +1,6 @@
 /**
  * board_state: 8×8, ID фигур как в stream_processor.py → FEN плоскости + хвост ` w - - 0 1`.
- * Возвращает null, если позиция неполная (нет обоих королей) — не подставляем фейковую.
+ * Возвращает null, если позиция неполная (нет обоих королей).
  */
 export function boardStateToFen(boardState: number[][]): string | null {
   const pieceMap: Record<number, string> = {

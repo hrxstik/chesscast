@@ -11,8 +11,9 @@ const nunito = Nunito({
 });
 
 export const metadata: Metadata = {
-  title: 'ChessCast',
-  description: 'ChessCast - physical chess on the web using computer vision',
+  title: 'Платформа для анализа шахматных партий',
+  description:
+    'Оцифровка и анализ физических шахматных партий в реальном времени с помощью компьютерного зрения',
 };
 
 export default function RootLayout({

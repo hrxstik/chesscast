@@ -18,7 +18,7 @@ export default async function PricingPage() {
     <Container>
       <Section className="min-h-[50vh] pt-8">
         <div className="w-full text-center">
-          <H1 className="text-balance">Тарифы ChessCast</H1>
+          <H1 className="text-balance">Тарифы платформы</H1>
           <Lead className="mx-auto mt-4 max-w-2xl">
             Личные планы и корпоративные лимиты для клубов. Оплата платных тарифов
             — через ЮKassa (тестовый магазин и тестовые карты в личном кабинете

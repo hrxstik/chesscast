@@ -12,6 +12,7 @@ import { cn } from "@/lib/utils";
 import { ChessStreamGrid } from "@/components/chess-stream/chess-stream-grid";
 import { StreamAnalysisSidebar } from "@/components/chess-stream/stream-analysis-sidebar";
 import { ChessStreamStreamerControls } from "@/components/chess-stream/chess-stream-streamer-controls";
+import { StreamDiplomaDemoPanel } from "@/components/chess-stream/stream-diploma-demo-panel";
 import { FinishGameDialog } from "@/components/chess-stream/finish-game-dialog";
 import { useChessStreamWebRtc } from "@/components/chess-stream/hooks/use-chess-stream-webrtc";
 import {
@@ -113,6 +114,9 @@ export const ChessVideoStreamWebRTC: React.FC<ChessVideoStreamProps> = ({
     startStreaming,
     stopStreaming,
     moves,
+    setMoves,
+    setGameStarted,
+    refs,
     streamerControlsProps,
   } = useChessStreamWebRtc({
     gameToken,
@@ -226,13 +230,25 @@ export const ChessVideoStreamWebRTC: React.FC<ChessVideoStreamProps> = ({
             />
           }
           renderStreamerControls={() => (
-            <ChessStreamStreamerControls
-              {...streamerControlsProps}
-              showControls={!viewerMode && !gameFinished}
-              canStopStream={hasVideoStream || (remoteMedia && isStreaming)}
-              gameFinished={gameFinished}
-              onOpenFinishGame={() => setFinishOpen(true)}
-            />
+            <div className="flex flex-col gap-3">
+              <ChessStreamStreamerControls
+                {...streamerControlsProps}
+                showControls={!viewerMode && !gameFinished}
+                canStopStream={hasVideoStream || (remoteMedia && isStreaming)}
+                gameFinished={gameFinished}
+                onOpenFinishGame={() => setFinishOpen(true)}
+              />
+              {!viewerMode && !gameFinished ? (
+                <StreamDiplomaDemoPanel
+                  onApply={({ moves: demoMoves, fen, gameStarted }) => {
+                    refs.skipCvBoardRef.current = demoMoves.length > 0 || gameStarted;
+                    setMoves(demoMoves);
+                    setPositionFromFen(fen);
+                    setGameStarted(gameStarted);
+                  }}
+                />
+              ) : null}
+            </div>
           )}
         />
       </div>

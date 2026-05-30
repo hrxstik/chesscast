@@ -78,6 +78,7 @@ class StreamProcessor:
         # Голосование: 10 кадров @ 10 FPS → один снимок позиции на фронт
         self.board_state_history = []  # type: List[Tuple[np.ndarray, np.ndarray]]
         self.history_size = 10
+        self.snapshot_vote_min = 6  # ≥60% кадров за клетку (6 из 10)
         self.hand_landmarks_inside_min = 1
         
     def _load_mapping(self) -> Optional[Dict]:
@@ -212,6 +213,8 @@ class StreamProcessor:
         )
 
         if hand_probe_only or hand_on_board:
+            if hand_on_board:
+                self.board_state_history.clear()
             return {
                 'status': 'processed',
                 'board_snapshot': False,
@@ -372,71 +375,27 @@ class StreamProcessor:
     
     def _stabilize_board_state(self, history: List[Tuple[np.ndarray, np.ndarray]]) -> np.ndarray:
         """
-        Стабилизация состояния доски путем взвешенного голосования по каждому квадрату
-        Использует confidence для взвешивания голосов: weight = confidence * count
-        
-        Args:
-            history: Список кортежей (board_state, confidence_map)
-        
-        Returns:
-            Стабилизированное состояние доски (8x8 массив с piece_id)
+        Голосование по клетке: пусто (-1) и фигуры считаются одинаково (все 10 кадров).
         """
         if not history:
             return np.ones((8, 8), dtype=np.int32) * -1
-        
+
+        frame_count = len(history)
+        min_votes = min(self.snapshot_vote_min, frame_count)
         stabilized = np.ones((8, 8), dtype=np.int32) * -1
-        
+
         for i in range(8):
             for j in range(8):
-                # Собираем все значения и их confidence для этой клетки из истории
-                value_confidence_pairs = []
-                for board_state, confidence_map in history:
-                    piece_id = board_state[i, j]
-                    confidence = confidence_map[i, j]
-                    if piece_id != -1:  # Только непустые клетки
-                        value_confidence_pairs.append((piece_id, confidence))
-                
-                if not value_confidence_pairs:
-                    stabilized[i, j] = -1
-                    continue
-                
-                # Группируем по piece_id и суммируем confidence (взвешенное голосование)
-                weighted_votes = {}  # piece_id -> сумма confidence
-                for piece_id, confidence in value_confidence_pairs:
-                    if piece_id not in weighted_votes:
-                        weighted_votes[piece_id] = 0.0
-                    weighted_votes[piece_id] += confidence
-                
-                # Выбираем piece_id с максимальным взвешенным голосом
-                if weighted_votes:
-                    best_piece_id = max(weighted_votes.items(), key=lambda x: x[1])[0]
-                    best_weight = weighted_votes[best_piece_id]
-                    
-                    # Вычисляем общий вес всех голосов
-                    total_weight = sum(weighted_votes.values())
-                    
-                    # Используем значение только если его вес >= 60% от общего веса
-                    if best_weight >= total_weight * 0.6:
-                        stabilized[i, j] = best_piece_id
-                    elif len(history) >= self.history_size and len(weighted_votes) > 1:
-                        # Если история большая и есть несколько вариантов, проверяем второй
-                        sorted_votes = sorted(weighted_votes.items(), key=lambda x: x[1], reverse=True)
-                        second_weight = sorted_votes[1][1]
-                        
-                        # Если первый вариант значительно лучше второго, используем его
-                        if best_weight > second_weight * 1.5:  # На 50% больше
-                            stabilized[i, j] = best_piece_id
-                        else:
-                            # Неопределенность - используем последнее значение
-                            stabilized[i, j] = value_confidence_pairs[-1][0]
-                    else:
-                        # Если история маленькая или один вариант, используем последнее значение
-                        stabilized[i, j] = value_confidence_pairs[-1][0]
-                else:
-                    stabilized[i, j] = -1
-        
+                votes = Counter()
+                for board_state, _confidence_map in history:
+                    votes[int(board_state[i, j])] += 1
+
+                best_piece_id, best_count = votes.most_common(1)[0]
+                if best_count >= min_votes:
+                    stabilized[i, j] = int(best_piece_id)
+
         return stabilized
-    
+
     def _board_state_to_chess_board(self, state: np.ndarray) -> Optional[chess.Board]:
         """Конвертация 8×8 ID в chess.Board (ряд 0 = 8-я горизонталь)."""
         board = chess.Board()

@@ -24,14 +24,14 @@ export default function RootPage() {
           <div className="pointer-events-none absolute -bottom-16 -left-16 size-48 rounded-full bg-primary/10 blur-2xl" />
           <div className="relative mx-auto max-w-4xl text-center">
             <H1 className="text-balance">
-              Добро пожаловать в ChessCast — платформу для анализа физических
-              шахматных партий в реальном времени
+              Добро пожаловать на платформу для анализа физических шахматных
+              партий в реальном времени
             </H1>
             <Lead className="mx-auto mt-5 max-w-2xl text-pretty">
               Улучшайте свои навыки в шахматах с помощью анализа партий в
               реальном времени. Наш сервис подходит как новичкам, так и
-              профессионалам. ChessCast можно использовать как в личных целях,
-              так и для игры в шахматной организации или на турнирах.
+              профессионалам. Нашу платформу можно использовать как в личных
+              целях, так и для игры в шахматной организации или на турнирах.
             </Lead>
             <div className="mt-8 flex flex-wrap justify-center gap-3">
               <Button asChild>
@@ -108,7 +108,7 @@ export default function RootPage() {
       <Section className="py-8 md:py-12 lg:py-14">
         <div className="grid items-start gap-10 lg:grid-cols-2 lg:gap-12 laptop:gap-14">
           <div className="space-y-6">
-            <H2>Как работает ChessCast?</H2>
+            <H2>Как работает платформа?</H2>
             <Text className="text-muted-foreground">
               Для анализа партии в реальном времени используется
               интеллектуальная система, которая использует компьютерное зрение,
@@ -123,7 +123,7 @@ export default function RootPage() {
               оценивается позиция и подсказываются идеи ходов.
             </Text>
             <Text className="text-muted-foreground">
-              Помимо live-анализа вы можете использовать ChessCast для личных
+              Помимо live-анализа вы можете использовать платформу для личных
               тренировок и просмотра сохранённых партий — в своей истории, в
               организации или у других игроков.
             </Text>
@@ -152,9 +152,9 @@ export default function RootPage() {
               </H2>
               <Text className="text-muted-foreground md:text-base">
                 Организации могут проводить турниры, записывая сразу несколько
-                игр одновременно. ChessCast позволяет следить за несколькими
+                игр одновременно. Платформа позволяет следить за несколькими
                 играми сразу. Ваша шахматная организация может использовать
-                ChessCast на турнирах вместо электронных досок.
+                её на турнирах вместо электронных досок.
               </Text>
             </div>
             <div className="flex shrink-0 flex-wrap gap-2 md:flex-col">

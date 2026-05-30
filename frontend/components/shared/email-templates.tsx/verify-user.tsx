@@ -6,7 +6,7 @@ interface Props {
 
 export const VerificationUserTemplate: React.FC<Props> = ({ code }) => (
   <div>
-    <h1>Подтверждение учетной записи ChessCast</h1>
+    <h1>Подтверждение учётной записи на платформе</h1>
     <p>
       Код подтверждения: <h2>{code}</h2>
     </p>

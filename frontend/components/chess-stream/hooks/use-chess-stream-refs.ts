@@ -23,6 +23,7 @@ export function useChessStreamRefs(): ChessStreamRefs {
   const lastStreamFenRef = useRef<string | null>(null);
 
   const gameStartedRef = useRef(false);
+  const skipCvBoardRef = useRef(false);
   const viewerRef = useRef(false);
   const lastProducerIdRef = useRef<string | null>(null);
   const mediaReconnectingRef = useRef(false);
@@ -46,6 +47,7 @@ export function useChessStreamRefs(): ChessStreamRefs {
       consumerCreatingRef,
       lastStreamFenRef,
       gameStartedRef,
+      skipCvBoardRef,
       viewerRef,
       lastProducerIdRef,
       mediaReconnectingRef,
@@ -68,6 +70,7 @@ export function useChessStreamRefs(): ChessStreamRefs {
       consumerCreatingRef,
       lastStreamFenRef,
       gameStartedRef,
+      skipCvBoardRef,
       viewerRef,
       lastProducerIdRef,
       mediaReconnectingRef,
