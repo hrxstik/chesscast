@@ -1,6 +1,6 @@
-import React from 'react';
-import { Container } from './container';
-import { Logo } from './logo';
+import React from "react";
+import { Container } from "./container";
+import { Logo } from "./logo";
 
 const Footer = () => {
   return (
@@ -9,14 +9,14 @@ const Footer = () => {
         <Logo />
         <div className="flex flex-col gap-1 text-sm max-md:text-center md:text-right">
           <p>
-            Поддержка:{' '}
+            Поддержка:{" "}
             <a
               href="mailto:support@chesscast.com"
-              className="text-blue-600 hover:underline dark:text-blue-400">
+              className="text-blue-600 hover:underline dark:text-blue-400"
+            >
               support@chesscast.com
             </a>
           </p>
-          <p>&copy; {new Date().getFullYear()}. Все права защищены.</p>
         </div>
       </Container>
     </footer>
